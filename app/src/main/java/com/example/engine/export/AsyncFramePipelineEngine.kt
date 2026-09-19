@@ -10,7 +10,6 @@ import android.media.MediaCodecList
 import android.media.MediaMuxer
 import android.media.MediaExtractor
 import android.media.MediaFormat
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
@@ -60,11 +59,15 @@ data class PipelineFrame(val index: Long, val ptsUs: Long, val timelinePosMs: Lo
 class FramePacketQueue<T>(capacity: Int = 3) {
   private val queue = ArrayBlockingQueue<T>(capacity.coerceIn(1, 8))
   fun put(value: T, cancelled: AtomicBoolean): Boolean {
-    while (!cancelled.get()) if (queue.offer(value, 50, TimeUnit.MILLISECONDS)) return true
+    while (!cancelled.get()) {
+      if (queue.offer(value, 50, TimeUnit.MILLISECONDS)) return true
+    }
     return false
   }
   fun take(cancelled: AtomicBoolean): T? {
-    while (!cancelled.get()) queue.poll(50, TimeUnit.MILLISECONDS)?.let { return it }
+    while (!cancelled.get()) {
+      queue.poll(50, TimeUnit.MILLISECONDS)?.let { return it }
+    }
     return null
   }
   fun depth(): Int = queue.size
@@ -85,16 +88,26 @@ class AsyncFramePipelineMetrics {
   val gpuRenderTimeNs = AtomicLong()
   val encodeTimeNs = AtomicLong()
   val maxQueueDepth = AtomicLong()
+
   fun snapshot() = mapOf(
-    "decodedFrames" to decodedFrames.get(), "gpuFrames" to gpuFrames.get(),
-    "encodedFrames" to encodedFrames.get(), "droppedFrames" to droppedFrames.get(),
-    "duplicatedFrames" to duplicatedFrames.get(), "gpuToCpuCopies" to gpuToCpuCopies.get(),
-    "cpuToGpuCopies" to cpuToGpuCopies.get(), "zeroCopyFrames" to zeroCopyFrames.get(),
-    "backpressureEvents" to backpressureEvents.get(), "maxQueueDepth" to maxQueueDepth.get()
+    "decodedFrames" to decodedFrames.get(),
+    "gpuFrames" to gpuFrames.get(),
+    "encodedFrames" to encodedFrames.get(),
+    "droppedFrames" to droppedFrames.get(),
+    "duplicatedFrames" to duplicatedFrames.get(),
+    "gpuToCpuCopies" to gpuToCpuCopies.get(),
+    "cpuToGpuCopies" to cpuToGpuCopies.get(),
+    "zeroCopyFrames" to zeroCopyFrames.get(),
+    "backpressureEvents" to backpressureEvents.get(),
+    "maxQueueDepth" to maxQueueDepth.get()
   )
 }
 
-/** MediaCodec surface decoder. Codec work runs off the GL thread; updateTexImage runs on GL only. */
+/**
+ * MediaCodec hardware surface decoder.
+ * Codec decoding runs off GL thread and renders directly to Surface/SurfaceTexture;
+ * updateTexImage runs on GL thread only.
+ */
 private class SurfaceDecoder(
   private val context: Context,
   private val clip: VideoClip,
@@ -110,22 +123,31 @@ private class SurfaceDecoder(
   private var width = clip.width.coerceAtLeast(1)
   private var height = clip.height.coerceAtLeast(1)
   private var lastRequestUs = Long.MIN_VALUE
+  private var isInputEos = false
 
   fun start() {
     require(MediaRelinkManager.isRealPlayableMedia(context, clip.uri)) { "Unplayable video: ${clip.uri}" }
     val ex = MediaExtractor()
     val uri = Uri.parse(clip.uri)
-    if (uri.scheme == "content" || uri.scheme == "file") ex.setDataSource(context, uri, null) else ex.setDataSource(clip.uri)
+    if (uri.scheme == "content" || uri.scheme == "file") {
+      ex.setDataSource(context, uri, null)
+    } else {
+      ex.setDataSource(clip.uri)
+    }
     var track = -1
     var fmt: MediaFormat? = null
     for (i in 0 until ex.trackCount) {
       val f = ex.getTrackFormat(i)
-      if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("video/")) { track = i; fmt = f; break }
+      if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("video/")) {
+        track = i
+        fmt = f
+        break
+      }
     }
     require(track >= 0 && fmt != null) { "No video track for ${clip.id}" }
     ex.selectTrack(track)
-    width = fmt!!.getInteger(MediaFormat.KEY_WIDTH).coerceAtLeast(1)
-    height = fmt!!.getInteger(MediaFormat.KEY_HEIGHT).coerceAtLeast(1)
+    width = fmt.getInteger(MediaFormat.KEY_WIDTH).coerceAtLeast(1)
+    height = fmt.getInteger(MediaFormat.KEY_HEIGHT).coerceAtLeast(1)
 
     val latch = CountDownLatch(1)
     glHandler.post {
@@ -138,36 +160,53 @@ private class SurfaceDecoder(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        surfaceTexture = SurfaceTexture(textureId).also { it.setOnFrameAvailableListener(this, glHandler) }
+        surfaceTexture = SurfaceTexture(textureId).also {
+          it.setOnFrameAvailableListener(this, glHandler)
+        }
         surface = Surface(surfaceTexture)
-      } finally { latch.countDown() }
+      } finally {
+        latch.countDown()
+      }
     }
     check(latch.await(5, TimeUnit.SECONDS)) { "Timed out creating decoder SurfaceTexture" }
-    codec = MediaCodec.createDecoderByType(fmt!!.getString(MediaFormat.KEY_MIME)!!).also {
+
+    val decoderMime = fmt.getString(MediaFormat.KEY_MIME) ?: MediaFormat.MIMETYPE_VIDEO_AVC
+    codec = MediaCodec.createDecoderByType(decoderMime).also {
       it.configure(fmt, surface, null, 0)
       it.start()
     }
     extractor = ex
   }
 
-  override fun onFrameAvailable(surfaceTexture: SurfaceTexture) { frameReady.set(true) }
+  override fun onFrameAvailable(surfaceTexture: SurfaceTexture) {
+    frameReady.set(true)
+  }
 
   fun decode(targetUs: Long, cancelled: AtomicBoolean): FramePacket {
-    val c = codec ?: error("Decoder not started")
-    val ex = extractor ?: error("Extractor not started")
+    val c = codec ?: return defaultPacket(targetUs)
+    val ex = extractor ?: return defaultPacket(targetUs)
+
+    // Handle backward seek or large forward jump
     if (targetUs < lastRequestUs || lastRequestUs == Long.MIN_VALUE || (targetUs - lastRequestUs > 2_000_000L)) {
       ex.seekTo(targetUs.coerceAtLeast(0L), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+      try {
+        c.flush()
+      } catch (ignored: Exception) {}
       frameReady.set(false)
+      isInputEos = false
     }
     lastRequestUs = targetUs
+
     val info = MediaCodec.BufferInfo()
-    var inputEos = false
     var output = false
     var outputPts = targetUs
-    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
-    while (!output && !cancelled.get() && System.nanoTime() < deadline) {
-      if (!inputEos) {
-        val inputIndex = c.dequeueInputBuffer(5_000L)
+    var attempts = 0
+    val maxAttempts = 60
+
+    while (!output && !cancelled.get() && attempts < maxAttempts) {
+      attempts++
+      if (!isInputEos) {
+        val inputIndex = c.dequeueInputBuffer(2_000L)
         if (inputIndex >= 0) {
           val input = c.getInputBuffer(inputIndex)
           if (input != null) {
@@ -175,7 +214,7 @@ private class SurfaceDecoder(
             val size = ex.readSampleData(input, 0)
             if (size < 0) {
               c.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-              inputEos = true
+              isInputEos = true
             } else {
               val pts = ex.sampleTime.coerceAtLeast(0L)
               c.queueInputBuffer(inputIndex, 0, size, pts, 0)
@@ -184,20 +223,29 @@ private class SurfaceDecoder(
           }
         }
       }
-      val outIndex = c.dequeueOutputBuffer(info, 5_000L)
+
+      val outIndex = c.dequeueOutputBuffer(info, 2_000L)
       if (outIndex >= 0) {
         outputPts = info.presentationTimeUs.coerceAtLeast(0L)
+        // Release buffer directly to Surface (hardware GPU zero-copy)
         c.releaseOutputBuffer(outIndex, true)
-        output = outputPts >= targetUs || frameReady.get()
-        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+        if (outputPts >= targetUs || frameReady.get() || isInputEos) {
+          output = true
+        }
+        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+          isInputEos = true
+          break
+        }
+      } else if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER && isInputEos) {
+        // No more frames available from decoder
+        break
       }
     }
     return FramePacket(0, 0, outputPts, textureId, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, FloatArray(16), width, height, clip.id)
   }
 
   fun updateOnGl(): FramePacket {
-    check(Thread.currentThread() == glHandler.looper.thread) { "SurfaceTexture update must run on GL thread" }
-    val st = surfaceTexture ?: error("SurfaceTexture released")
+    val st = surfaceTexture ?: return defaultPacket(0L)
     try {
       st.updateTexImage()
     } catch (e: Exception) {
@@ -210,15 +258,25 @@ private class SurfaceDecoder(
     return FramePacket(0, 0, pts, textureId, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, matrix, width, height, clip.id)
   }
 
+  private fun defaultPacket(ptsUs: Long) = FramePacket(
+    0, 0, ptsUs, textureId, GLES11Ext.GL_TEXTURE_EXTERNAL_OES, FloatArray(16), width, height, clip.id
+  )
+
   fun release() {
     try { codec?.stop() } catch (_: Throwable) {}
     try { codec?.release() } catch (_: Throwable) {}
     try { extractor?.release() } catch (_: Throwable) {}
     try { surface?.release() } catch (_: Throwable) {}
     try { surfaceTexture?.release() } catch (_: Throwable) {}
-    codec = null; extractor = null; surface = null; surfaceTexture = null
-    if (textureId != 0 && Thread.currentThread() == glHandler.looper.thread) {
-      GLES20.glDeleteTextures(1, intArrayOf(textureId), 0); textureId = 0
+    codec = null
+    extractor = null
+    surface = null
+    surfaceTexture = null
+    if (textureId != 0) {
+      glHandler.post {
+        GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
+        textureId = 0
+      }
     }
   }
 }
@@ -236,12 +294,13 @@ class AsyncFramePipelineEngine(private val context: Context) {
   private val cancelled = AtomicBoolean(false)
   private val glThread = HandlerThread("AH-GPU-FramePipeline").apply { start() }
   private val glHandler = Handler(glThread.looper)
-  private val decodeExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-Decode-Stage") }
   private val composition = VideoCompositionEngine(context)
   private val audioProcessor = AudioExportProcessor(context)
   val metrics = AsyncFramePipelineMetrics()
 
-  fun cancel() { cancelled.set(true) }
+  fun cancel() {
+    cancelled.set(true)
+  }
 
   suspend fun export(timeline: Timeline, config: ExportConfig, outputFile: File): File? = withContext(Dispatchers.IO) {
     cancelled.set(false)
@@ -262,12 +321,12 @@ class AsyncFramePipelineEngine(private val context: Context) {
     val isMuxStarted = AtomicBoolean(false)
     val videoTrack = AtomicInteger(-1)
     val audioTrack = AtomicInteger(-1)
-    var videoEos = false
-    var audioEos = false
+    val videoEos = AtomicBoolean(false)
+    val audioEos = AtomicBoolean(false)
     val failure = AtomicReference<Throwable?>(null)
     val decoders = LinkedHashMap<String, SurfaceDecoder>()
     val imageBitmaps = HashMap<String, Bitmap>()
-    val queue = FramePacketQueue<PipelineFrame>(3)
+    val imageTextures = HashMap<String, Int>()
 
     val hasAudioSources = audioProcessor.hasActiveAudio(timeline)
     var masterPcm = ShortArray(0)
@@ -327,13 +386,36 @@ class AsyncFramePipelineEngine(private val context: Context) {
       }
       videoEncoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
       inputSurface = videoEncoder.createInputSurface()
-      egl = EglCore(null, EglCore.FLAG_RECORDABLE)
-      window = WindowSurface(egl, inputSurface, false)
-      window.makeCurrent()
-      renderer = GpuCompositionRenderer(context).also { it.initGl() }
-      Log.i(tag, "[GPU_COMPOSITION_STATUS] initialized=true, nativeBridgeLoaded=${com.example.engine.composition.gpu.NativeRenderBridge.isLoaded}")
 
-      // 4. Configure Audio Encoder if Audio is Present
+      // 4. Initialize GL context and GPU renderer entirely on the GL HandlerThread
+      val glInitLatch = CountDownLatch(1)
+      glHandler.post {
+        try {
+          val core = EglCore(null, EglCore.FLAG_RECORDABLE)
+          val winSurface = WindowSurface(core, inputSurface, false)
+          winSurface.makeCurrent()
+          val rend = GpuCompositionRenderer(context).also { it.initGl() }
+
+          // Preload image textures on GL thread
+          for ((uri, bmp) in imageBitmaps) {
+            val texId = rend.uploadImageTexture(uri, bmp)
+            imageTextures[uri] = texId
+          }
+
+          egl = core
+          window = winSurface
+          renderer = rend
+          Log.i(tag, "[GPU_COMPOSITION_STATUS] initialized=true, nativeBridgeLoaded=${com.example.engine.composition.gpu.NativeRenderBridge.isLoaded}")
+        } catch (t: Throwable) {
+          failure.set(t)
+        } finally {
+          glInitLatch.countDown()
+        }
+      }
+      check(glInitLatch.await(5, TimeUnit.SECONDS)) { "Timed out initializing GL Context" }
+      failure.get()?.let { throw it }
+
+      // 5. Configure Audio Encoder if Audio is Present
       if (hasAudio) {
         try {
           val audioMime = MediaFormat.MIMETYPE_AUDIO_AAC
@@ -365,7 +447,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
               Log.i(tag, "[SELECTED_DECODER] clip=${clip.id} name=${clip.name}")
             }
           } catch (e: Exception) {
-            Log.w(tag, "Hardware decoder unavailable for clip ${clip.id}, using fallback", e)
+            Log.w(tag, "Hardware decoder unavailable for clip ${clip.id}", e)
           }
         }
       }
@@ -379,16 +461,16 @@ class AsyncFramePipelineEngine(private val context: Context) {
       } catch (_: Exception) {}
 
       val drainDone = CountDownLatch(1)
-      val drain = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-Encode-Drain") }
-      drain.execute {
+      val drainExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-Encode-Drain") }
+      drainExecutor.execute {
         try {
           val vInfo = MediaCodec.BufferInfo()
           val aInfo = MediaCodec.BufferInfo()
 
-          while (!cancelled.get() && (!videoEos || (hasAudio && !audioEos))) {
+          while (!cancelled.get() && (!videoEos.get() || (hasAudio && !audioEos.get()))) {
             // Drain Video
-            if (!videoEos) {
-              val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 5_000L)
+            if (!videoEos.get()) {
+              val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 2_000L)
               when {
                 vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                   videoTrack.set(muxer.addTrack(videoEncoder.outputFormat))
@@ -416,14 +498,14 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   }
                   val end = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                   videoEncoder.releaseOutputBuffer(vIndex, false)
-                  if (end) videoEos = true
+                  if (end) videoEos.set(true)
                 }
               }
             }
 
             // Drain Audio
-            if (hasAudio && audioEncoder != null && !audioEos) {
-              val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 5_000L)
+            if (hasAudio && audioEncoder != null && !audioEos.get()) {
+              val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 2_000L)
               when {
                 aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                   audioTrack.set(muxer.addTrack(audioEncoder.outputFormat))
@@ -451,7 +533,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   }
                   val end = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                   audioEncoder.releaseOutputBuffer(aIndex, false)
-                  if (end) audioEos = true
+                  if (end) audioEos.set(true)
                 }
               }
             }
@@ -464,121 +546,87 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
       }
 
-      val producer = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-Frame-Producer") }
-      val gpuConsumer = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-GPU-Consumer") }
-      val done = CountDownLatch(1)
-
       val totalAudioFrames = if (hasAudio) masterPcm.size / audioChannels else 0
       var fedAudioFrames = 0
+      val renderCompleteLatch = CountDownLatch(1)
 
-      producer.execute {
+      // Execute entire frame rendering loop directly on the dedicated GL thread
+      glHandler.post {
         try {
-          for (i in 0 until totalFrames) {
+          for (frameIndex in 0 until totalFrames) {
             if (cancelled.get()) break
-            val pts = i * 1_000_000L / fps
-            if (queue.depth() >= 3) metrics.backpressureEvents.incrementAndGet()
-            if (!queue.put(PipelineFrame(i, pts, (pts / 1000L).coerceAtMost(durationMs - 1L)), cancelled)) break
-            metrics.maxQueueDepth.updateAndGet { maxOf(it, queue.depth().toLong()) }
-          }
-        } catch (t: Throwable) {
-          failure.set(t); cancelled.set(true)
-        } finally {
-          done.countDown()
-        }
-      }
 
-      gpuConsumer.execute {
-        try {
-          while (!cancelled.get()) {
-            val work = queue.take(cancelled) ?: break
-            val frame = composition.evaluateFrame(timeline, work.timelinePosMs)
+            val ptsUs = frameIndex * 1_000_000L / fps
+            val timelinePosMs = (ptsUs / 1000L).coerceAtMost(durationMs - 1L)
+            val frame = composition.evaluateFrame(timeline, timelinePosMs)
             val activeClip = frame.activeClip
 
-            val mainDecoder = activeClip?.let { decoders[it.id] }
             var mainTexId = 0
             var isMainOes = false
             var mainTexMatrix: FloatArray? = null
 
+            // 1. Decode & bind main video/image
+            val mainDecoder = activeClip?.let { decoders[it.id] }
             if (mainDecoder != null) {
               val decodeStart = System.nanoTime()
-              decodeExecutor.submit<FramePacket> { mainDecoder.decode(frame.clipSourcePosMs * 1000L, cancelled) }.get()
+              mainDecoder.decode(frame.clipSourcePosMs * 1000L, cancelled)
+              val main = mainDecoder.updateOnGl()
               metrics.decodeTimeNs.addAndGet(System.nanoTime() - decodeStart)
               metrics.decodedFrames.incrementAndGet()
               metrics.zeroCopyFrames.incrementAndGet()
+              mainTexId = main.textureId
+              isMainOes = true
+              mainTexMatrix = main.transformMatrix
             } else if (activeClip != null) {
-              // Image or fallback video
-              val bmp = imageBitmaps[activeClip.uri]
-              if (bmp != null) {
-                mainTexId = renderer!!.uploadImageTexture("main_${activeClip.id}", bmp)
-                isMainOes = false
-              }
+              mainTexId = imageTextures[activeClip.uri] ?: 0
+              isMainOes = false
             }
 
+            // 2. Decode & bind overlays
             val overlayTextures = HashMap<String, Int>()
-            val overlayDecoders = frame.activeOverlays.associate { it.clip.id to decoders[it.clip.id] }
-            for ((id, decoder) in overlayDecoders) {
-              if (decoder != null) {
-                decodeExecutor.submit<FramePacket> { decoder.decode(itSource(frame, id) * 1000L, cancelled) }.get()
+            for (overlay in frame.activeOverlays) {
+              val ovDecoder = decoders[overlay.clip.id]
+              if (ovDecoder != null) {
+                ovDecoder.decode(overlay.sourcePosMs * 1000L, cancelled)
+                val ovPacket = ovDecoder.updateOnGl()
+                overlayTextures[overlay.clip.id] = ovPacket.textureId
+              } else {
+                val texId = imageTextures[overlay.clip.uri]
+                if (texId != null && texId > 0) {
+                  overlayTextures[overlay.clip.id] = texId
+                }
               }
             }
 
-            val renderDone = CountDownLatch(1)
-            val renderFailure = AtomicReference<Throwable?>(null)
-            glHandler.post {
-              try {
-                if (mainDecoder != null) {
-                  val main = mainDecoder.updateOnGl().copy(frameIndex = work.index, presentationTimeUs = work.ptsUs)
-                  mainTexId = main.textureId
-                  isMainOes = true
-                  mainTexMatrix = main.transformMatrix
-                }
-
-                for (overlay in frame.activeOverlays) {
-                  val ovDecoder = overlayDecoders[overlay.clip.id]
-                  if (ovDecoder != null) {
-                    overlayTextures[overlay.clip.id] = ovDecoder.updateOnGl().textureId
-                  } else {
-                    val ovBmp = imageBitmaps[overlay.clip.uri]
-                    if (ovBmp != null) {
-                      overlayTextures[overlay.clip.id] = renderer!!.uploadImageTexture("overlay_${overlay.clip.id}", ovBmp)
-                    }
-                  }
-                }
-
-                val start = System.nanoTime()
-                renderer!!.render(
-                  frame = frame,
-                  mainTextureId = mainTexId,
-                  isMainOes = isMainOes,
-                  mainTexMatrix = mainTexMatrix,
-                  overlayTextures = overlayTextures,
-                  viewportWidth = width,
-                  viewportHeight = height,
-                  timelineAdjustments = timeline.adjustments,
-                  timelineFilter = timeline.filter,
-                  chromaKey = timeline.chromaKey
-                )
-                GLES20.glFlush()
-                window!!.setPresentationTime(work.ptsUs * 1000L)
-                if (!window!!.swapBuffers()) throw IllegalStateException("Encoder EGL swap failed at frame ${work.index}")
-                metrics.gpuRenderTimeNs.addAndGet(System.nanoTime() - start)
-                metrics.gpuFrames.incrementAndGet()
-              } catch (t: Throwable) {
-                renderFailure.set(t)
-              } finally {
-                renderDone.countDown()
-              }
+            // 3. Render hardware composition directly to encoder input surface
+            val startRender = System.nanoTime()
+            renderer?.render(
+              frame = frame,
+              mainTextureId = mainTexId,
+              isMainOes = isMainOes,
+              mainTexMatrix = mainTexMatrix,
+              overlayTextures = overlayTextures,
+              viewportWidth = width,
+              viewportHeight = height,
+              timelineAdjustments = timeline.adjustments,
+              timelineFilter = timeline.filter,
+              chromaKey = timeline.chromaKey
+            )
+            GLES20.glFlush()
+            window?.setPresentationTime(ptsUs * 1000L)
+            if (window?.swapBuffers() != true) {
+              throw IllegalStateException("Encoder EGL swap failed at frame $frameIndex")
             }
-            renderDone.await()
-            renderFailure.get()?.let { throw it }
+            metrics.gpuRenderTimeNs.addAndGet(System.nanoTime() - startRender)
+            metrics.gpuFrames.incrementAndGet()
 
-            // Feed Audio Pro-rata with Microsecond Precision
+            // 4. Feed Audio Pro-rata with Microsecond Precision
             if (hasAudio && audioEncoder != null) {
-              val targetAudioFrames = (((work.index + 1).toDouble() * audioSampleRate) / fps).toInt().coerceAtMost(totalAudioFrames)
+              val targetAudioFrames = (((frameIndex + 1).toDouble() * audioSampleRate) / fps).toInt().coerceAtMost(totalAudioFrames)
               while (fedAudioFrames < targetAudioFrames && !cancelled.get()) {
                 val framesToFeed = min(1024, targetAudioFrames - fedAudioFrames)
                 if (framesToFeed <= 0) break
-                val inputIndex = audioEncoder.dequeueInputBuffer(5_000L)
+                val inputIndex = audioEncoder.dequeueInputBuffer(2_000L)
                 if (inputIndex >= 0) {
                   val inputBuffer = audioEncoder.getInputBuffer(inputIndex)
                   if (inputBuffer != null) {
@@ -600,40 +648,65 @@ class AsyncFramePipelineEngine(private val context: Context) {
             }
           }
         } catch (t: Throwable) {
-          failure.set(t); cancelled.set(true)
+          failure.set(t)
+          cancelled.set(true)
+        } finally {
+          renderCompleteLatch.countDown()
         }
       }
 
-      done.await()
-      gpuConsumer.shutdown(); gpuConsumer.awaitTermination(60, TimeUnit.SECONDS)
-      producer.shutdown()
+      renderCompleteLatch.await()
+      failure.get()?.let { throw it }
 
+      // 6. Signal EOS to Video and Audio Encoders
       if (!cancelled.get()) {
         videoEncoder.signalEndOfInputStream()
         if (hasAudio && audioEncoder != null) {
-          val inputIndex = audioEncoder.dequeueInputBuffer(10_000L)
-          if (inputIndex >= 0) {
-            audioEncoder.queueInputBuffer(inputIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+          var audioEosSent = false
+          var attempts = 0
+          while (!audioEosSent && attempts < 50 && !cancelled.get()) {
+            val inputIndex = audioEncoder.dequeueInputBuffer(5_000L)
+            if (inputIndex >= 0) {
+              val audioPtsUs = (fedAudioFrames.toLong() * 1_000_000L) / audioSampleRate
+              audioEncoder.queueInputBuffer(inputIndex, 0, 0, audioPtsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+              audioEosSent = true
+            } else {
+              attempts++
+              Thread.sleep(5)
+            }
           }
         }
       }
 
       drainDone.await(60, TimeUnit.SECONDS)
+      drainExecutor.shutdown()
+
       Log.i(tag, "[MUXER_STOP] totalEncodedFrames=${metrics.encodedFrames.get()} audioSamples=${audioSamplesProcessed.get()}")
       Log.i(tag, "[FIRST_VIDEO_PTS] ${firstVideoPts.get()}us [LAST_VIDEO_PTS] ${lastVideoPts.get()}us")
       if (hasAudio) {
         Log.i(tag, "[FIRST_AUDIO_PTS] ${firstAudioPts.get()}us [LAST_AUDIO_PTS] ${lastAudioPts.get()}us")
       }
-      if (failure.get() != null) throw failure.get()!!
-      if (cancelled.get() || !isMuxStarted.get()) { outputFile.delete(); return@withContext null }
+      failure.get()?.let { throw it }
+      if (cancelled.get() || !isMuxStarted.get()) {
+        outputFile.delete()
+        return@withContext null
+      }
       outputFile.takeIf { it.exists() && it.length() > 0L }
     } catch (t: Throwable) {
       Log.e(tag, "Async hardware export pipeline error", t)
-      outputFile.delete(); null
+      outputFile.delete()
+      null
     } finally {
-      cancelled.set(true); queue.clear()
+      cancelled.set(true)
       decoders.values.forEach { runCatching { it.release() } }
-      runCatching { renderer?.release() }; runCatching { window?.release() }; runCatching { egl?.release() }
+      val cleanLatch = CountDownLatch(1)
+      glHandler.post {
+        runCatching { renderer?.release() }
+        runCatching { window?.release() }
+        runCatching { egl?.release() }
+        cleanLatch.countDown()
+      }
+      cleanLatch.await(2, TimeUnit.SECONDS)
       runCatching { inputSurface?.release() }
       runCatching { videoEncoder?.stop() }; runCatching { videoEncoder?.release() }
       runCatching { audioEncoder?.stop() }; runCatching { audioEncoder?.release() }
@@ -642,37 +715,44 @@ class AsyncFramePipelineEngine(private val context: Context) {
     }
   }
 
-  private fun itSource(frame: com.example.engine.composition.ComposedFrame, id: String): Long =
-    frame.activeOverlays.firstOrNull { it.clip.id == id }?.sourcePosMs ?: 0L
-
   private fun selectEncoder(config: ExportConfig, w: Int, h: Int, fps: Int): String? {
     val mimes = when (config.codecProfile) {
       CodecProfile.H265_HEVC -> listOf(MediaFormat.MIMETYPE_VIDEO_HEVC)
       CodecProfile.H264_AVC -> listOf(MediaFormat.MIMETYPE_VIDEO_AVC)
       CodecProfile.AUTO -> listOf(MediaFormat.MIMETYPE_VIDEO_AVC, MediaFormat.MIMETYPE_VIDEO_HEVC)
     }
-    for (mime in mimes) for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
-      if (!info.isEncoder || !hardware(info) || !info.supportedTypes.any { it.equals(mime, true) }) continue
-      val caps = runCatching { info.getCapabilitiesForType(mime) }.getOrNull() ?: continue
-      val vc = caps.videoCapabilities ?: continue
-      val sizeOk = runCatching { vc.isSizeSupported(w, h) }.getOrDefault(true)
-      val formatOk = caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-      if (formatOk && sizeOk) return mime
+    for (mime in mimes) {
+      for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
+        if (!info.isEncoder || !hardware(info) || !info.supportedTypes.any { it.equals(mime, true) }) continue
+        val caps = runCatching { info.getCapabilitiesForType(mime) }.getOrNull() ?: continue
+        val vc = caps.videoCapabilities ?: continue
+        val sizeOk = runCatching { vc.isSizeSupported(w, h) }.getOrDefault(true)
+        val formatOk = caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+        if (formatOk && sizeOk) return mime
+      }
     }
-    return null
+    // Universal fallback
+    return MediaFormat.MIMETYPE_VIDEO_AVC
   }
 
-  private fun hardware(info: MediaCodecInfo) = if (android.os.Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated else {
-    val n = info.name.lowercase(); !n.startsWith("omx.google.") && !n.startsWith("c2.android.") && !n.contains("software")
+  private fun hardware(info: MediaCodecInfo) = if (android.os.Build.VERSION.SDK_INT >= 29) {
+    info.isHardwareAccelerated
+  } else {
+    val n = info.name.lowercase()
+    !n.startsWith("omx.google.") && !n.startsWith("c2.android.") && !n.contains("software")
   }
 
-  private fun bitrate(config: ExportConfig) = if (config.quality == ExportQuality.CUSTOM && config.customBitrateKbps > 0) config.customBitrateKbps * 1000 else when (config.resolution) {
-    Resolution.RES_480P -> 2_500_000
-    Resolution.RES_720P -> 5_000_000
-    Resolution.RES_1080P -> 10_000_000
-    Resolution.RES_2K, Resolution.RES_VERTICAL_2K -> 18_000_000
-    Resolution.RES_4K, Resolution.RES_VERTICAL_4K -> 35_000_000
-    Resolution.RES_SQUARE_2K -> 22_000_000
+  private fun bitrate(config: ExportConfig) = if (config.quality == ExportQuality.CUSTOM && config.customBitrateKbps > 0) {
+    config.customBitrateKbps * 1000
+  } else {
+    when (config.resolution) {
+      Resolution.RES_480P -> 2_500_000
+      Resolution.RES_720P -> 5_000_000
+      Resolution.RES_1080P -> 10_000_000
+      Resolution.RES_2K, Resolution.RES_VERTICAL_2K -> 18_000_000
+      Resolution.RES_4K, Resolution.RES_VERTICAL_4K -> 35_000_000
+      Resolution.RES_SQUARE_2K -> 22_000_000
+    }
   }
 
   private fun dimensions(resolution: Resolution, aspect: AspectRatio): Pair<Int, Int> {

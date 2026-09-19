@@ -1047,6 +1047,7 @@ class TimelineEngine {
     uri: String,
     name: String,
     isVideo: Boolean = true,
+    startTimeMs: Long? = null,
     durationMs: Long = 3000L,
     scale: Float = 0.45f,
     posX: Float = 0.25f,
@@ -1063,11 +1064,12 @@ class TimelineEngine {
     recordHistory()
     val currentOverlays = _timeline.value.overlayClips.toMutableList()
     val nextOverlayTrack = (currentOverlays.maxOfOrNull { it.trackIndex } ?: 0) + 1
+    val start = startTimeMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
     val newOverlay = VideoClip(
       uri = uri,
       name = name,
       isVideo = isVideo,
-      timelineStartMs = _currentPositionMs.value,
+      timelineStartMs = start,
       durationMs = durationMs,
       sourceStartMs = 0L,
       sourceEndMs = durationMs,
@@ -3270,15 +3272,17 @@ class TimelineEngine {
     uri: String = "internal://$title",
     waveformData: List<Float>? = null,
     fadeInMs: Long = 400L,
-    fadeOutMs: Long = 600L
+    fadeOutMs: Long = 600L,
+    startTimeMs: Long? = null
   ) {
     recordHistory()
     val maxFade = durationMs / 2
     val nextAudioTrack = ( _timeline.value.audioClips.maxOfOrNull { it.trackIndex } ?: 0) + 1
+    val start = startTimeMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
     val newAudio = AudioClip(
       title = title,
       uri = uri,
-      timelineStartMs = _currentPositionMs.value,
+      timelineStartMs = start,
       durationMs = durationMs,
       fadeInMs = fadeInMs.coerceIn(0L, maxFade),
       fadeOutMs = fadeOutMs.coerceIn(0L, maxFade),
@@ -3303,15 +3307,16 @@ class TimelineEngine {
 
   fun addTextClip(
     text: String = "NEW TEXT",
-    timelineStartMs: Long = _currentPositionMs.value,
+    timelineStartMs: Long? = null,
     durationMs: Long = 3000L
   ) {
     recordHistory()
     val maxTrack = _timeline.value.textClips.maxOfOrNull { it.trackIndex } ?: -1
     val newTrackIndex = maxTrack + 1
+    val start = timelineStartMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
     val newText = TextClip(
       text = text,
-      timelineStartMs = timelineStartMs,
+      timelineStartMs = start,
       durationMs = durationMs,
       trackIndex = newTrackIndex,
       fontSizeSp = 24f,
@@ -5200,4 +5205,775 @@ class TimelineEngine {
     }
     return true
   }
+
+  // =========================================================================
+  // --- UPGRADED MULTI-TRACK, TIMING, BRIDGE & ENGINE INTEGRATION APIS ---
+  // =========================================================================
+
+  /**
+   * Converts a timeline millisecond timestamp to microseconds.
+   */
+  fun timeMsToMicros(timeMs: Long): Long = timeMs * 1000L
+
+  /**
+   * Converts microseconds to timeline millisecond timestamp.
+   */
+  fun microsToTimeMs(micros: Long): Long = micros / 1000L
+
+  /**
+   * Converts a frame index to microseconds at [fps].
+   */
+  fun frameToMicros(frame: Long, fps: Int = _timelineFps.value): Long {
+    val rate = fps.coerceAtLeast(1)
+    return (frame * 1_000_000L) / rate
+  }
+
+  /**
+   * Converts microseconds to frame index at [fps].
+   */
+  fun microsToFrame(micros: Long, fps: Int = _timelineFps.value): Long {
+    val rate = fps.coerceAtLeast(1)
+    return (micros * rate) / 1_000_000L
+  }
+
+  /**
+   * Returns total timeline duration in frames at [fps].
+   */
+  fun totalDurationFrames(fps: Int = _timelineFps.value): Long {
+    return timeToFrame(_timeline.value.totalDurationMs, fps)
+  }
+
+  /**
+   * Returns current playhead position in frames at [fps].
+   */
+  fun currentFrameIndex(fps: Int = _timelineFps.value): Long {
+    return timeToFrame(_currentPositionMs.value, fps)
+  }
+
+  /**
+   * Returns the distinct list of all video track indices present in the timeline.
+   * Track 0 is the primary video track, and Track 1..N are overlay/PIP video tracks.
+   */
+  fun getVideoTrackIndices(): List<Int> {
+    val indices = mutableSetOf(0)
+    _timeline.value.overlayClips.forEach { indices.add(it.trackIndex.coerceAtLeast(1)) }
+    return indices.sorted()
+  }
+
+  /**
+   * Returns the distinct list of all audio track indices present in the timeline.
+   */
+  fun getAudioTrackIndices(): List<Int> {
+    val indices = mutableSetOf(0)
+    _timeline.value.audioClips.forEach { indices.add(it.trackIndex.coerceAtLeast(0)) }
+    return indices.sorted()
+  }
+
+  /**
+   * Returns all video clips on the specified video track lane.
+   * [trackIndex] = 0 returns main video clips; [trackIndex] >= 1 returns overlay clips for that lane.
+   */
+  fun getVideoClipsForTrack(trackIndex: Int): List<VideoClip> {
+    return if (trackIndex == 0) {
+      _timeline.value.videoClips
+    } else {
+      _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }
+    }
+  }
+
+  /**
+   * Returns all audio clips on the specified audio track lane.
+   */
+  fun getAudioClipsForTrack(trackIndex: Int): List<AudioClip> {
+    return _timeline.value.audioClips.filter { it.trackIndex == trackIndex }
+  }
+
+  /**
+   * Returns all text clips on the specified text track lane.
+   */
+  fun getTextClipsForTrack(trackIndex: Int): List<TextClip> {
+    return _timeline.value.textClips.filter { it.trackIndex == trackIndex }
+  }
+
+  /**
+   * Adds a video clip to a specific video track lane.
+   * Track 0 appends or places it on the main video track; Track > 0 places it on the overlay track.
+   */
+  fun addVideoClipToTrack(
+    trackIndex: Int,
+    uri: String,
+    name: String,
+    startMs: Long = _currentPositionMs.value,
+    durationMs: Long = 3000L,
+    isVideo: Boolean = true,
+    width: Int = 1920,
+    height: Int = 1080,
+    rotationDegrees: Int = 0,
+    frameRate: Float = 30f,
+    mimeType: String = "video/mp4",
+    hasAudio: Boolean = true
+  ): String {
+    recordHistory()
+    return if (trackIndex == 0) {
+      addVideoClip(
+        uri = uri,
+        name = name,
+        durationMs = durationMs,
+        isVideo = isVideo,
+        width = width,
+        height = height,
+        rotationDegrees = rotationDegrees,
+        frameRate = frameRate,
+        mimeType = mimeType,
+        hasAudio = hasAudio
+      )
+    } else {
+      val overlays = _timeline.value.overlayClips.toMutableList()
+      val newClip = VideoClip(
+        uri = uri,
+        name = name,
+        isVideo = isVideo,
+        timelineStartMs = startMs,
+        durationMs = durationMs,
+        sourceStartMs = 0L,
+        sourceEndMs = durationMs,
+        width = width,
+        height = height,
+        naturalRotation = rotationDegrees,
+        frameRate = frameRate,
+        mimeType = mimeType,
+        hasAudio = hasAudio,
+        trackIndex = trackIndex
+      )
+      overlays.add(newClip)
+      overlays.sortBy { it.timelineStartMs }
+      _timeline.value = _timeline.value.copy(overlayClips = overlays)
+      _selectedElement.value = SelectedTrackElement.Overlay(newClip.id)
+      newClip.id
+    }
+  }
+
+  /**
+   * Adds an audio clip to a specific audio track lane.
+   */
+  fun addAudioClipToTrack(
+    trackIndex: Int,
+    uri: String,
+    title: String,
+    startMs: Long = _currentPositionMs.value,
+    durationMs: Long = 5000L,
+    volume: Float = 1.0f,
+    fadeInMs: Long = 0L,
+    fadeOutMs: Long = 0L
+  ): String {
+    recordHistory()
+    val audioClips = _timeline.value.audioClips.toMutableList()
+    val newClip = AudioClip(
+      uri = uri,
+      title = title,
+      timelineStartMs = startMs,
+      durationMs = durationMs,
+      sourceStartMs = 0L,
+      sourceEndMs = durationMs,
+      volume = volume,
+      fadeInMs = fadeInMs,
+      fadeOutMs = fadeOutMs,
+      trackIndex = trackIndex
+    )
+    audioClips.add(newClip)
+    audioClips.sortBy { it.timelineStartMs }
+    _timeline.value = _timeline.value.copy(audioClips = audioClips)
+    _selectedElement.value = SelectedTrackElement.Audio(newClip.id)
+    return newClip.id
+  }
+
+  /**
+   * Moves a clip to a different track lane or track type.
+   */
+  fun moveClipToTrackLane(clipId: String, targetTrackType: TrackType, targetTrackIndex: Int): Boolean = withStateLock {
+    val element = findTrackElementForClip(clipId)
+    if (element == SelectedTrackElement.None) return false
+    recordHistory(TimelineActionType.MOVE_CLIP, "Move Clip to Track Lane", setOf(clipId))
+
+    when (element) {
+      is SelectedTrackElement.Video -> {
+        if (targetTrackType == TrackType.OVERLAY || targetTrackIndex > 0) {
+          val clip = _timeline.value.videoClips.find { it.id == clipId } ?: return false
+          val newVideos = _timeline.value.videoClips.filterNot { it.id == clipId }
+          val newOverlays = (_timeline.value.overlayClips + clip.copy(trackIndex = targetTrackIndex.coerceAtLeast(1))).sortedBy { it.timelineStartMs }
+          _timeline.value = _timeline.value.copy(videoClips = newVideos, overlayClips = newOverlays)
+          selectElement(SelectedTrackElement.Overlay(clipId))
+          enforceMainTrackContinuity()
+          return true
+        }
+        return false
+      }
+      is SelectedTrackElement.Overlay -> {
+        val clip = _timeline.value.overlayClips.find { it.id == clipId } ?: return false
+        if (targetTrackType == TrackType.MAIN_VIDEO || targetTrackIndex == 0) {
+          val newOverlays = _timeline.value.overlayClips.filterNot { it.id == clipId }
+          val newVideos = (_timeline.value.videoClips + clip.copy(trackIndex = 0)).sortedBy { it.timelineStartMs }
+          _timeline.value = _timeline.value.copy(videoClips = newVideos, overlayClips = newOverlays)
+          selectElement(SelectedTrackElement.Video(clipId))
+          enforceMainTrackContinuity()
+          return true
+        } else {
+          val updated = _timeline.value.overlayClips.map {
+            if (it.id == clipId) it.copy(trackIndex = targetTrackIndex.coerceAtLeast(1)) else it
+          }
+          _timeline.value = _timeline.value.copy(overlayClips = updated)
+          return true
+        }
+      }
+      is SelectedTrackElement.Audio -> {
+        val updated = _timeline.value.audioClips.map {
+          if (it.id == clipId) it.copy(trackIndex = targetTrackIndex.coerceAtLeast(0)) else it
+        }
+        _timeline.value = _timeline.value.copy(audioClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Text -> {
+        val updated = _timeline.value.textClips.map {
+          if (it.id == clipId) it.copy(trackIndex = targetTrackIndex.coerceAtLeast(0)) else it
+        }
+        _timeline.value = _timeline.value.copy(textClips = updated)
+        return true
+      }
+      else -> return false
+    }
+  }
+
+  /**
+   * Reorders clips within a specific track lane.
+   */
+  fun reorderTrackClips(trackType: TrackType, trackIndex: Int, fromIndex: Int, toIndex: Int): Boolean = withStateLock {
+    if (fromIndex == toIndex) return false
+    recordHistory(TimelineActionType.MOVE_CLIP, "Reorder Track Clips", emptySet())
+
+    when (trackType) {
+      TrackType.MAIN_VIDEO -> {
+        val clips = _timeline.value.videoClips.toMutableList()
+        if (fromIndex !in clips.indices || toIndex !in clips.indices) return false
+        val item = clips.removeAt(fromIndex)
+        clips.add(toIndex, item)
+        var curStart = 0L
+        for (i in clips.indices) {
+          clips[i] = clips[i].copy(timelineStartMs = curStart)
+          curStart += clips[i].durationMs
+        }
+        _timeline.value = _timeline.value.copy(videoClips = clips)
+        return true
+      }
+      TrackType.OVERLAY -> {
+        val trackClips = _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }.toMutableList()
+        val otherClips = _timeline.value.overlayClips.filter { it.trackIndex != trackIndex }
+        if (fromIndex !in trackClips.indices || toIndex !in trackClips.indices) return false
+        val item = trackClips.removeAt(fromIndex)
+        trackClips.add(toIndex, item)
+        _timeline.value = _timeline.value.copy(overlayClips = (otherClips + trackClips).sortedBy { it.timelineStartMs })
+        return true
+      }
+      TrackType.AUDIO -> {
+        val trackClips = _timeline.value.audioClips.filter { it.trackIndex == trackIndex }.toMutableList()
+        val otherClips = _timeline.value.audioClips.filter { it.trackIndex != trackIndex }
+        if (fromIndex !in trackClips.indices || toIndex !in trackClips.indices) return false
+        val item = trackClips.removeAt(fromIndex)
+        trackClips.add(toIndex, item)
+        _timeline.value = _timeline.value.copy(audioClips = (otherClips + trackClips).sortedBy { it.timelineStartMs })
+        return true
+      }
+      else -> return false
+    }
+  }
+
+  /**
+   * Splits a specific clip at [splitTimeMs], accurately calculating speed-adjusted source timestamps
+   * and distributing keyframes between both halves.
+   */
+  fun splitClipAtTime(clipId: String, splitTimeMs: Long): Pair<String, String>? = withStateLock {
+    val element = findTrackElementForClip(clipId)
+    if (element == SelectedTrackElement.None) return null
+
+    when (element) {
+      is SelectedTrackElement.Video -> {
+        val index = _timeline.value.videoClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.videoClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Video Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val splitSourcePos = clip.timelineToSourceMs(splitTimeMs)
+
+        val clip1 = clip.copy(
+          durationMs = firstDur,
+          sourceEndMs = splitSourcePos,
+          keyframes = clip.keyframes.filter { it.timeMs <= firstDur }
+        )
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur,
+          sourceStartMs = splitSourcePos,
+          sourceEndMs = clip.sourceEndMs,
+          keyframes = clip.keyframes.filter { it.timeMs >= firstDur }.map { it.copy(timeMs = it.timeMs - firstDur) }
+        )
+        val list = _timeline.value.videoClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(videoClips = list)
+        selectElement(SelectedTrackElement.Video(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      is SelectedTrackElement.Overlay -> {
+        val index = _timeline.value.overlayClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.overlayClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Overlay Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val splitSourcePos = clip.timelineToSourceMs(splitTimeMs)
+
+        val clip1 = clip.copy(
+          durationMs = firstDur,
+          sourceEndMs = splitSourcePos,
+          keyframes = clip.keyframes.filter { it.timeMs <= firstDur }
+        )
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur,
+          sourceStartMs = splitSourcePos,
+          sourceEndMs = clip.sourceEndMs,
+          keyframes = clip.keyframes.filter { it.timeMs >= firstDur }.map { it.copy(timeMs = it.timeMs - firstDur) }
+        )
+        val list = _timeline.value.overlayClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(overlayClips = list)
+        selectElement(SelectedTrackElement.Overlay(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      is SelectedTrackElement.Audio -> {
+        val index = _timeline.value.audioClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.audioClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Audio Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val splitSourcePos = clip.sourceStartMs + (firstDur * clip.speed).toLong()
+
+        val clip1FadeOut = if (clip.fadeOutMs > 0L) minOf(clip.fadeOutMs, firstDur / 2) else 100L.coerceAtMost(firstDur / 2)
+        val clip2FadeIn = if (clip.fadeInMs > 0L) minOf(clip.fadeInMs, secondDur / 2) else 100L.coerceAtMost(secondDur / 2)
+
+        val clip1 = clip.copy(
+          durationMs = firstDur,
+          sourceEndMs = splitSourcePos,
+          fadeOutMs = clip1FadeOut,
+          keyframes = clip.keyframes.filter { it.timeMs <= firstDur }
+        )
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur,
+          sourceStartMs = splitSourcePos,
+          sourceEndMs = clip.sourceEndMs,
+          fadeInMs = clip2FadeIn,
+          keyframes = clip.keyframes.filter { it.timeMs >= firstDur }.map { it.copy(timeMs = it.timeMs - firstDur) }
+        )
+        val list = _timeline.value.audioClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(audioClips = list)
+        selectElement(SelectedTrackElement.Audio(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      is SelectedTrackElement.Text -> {
+        val index = _timeline.value.textClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.textClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Text Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val clip1 = clip.copy(durationMs = firstDur)
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur
+        )
+        val list = _timeline.value.textClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(textClips = list)
+        selectElement(SelectedTrackElement.Text(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      is SelectedTrackElement.Sticker -> {
+        val index = _timeline.value.stickerClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.stickerClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Sticker Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val clip1 = clip.copy(
+          durationMs = firstDur,
+          keyframes = clip.keyframes.filter { it.timeMs <= firstDur }
+        )
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur,
+          keyframes = clip.keyframes.filter { it.timeMs >= firstDur }.map { it.copy(timeMs = it.timeMs - firstDur) }
+        )
+        val list = _timeline.value.stickerClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(stickerClips = list)
+        selectElement(SelectedTrackElement.Sticker(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      is SelectedTrackElement.Effect -> {
+        val index = _timeline.value.effectClips.indexOfFirst { it.id == clipId }
+        if (index == -1) return null
+        val clip = _timeline.value.effectClips[index]
+        if (splitTimeMs <= clip.timelineStartMs + 10L || splitTimeMs >= clip.timelineStartMs + clip.durationMs - 10L) return null
+
+        recordHistory(TimelineActionType.SPLIT_CLIP, "Split Effect Clip", setOf(clipId))
+        val firstDur = splitTimeMs - clip.timelineStartMs
+        val secondDur = clip.durationMs - firstDur
+        val clip1 = clip.copy(
+          durationMs = firstDur,
+          keyframes = clip.keyframes.filter { it.timeMs <= firstDur }
+        )
+        val clip2 = clip.copy(
+          id = UUID.randomUUID().toString(),
+          timelineStartMs = splitTimeMs,
+          durationMs = secondDur,
+          keyframes = clip.keyframes.filter { it.timeMs >= firstDur }.map { it.copy(timeMs = it.timeMs - firstDur) }
+        )
+        val list = _timeline.value.effectClips.toMutableList()
+        list[index] = clip1
+        list.add(index + 1, clip2)
+        _timeline.value = _timeline.value.copy(effectClips = list)
+        selectElement(SelectedTrackElement.Effect(clip2.id))
+        return Pair(clip1.id, clip2.id)
+      }
+      else -> return null
+    }
+  }
+
+  /**
+   * Adds a keyframe to a specific clip by ID.
+   */
+  fun addKeyframeToClip(clipId: String, keyframe: ClipKeyframe): Boolean = withStateLock {
+    val element = findTrackElementForClip(clipId)
+    if (element == SelectedTrackElement.None) return false
+    recordHistory(TimelineActionType.KEYFRAME_EDIT, "Add Keyframe", setOf(clipId))
+
+    when (element) {
+      is SelectedTrackElement.Video -> {
+        val updated = _timeline.value.videoClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(videoClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Overlay -> {
+        val updated = _timeline.value.overlayClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(overlayClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Audio -> {
+        val updated = _timeline.value.audioClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(audioClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Sticker -> {
+        val updated = _timeline.value.stickerClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(stickerClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Effect -> {
+        val updated = _timeline.value.effectClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(effectClips = updated)
+        return true
+      }
+      else -> return false
+    }
+  }
+
+  /**
+   * Updates transformation parameters (position, scale, rotation, opacity, blendMode) for any clip.
+   */
+  fun updateClipTransformation(
+    clipId: String,
+    posX: Float? = null,
+    posY: Float? = null,
+    scale: Float? = null,
+    rotation: Float? = null,
+    opacity: Float? = null,
+    blendMode: String? = null
+  ): Boolean = withStateLock {
+    val element = findTrackElementForClip(clipId)
+    if (element == SelectedTrackElement.None) return false
+    recordHistory(TimelineActionType.GENERIC_EDIT, "Transform Clip", setOf(clipId))
+
+    when (element) {
+      is SelectedTrackElement.Video -> {
+        val updated = _timeline.value.videoClips.map { clip ->
+          if (clip.id == clipId) {
+            clip.copy(
+              cropOffsetX = posX ?: clip.cropOffsetX,
+              cropOffsetY = posY ?: clip.cropOffsetY,
+              cropScale = scale ?: clip.cropScale,
+              opacity = opacity ?: clip.opacity,
+              blendMode = blendMode ?: clip.blendMode
+            )
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(videoClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Overlay -> {
+        val updated = _timeline.value.overlayClips.map { clip ->
+          if (clip.id == clipId) {
+            clip.copy(
+              cropOffsetX = posX ?: clip.cropOffsetX,
+              cropOffsetY = posY ?: clip.cropOffsetY,
+              cropScale = scale ?: clip.cropScale,
+              opacity = opacity ?: clip.opacity,
+              blendMode = blendMode ?: clip.blendMode
+            )
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(overlayClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Text -> {
+        val updated = _timeline.value.textClips.map { clip ->
+          if (clip.id == clipId) {
+            clip.copy(
+              posX = posX ?: clip.posX,
+              posY = posY ?: clip.posY,
+              scale = scale ?: clip.scale,
+              rotation = rotation ?: clip.rotation,
+              opacity = opacity ?: clip.opacity
+            )
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Sticker -> {
+        val updated = _timeline.value.stickerClips.map { clip ->
+          if (clip.id == clipId) {
+            clip.copy(
+              posX = posX ?: clip.posX,
+              posY = posY ?: clip.posY,
+              scale = scale ?: clip.scale,
+              rotation = rotation ?: clip.rotation,
+              opacity = opacity ?: clip.opacity
+            )
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(stickerClips = updated)
+        return true
+      }
+      else -> return false
+    }
+  }
+
+  /**
+   * Evaluates and returns all active elements at [posMs] across all tracks and layers.
+   */
+  fun getActiveClipsAt(posMs: Long): TimelineActiveSnapshot {
+    val curTimeline = _timeline.value
+    val isVideoHidden = curTimeline.trackSettings[TrackType.MAIN_VIDEO]?.isHidden == true
+    val isOverlayHidden = curTimeline.trackSettings[TrackType.OVERLAY]?.isHidden == true
+    val isAudioHidden = curTimeline.trackSettings[TrackType.AUDIO]?.isHidden == true
+    val isTextHidden = curTimeline.trackSettings[TrackType.TEXT]?.isHidden == true
+    val isStickerHidden = curTimeline.trackSettings[TrackType.STICKER]?.isHidden == true
+    val isEffectHidden = curTimeline.trackSettings[TrackType.EFFECT]?.isHidden == true
+
+    val activeVideo = if (!isVideoHidden) {
+      curTimeline.videoClips.find { !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs }
+    } else null
+
+    val activeOverlays = if (!isOverlayHidden) {
+      curTimeline.overlayClips.filter { !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs }.sortedBy { it.trackIndex }
+    } else emptyList()
+
+    val activeAudios = if (!isAudioHidden) {
+      curTimeline.audioClips.filter { !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs }.sortedBy { it.trackIndex }
+    } else emptyList()
+
+    val activeTexts = if (!isTextHidden) {
+      curTimeline.textClips.filter { !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs }.sortedBy { it.trackIndex }
+    } else emptyList()
+
+    val activeStickers = if (!isStickerHidden) {
+      curTimeline.stickerClips.filter { !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs }
+    } else emptyList()
+
+    val activeEffects = if (!isEffectHidden) {
+      curTimeline.effectClips.filter { clip ->
+        !clip.isHidden && when {
+          clip.targetClipId != null -> activeVideo != null && activeVideo.id == clip.targetClipId &&
+            posMs >= activeVideo.timelineStartMs && posMs < activeVideo.timelineStartMs + activeVideo.durationMs
+          else -> posMs >= clip.timelineStartMs && posMs < clip.timelineStartMs + clip.durationMs
+        }
+      }
+    } else emptyList()
+
+    var activeTransition: Transition? = null
+    var transitionProgress = 0f
+    var transitionClipBefore: VideoClip? = null
+    var transitionClipAfter: VideoClip? = null
+
+    if (!isVideoHidden) {
+      for (tr in curTimeline.transitions) {
+        if (tr.clipIndexBefore >= 0 && tr.clipIndexBefore < curTimeline.videoClips.size - 1) {
+          val clipBefore = curTimeline.videoClips[tr.clipIndexBefore]
+          val clipAfter = curTimeline.videoClips[tr.clipIndexBefore + 1]
+          val transitionStart = clipBefore.timelineStartMs + clipBefore.durationMs - (tr.durationMs / 2)
+          val transitionEnd = transitionStart + tr.durationMs
+
+          if (posMs in transitionStart until transitionEnd) {
+            activeTransition = tr
+            transitionProgress = ((posMs - transitionStart).toFloat() / tr.durationMs).coerceIn(0f, 1f)
+            transitionClipBefore = clipBefore
+            transitionClipAfter = clipAfter
+            break
+          }
+        }
+      }
+    }
+
+    return TimelineActiveSnapshot(
+      timelinePosMs = posMs,
+      primaryVideoClip = activeVideo,
+      activeOverlays = activeOverlays,
+      activeAudioClips = activeAudios,
+      activeTextClips = activeTexts,
+      activeStickerClips = activeStickers,
+      activeEffects = activeEffects,
+      activeTransition = activeTransition,
+      transitionProgress = transitionProgress,
+      transitionClipBefore = transitionClipBefore,
+      transitionClipAfter = transitionClipAfter
+    )
+  }
+
+  /**
+   * Calculates the exact audio volume level of an audio clip at [posMs], taking into account
+   * base volume, track settings (mute/solo), fade in/out envelopes, keyframes, and ducking.
+   */
+  fun getEffectiveAudioVolumeAt(clip: AudioClip, posMs: Long): Float {
+    val trackSettings = _timeline.value.trackSettings[TrackType.AUDIO]
+    if (trackSettings?.isMuted == true) return 0f
+
+    val anySolo = _timeline.value.trackSettings.values.any { it.isSolo }
+    if (anySolo && trackSettings?.isSolo != true) return 0f
+
+    val relMs = posMs - clip.timelineStartMs
+    if (relMs < 0L || relMs > clip.durationMs) return 0f
+
+    var baseVol = clip.volume
+
+    // Apply Fade In
+    if (clip.fadeInMs > 0L && relMs < clip.fadeInMs) {
+      val progress = (relMs.toFloat() / clip.fadeInMs).coerceIn(0f, 1f)
+      baseVol *= (progress * progress)
+    }
+
+    // Apply Fade Out
+    if (clip.fadeOutMs > 0L && relMs > clip.durationMs - clip.fadeOutMs) {
+      val remaining = (clip.durationMs - relMs).coerceAtLeast(0L)
+      val progress = (remaining.toFloat() / clip.fadeOutMs).coerceIn(0f, 1f)
+      baseVol *= (progress * progress)
+    }
+
+    // Apply Keyframes
+    if (clip.keyframes.isNotEmpty()) {
+      val kfVol = KeyframeInterpolator.interpolateVolume(clip.keyframes, relMs)
+      baseVol *= kfVol
+    }
+
+    return baseVol.coerceAtLeast(0f)
+  }
+
+  /**
+   * Calculates the exact audio volume level of a video clip's audio stream at [posMs].
+   */
+  fun getVideoClipAudioVolumeAt(clip: VideoClip, posMs: Long): Float {
+    if (clip.isMuted || !clip.hasAudio) return 0f
+    val trackType = if (clip.trackIndex == 0) TrackType.MAIN_VIDEO else TrackType.OVERLAY
+    val trackSettings = _timeline.value.trackSettings[trackType]
+    if (trackSettings?.isMuted == true) return 0f
+
+    val anySolo = _timeline.value.trackSettings.values.any { it.isSolo }
+    if (anySolo && trackSettings?.isSolo != true) return 0f
+
+    val relMs = posMs - clip.timelineStartMs
+    if (relMs < 0L || relMs > clip.durationMs) return 0f
+
+    var baseVol = clip.volume
+
+    if (clip.keyframes.isNotEmpty()) {
+      val kf = KeyframeInterpolator.interpolate(clip, relMs)
+      baseVol *= kf.volume
+    }
+
+    return baseVol.coerceAtLeast(0f)
+  }
 }
+
+/**
+ * Snapshot of all active elements on the timeline at a given timestamp.
+ */
+data class TimelineActiveSnapshot(
+  val timelinePosMs: Long,
+  val primaryVideoClip: VideoClip?,
+  val activeOverlays: List<VideoClip>,
+  val activeAudioClips: List<AudioClip>,
+  val activeTextClips: List<TextClip>,
+  val activeStickerClips: List<StickerClip>,
+  val activeEffects: List<EffectClip>,
+  val activeTransition: Transition?,
+  val transitionProgress: Float,
+  val transitionClipBefore: VideoClip?,
+  val transitionClipAfter: VideoClip?
+)
+
