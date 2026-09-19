@@ -20,6 +20,7 @@ object NativeRenderBridge {
   private const val LAYER_STRIDE = 35
   private var isLibraryLoaded = false
   private var isInitialized = false
+  val isLoaded: Boolean get() = isLibraryLoaded && isInitialized
   private var bufferCapacityLayers = 64
   private var renderBuffer = FloatArray(bufferCapacityLayers * LAYER_STRIDE)
 

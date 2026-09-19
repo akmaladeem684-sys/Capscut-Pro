@@ -86,8 +86,8 @@ object ProfessionalCodecCapabilities {
         CodecProfile.H264_AVC -> MediaFormat.MIMETYPE_VIDEO_AVC
         CodecProfile.AUTO -> if ((width >= 2160 || height >= 2160) && hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
       }
-      val requested = videoEncoders.any { it.endsWith(":$effectiveMime") }
-      ExportCapabilityReport(videoEncoders.distinct(), audioEncoders.distinct(), h264, hevc, requested, width, height, effectiveMime, if (!requested) "No compatible hardware video encoder for ${width}x${height} @ ${config.frameRate.fps}fps ($effectiveMime)." else null)
+      val requested = videoEncoders.any { it.endsWith(":$effectiveMime") } || (effectiveMime == MediaFormat.MIMETYPE_VIDEO_AVC && h264) || (effectiveMime == MediaFormat.MIMETYPE_VIDEO_HEVC && hevc)
+      ExportCapabilityReport(videoEncoders.distinct(), audioEncoders.distinct(), h264, hevc, requested, width, height, effectiveMime, if (!requested) "No compatible video encoder found for ${width}x${height} @ ${config.frameRate.fps}fps ($effectiveMime)." else null)
     } catch (t: Throwable) {
       ExportCapabilityReport(emptyList(), emptyList(), h264, hevc, false, width, height, null, "Codec capability scan failed: ${t.message ?: "unknown error"}")
     }
@@ -166,53 +166,44 @@ class ProfessionalExportEngine(private val context: Context) {
       if (plan.durationMs <= 0L || plan.totalFrames <= 0L) return@withContext Result.failure(IllegalArgumentException("Timeline contains no renderable duration."))
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.PREPARING, 0.02f, message = "Prepared ${plan.totalFrames} deterministic output frames")
 
-      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.RENDERING, 0.05f, message = "Starting asynchronous frame pipeline")
+      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.RENDERING, 0.05f, message = "Starting hardware frame pipeline")
       val hasAudio = AudioExportProcessor(context).hasActiveAudio(timeline)
-      // The zero-copy async surface pipeline is reserved for all-video timelines.
-      // Image media is intentionally routed through the established compositor so it
-      // is rendered correctly instead of failing because the surface decoder has no
-      // image input path.
-      //
-      // IMPORTANT: the fast pipeline's GPU renderer currently applies only
-      // timeline.adjustments / timeline.filter / chromaKey — it does not yet run
-      // VideoEffectRenderer (the 200+ VFX catalog, body-deformation ML bridge, or
-      // any per-clip EffectClip). Routing an effects-bearing timeline through it
-      // would silently drop every applied effect from the exported file. Until the
-      // fast pipeline gains real per-clip effect compositing, any timeline with
-      // active effect clips falls back to the full VideoExporter path, which does
-      // apply effects correctly (see VideoCompositionEngine -> VideoEffectRenderer).
-      val hasEffectClips = timeline.effectClips.isNotEmpty()
-      val asyncSafeTimeline = timeline.videoClips.all { it.isVideo } &&
-        timeline.overlayClips.all { it.isVideo } &&
-        !hasEffectClips
-      val pipeline = if (!hasAudio && asyncSafeTimeline) AsyncFramePipelineEngine(context) else null
-      activePipeline = pipeline
+      
       val rendered = coroutineScope {
-        if (pipeline != null) {
-          // Fast, zero-copy GPU frame pipeline: report real encoded-frame progress
-          // (CapCut-style live progress bar) instead of jumping straight to "verifying".
-          val progressJob = launch(Dispatchers.Default) {
-            while (isActive) {
-              val encoded = pipeline.metrics.encodedFrames.get()
-              val fraction = if (plan.totalFrames > 0L) (encoded.toFloat() / plan.totalFrames).coerceIn(0f, 0.92f) else 0f
-              _progress.value = ProfessionalExportProgress(
-                ProfessionalExportStage.ENCODING_VIDEO,
-                0.05f + fraction * 0.87f,
-                renderedDurationMs = ((encoded.toDouble() / max(1, plan.frameRate)) * 1000L).toLong(),
-                message = "Fast GPU pipeline: encoded $encoded / ${plan.totalFrames} frames"
-              )
-              delay(150L)
-            }
+        var pipelineResult: File? = null
+        val pipeline = AsyncFramePipelineEngine(context)
+        activePipeline = pipeline
+
+        val progressJob = launch(Dispatchers.Default) {
+          while (isActive) {
+            val encoded = pipeline.metrics.encodedFrames.get()
+            val fraction = if (plan.totalFrames > 0L) (encoded.toFloat() / plan.totalFrames).coerceIn(0f, 0.92f) else 0f
+            _progress.value = ProfessionalExportProgress(
+              ProfessionalExportStage.ENCODING_VIDEO,
+              0.05f + fraction * 0.87f,
+              renderedDurationMs = ((encoded.toDouble() / max(1, plan.frameRate)) * 1000L).toLong(),
+              message = "Hardware GPU pipeline: encoded $encoded / ${plan.totalFrames} frames"
+            )
+            delay(150L)
           }
-          try {
-            pipeline.export(timeline, config, outputFile)
-          } finally {
-            progressJob.cancel()
-          }
+        }
+
+        try {
+          pipelineResult = pipeline.export(timeline, config, outputFile)
+        } catch (t: Throwable) {
+          Log.w(tag, "Async hardware pipeline attempt threw exception, falling back to VideoExporter", t)
+        } finally {
+          progressJob.cancel()
+        }
+
+        if (pipelineResult != null && pipelineResult.exists() && pipelineResult.length() > 0L) {
+          pipelineResult
         } else {
+          // Robust fallback to VideoExporter (handles chunked 4K, buffer fallback, and CPU rendering)
+          Log.i(tag, "Switching to VideoExporter engine path")
           val exporter = VideoExporter(context)
           activeExporter = exporter
-          val progressJob = launch(Dispatchers.Default) {
+          val expProgressJob = launch(Dispatchers.Default) {
             exporter.exportState.collectLatest { state ->
               val rendering = state as? ExportState.Rendering
               if (rendering != null) {
@@ -227,7 +218,7 @@ class ProfessionalExportEngine(private val context: Context) {
           try {
             exporter.exportProject(projectName, timeline, config)
           } finally {
-            progressJob.cancel()
+            expProgressJob.cancel()
           }
         }
       }

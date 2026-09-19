@@ -281,11 +281,30 @@ class GpuCompositionRenderer(private val context: Context) {
       cleanStaleTextureCaches()
     }
 
-    // 6. Render via Native C++ OpenGL ES 3.0 Engine
+    // 6. Render via Native C++ OpenGL ES 3.0 Engine or Kotlin OpenGL ES Fallback Compositor
     val hasEffects = frame.activeEffects.isNotEmpty()
-    if (hasEffects) {
-      NativeRenderBridge.beginOffscreen()
+    val isNativeLoaded = NativeRenderBridge.isLoaded
+
+    if (isNativeLoaded) {
+      if (hasEffects) {
+        NativeRenderBridge.beginOffscreen()
+      } else {
+        GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+        if (chromaKey.enabled && chromaKey.backgroundType == "Transparent") {
+          GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f)
+        } else {
+          GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
+        }
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+      }
+      NativeRenderBridge.renderFrame(nativeLayers)
     } else {
+      if (hasEffects) {
+        fboA.setup(viewportWidth, viewportHeight)
+        fboA.bind()
+      } else {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+      }
       GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
       if (chromaKey.enabled && chromaKey.backgroundType == "Transparent") {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f)
@@ -293,13 +312,15 @@ class GpuCompositionRenderer(private val context: Context) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
       }
       GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+      renderNativeLayersKotlin(nativeLayers, viewportWidth, viewportHeight)
+      if (hasEffects) {
+        fboA.unbind()
+      }
     }
-
-    NativeRenderBridge.renderFrame(nativeLayers)
 
     // 7. Apply Active Visual Effects (Multi-pass ping-ponging)
     if (hasEffects) {
-      val offscreenTex = NativeRenderBridge.endOffscreen()
+      val offscreenTex = if (isNativeLoaded) NativeRenderBridge.endOffscreen() else fboA.getTextureId()
       if (offscreenTex > 0) {
         fboA.setup(viewportWidth, viewportHeight)
         fboB.setup(viewportWidth, viewportHeight)
@@ -341,6 +362,93 @@ class GpuCompositionRenderer(private val context: Context) {
         }
       }
     }
+  }
+
+  private fun renderNativeLayersKotlin(
+    layers: List<NativeLayer>,
+    viewportWidth: Int,
+    viewportHeight: Int
+  ) {
+    if (layers.isEmpty() || program2D == 0) return
+    GLES20.glUseProgram(program2D)
+    GLES20.glEnable(GLES20.GL_BLEND)
+
+    val uMVPMatrixHandle = GLES20.glGetUniformLocation(program2D, "uMVPMatrix")
+    val uTexMatrixHandle = GLES20.glGetUniformLocation(program2D, "uTexMatrix")
+    val uTextureHandle = GLES20.glGetUniformLocation(program2D, "uTexture")
+    val uOpacityHandle = GLES20.glGetUniformLocation(program2D, "uOpacity")
+    val uBrightnessHandle = GLES20.glGetUniformLocation(program2D, "uBrightness")
+    val uContrastHandle = GLES20.glGetUniformLocation(program2D, "uContrast")
+    val uSaturationHandle = GLES20.glGetUniformLocation(program2D, "uSaturation")
+    val uExposureHandle = GLES20.glGetUniformLocation(program2D, "uExposure")
+    val uTemperatureHandle = GLES20.glGetUniformLocation(program2D, "uTemperature")
+    val uTintHandle = GLES20.glGetUniformLocation(program2D, "uTint")
+    val uHighlightsHandle = GLES20.glGetUniformLocation(program2D, "uHighlights")
+    val uShadowsHandle = GLES20.glGetUniformLocation(program2D, "uShadows")
+    val uVignetteHandle = GLES20.glGetUniformLocation(program2D, "uVignette")
+    val uGrainHandle = GLES20.glGetUniformLocation(program2D, "uGrain")
+    val uSharpnessHandle = GLES20.glGetUniformLocation(program2D, "uSharpness")
+    val uTexelSizeHandle = GLES20.glGetUniformLocation(program2D, "uTexelSize")
+    val uChromaEnabledHandle = GLES20.glGetUniformLocation(program2D, "uChromaEnabled")
+    val uBlurHandle = GLES20.glGetUniformLocation(program2D, "uBlur")
+    val uEffectParamHandle = GLES20.glGetUniformLocation(program2D, "uEffectParam")
+
+    if (uBrightnessHandle >= 0) GLES20.glUniform1f(uBrightnessHandle, 0f)
+    if (uContrastHandle >= 0) GLES20.glUniform1f(uContrastHandle, 1f)
+    if (uSaturationHandle >= 0) GLES20.glUniform1f(uSaturationHandle, 1f)
+    if (uExposureHandle >= 0) GLES20.glUniform1f(uExposureHandle, 0f)
+    if (uTemperatureHandle >= 0) GLES20.glUniform1f(uTemperatureHandle, 0f)
+    if (uTintHandle >= 0) GLES20.glUniform1f(uTintHandle, 0f)
+    if (uHighlightsHandle >= 0) GLES20.glUniform1f(uHighlightsHandle, 0f)
+    if (uShadowsHandle >= 0) GLES20.glUniform1f(uShadowsHandle, 0f)
+    if (uVignetteHandle >= 0) GLES20.glUniform1f(uVignetteHandle, 0f)
+    if (uGrainHandle >= 0) GLES20.glUniform1f(uGrainHandle, 0f)
+    if (uSharpnessHandle >= 0) GLES20.glUniform1f(uSharpnessHandle, 0f)
+    if (uTexelSizeHandle >= 0) GLES20.glUniform2f(uTexelSizeHandle, 1.0f / max(1, viewportWidth), 1.0f / max(1, viewportHeight))
+    if (uChromaEnabledHandle >= 0) GLES20.glUniform1i(uChromaEnabledHandle, 0)
+    if (uBlurHandle >= 0) GLES20.glUniform1f(uBlurHandle, 0f)
+    if (uEffectParamHandle >= 0) GLES20.glUniform1f(uEffectParamHandle, 0f)
+
+    val sortedLayers = layers.filter { it.isVisible && it.textureId > 0 }.sortedBy { it.zOrder }
+
+    for (layer in sortedLayers) {
+      when (layer.blendMode) {
+        NativeBlendMode.ADDITIVE -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)
+        NativeBlendMode.MULTIPLY -> GLES20.glBlendFunc(GLES20.GL_DST_COLOR, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        NativeBlendMode.SCREEN -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_COLOR)
+        NativeBlendMode.PREMULTIPLIED -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        else -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+      }
+
+      val mMatrix = FloatArray(16)
+      if (layer.useCustomMatrix && layer.transformMatrix != null) {
+        System.arraycopy(layer.transformMatrix, 0, mMatrix, 0, 16)
+      } else {
+        Matrix.setIdentityM(mMatrix, 0)
+        Matrix.translateM(mMatrix, 0, layer.posX, -layer.posY, 0f)
+        Matrix.rotateM(mMatrix, 0, -layer.rotation, 0f, 0f, 1f)
+        Matrix.scaleM(mMatrix, 0, layer.scaleX, layer.scaleY, 1f)
+      }
+      GLES20.glUniformMatrix4fv(uMVPMatrixHandle, 1, false, mMatrix, 0)
+
+      val tMatrix = FloatArray(16)
+      Matrix.setIdentityM(tMatrix, 0)
+      if (layer.uOffset != 0f || layer.vOffset != 0f || layer.uScale != 1f || layer.vScale != 1f) {
+        Matrix.translateM(tMatrix, 0, layer.uOffset, layer.vOffset, 0f)
+        Matrix.scaleM(tMatrix, 0, layer.uScale, layer.vScale, 1f)
+      }
+      GLES20.glUniformMatrix4fv(uTexMatrixHandle, 1, false, tMatrix, 0)
+
+      GLES20.glUniform1f(uOpacityHandle, layer.opacity.coerceIn(0f, 1f))
+
+      GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+      GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, layer.textureId)
+      GLES20.glUniform1i(uTextureHandle, 0)
+
+      drawQuad(program2D)
+    }
+
+    GLES20.glDisable(GLES20.GL_BLEND)
   }
 
   private fun processMainVideoTo2D(
