@@ -200,7 +200,7 @@ class ProfessionalExportEngine(private val context: Context) {
           pipelineResult
         } else {
           // Robust fallback to VideoExporter (handles chunked 4K, buffer fallback, and CPU rendering)
-          Log.i(tag, "Switching to VideoExporter engine path")
+          Log.i(tag, "[FALLBACK_REASON] Async hardware surface pipeline produced no output, switching to VideoExporter")
           val exporter = VideoExporter(context)
           activeExporter = exporter
           val expProgressJob = launch(Dispatchers.Default) {
@@ -228,12 +228,14 @@ class ProfessionalExportEngine(private val context: Context) {
 
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.VERIFYING, 0.94f, plan.durationMs, message = "Verifying MP4 tracks, resolution, FPS, duration and decodability")
       val validation = ExportValidator.validate(rendered, config, plan.durationMs, requireAudio && hasAudio, dimensions)
+      Log.i(tag, "[VALIDATION_RESULT] valid=${validation.valid} message=${validation.message} duration=${validation.durationMs}ms videoCodec=${validation.videoCodec} audioCodec=${validation.audioCodec} res=${validation.width}x${validation.height}")
       if (!validation.valid) { rendered.delete(); return@withContext Result.failure(IllegalStateException(validation.message)) }
       checkCancelled()
       outputFile.parentFile?.mkdirs()
       if (rendered.absolutePath != outputFile.absolutePath) rendered.copyTo(outputFile, overwrite = true)
       if (!outputFile.exists() || outputFile.length() <= 0L) { outputFile.delete(); return@withContext Result.failure(IllegalStateException("Final output could not be written.")) }
       if (rendered.absolutePath != outputFile.absolutePath) rendered.delete()
+      Log.i(tag, "[EXPORT_COMPLETE] path=${outputFile.absolutePath} sizeBytes=${outputFile.length()}")
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.COMPLETED, 1f, plan.durationMs, message = "Export completed and verified")
       Result.success(outputFile)
     } catch (e: CancellationException) {

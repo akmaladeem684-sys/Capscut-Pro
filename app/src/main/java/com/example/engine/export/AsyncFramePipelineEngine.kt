@@ -275,6 +275,18 @@ class AsyncFramePipelineEngine(private val context: Context) {
     val audioSampleRate = audioProcessor.sampleRate
     val audioChannels = audioProcessor.channelCount
 
+    val firstVideoPts = AtomicLong(-1L)
+    val lastVideoPts = AtomicLong(-1L)
+    val firstAudioPts = AtomicLong(-1L)
+    val lastAudioPts = AtomicLong(-1L)
+    val audioSamplesProcessed = AtomicLong(0L)
+
+    Log.i(tag, "[EXPORT_START] timelineDuration=${durationMs}ms, totalFrames=$totalFrames, target=${outputFile.name}")
+    Log.i(tag, "[RESOLUTION] requested=${width}x${height}")
+    Log.i(tag, "[FPS] requested=$fps")
+    Log.i(tag, "[BITRATE] bitrate=${bitrate(config)}")
+    Log.i(tag, "[AUDIO_TRACKS] count=${timeline.audioClips.size + (if (timeline.videoClips.any { it.isVideo && it.hasAudio && !it.isMuted }) 1 else 0)}")
+
     try {
       // 1. Mix multi-track Audio
       if (hasAudioSources) {
@@ -304,6 +316,9 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
       // 3. Configure Video Encoder with Surface Input
       videoEncoder = MediaCodec.createEncoderByType(mime)
+      val encInfo = videoEncoder.codecInfo
+      Log.i(tag, "[SELECTED_ENCODER] name=${encInfo.name} mime=$mime")
+      Log.i(tag, "[HARDWARE_OR_SOFTWARE] isHardware=${hardware(encInfo)} surfaceFormat=COLOR_FormatSurface")
       val videoFormat = MediaFormat.createVideoFormat(mime, width, height).apply {
         setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
         setInteger(MediaFormat.KEY_BIT_RATE, bitrate(config))
@@ -316,6 +331,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
       window = WindowSurface(egl, inputSurface, false)
       window.makeCurrent()
       renderer = GpuCompositionRenderer(context).also { it.initGl() }
+      Log.i(tag, "[GPU_COMPOSITION_STATUS] initialized=true, nativeBridgeLoaded=${com.example.engine.composition.gpu.NativeRenderBridge.isLoaded}")
 
       // 4. Configure Audio Encoder if Audio is Present
       if (hasAudio) {
@@ -343,7 +359,11 @@ class AsyncFramePipelineEngine(private val context: Context) {
       for (clip in timeline.videoClips + timeline.overlayClips) {
         if (clip.isVideo && clip.uri.isNotBlank() && MediaRelinkManager.isRealPlayableMedia(context, clip.uri)) {
           try {
-            SurfaceDecoder(context, clip, glHandler).also { it.start(); decoders[clip.id] = it }
+            SurfaceDecoder(context, clip, glHandler).also {
+              it.start()
+              decoders[clip.id] = it
+              Log.i(tag, "[SELECTED_DECODER] clip=${clip.id} name=${clip.name}")
+            }
           } catch (e: Exception) {
             Log.w(tag, "Hardware decoder unavailable for clip ${clip.id}, using fallback", e)
           }
@@ -375,17 +395,24 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   if (videoTrack.get() >= 0 && (!hasAudio || audioTrack.get() >= 0) && !isMuxStarted.get()) {
                     muxer.start()
                     isMuxStarted.set(true)
+                    Log.i(tag, "[MUXER_START] videoTrack=${videoTrack.get()} audioTrack=${audioTrack.get()}")
                   }
                 }
                 vIndex >= 0 -> {
                   val out = videoEncoder.getOutputBuffer(vIndex)
                   if (out != null && vInfo.size > 0 && isMuxStarted.get() && (vInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                    val pts = vInfo.presentationTimeUs.coerceAtLeast(0L)
+                    if (firstVideoPts.get() < 0L) firstVideoPts.set(pts)
+                    lastVideoPts.set(pts)
                     synchronized(muxer) {
                       muxer.writeSampleData(videoTrack.get(), out, MediaCodec.BufferInfo().apply {
-                        set(vInfo.offset, vInfo.size, vInfo.presentationTimeUs.coerceAtLeast(0L), vInfo.flags)
+                        set(vInfo.offset, vInfo.size, pts, vInfo.flags)
                       })
                     }
-                    metrics.encodedFrames.incrementAndGet()
+                    val encoded = metrics.encodedFrames.incrementAndGet()
+                    if (encoded % 60 == 0L || encoded == totalFrames) {
+                      Log.i(tag, "[VIDEO_FRAMES_PROCESSED] $encoded / $totalFrames (lastPts=${pts}us)")
+                    }
                   }
                   val end = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                   videoEncoder.releaseOutputBuffer(vIndex, false)
@@ -403,15 +430,23 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   if (videoTrack.get() >= 0 && audioTrack.get() >= 0 && !isMuxStarted.get()) {
                     muxer.start()
                     isMuxStarted.set(true)
+                    Log.i(tag, "[MUXER_START] videoTrack=${videoTrack.get()} audioTrack=${audioTrack.get()}")
                   }
                 }
                 aIndex >= 0 -> {
                   val out = audioEncoder.getOutputBuffer(aIndex)
                   if (out != null && aInfo.size > 0 && isMuxStarted.get() && (aInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                    val pts = aInfo.presentationTimeUs.coerceAtLeast(0L)
+                    if (firstAudioPts.get() < 0L) firstAudioPts.set(pts)
+                    lastAudioPts.set(pts)
                     synchronized(muxer) {
                       muxer.writeSampleData(audioTrack.get(), out, MediaCodec.BufferInfo().apply {
-                        set(aInfo.offset, aInfo.size, aInfo.presentationTimeUs.coerceAtLeast(0L), aInfo.flags)
+                        set(aInfo.offset, aInfo.size, pts, aInfo.flags)
                       })
+                    }
+                    val samples = audioSamplesProcessed.addAndGet((aInfo.size / (audioChannels * 2)).toLong())
+                    if (samples % (audioSampleRate * 2) < (aInfo.size / (audioChannels * 2))) {
+                      Log.i(tag, "[AUDIO_SAMPLES_PROCESSED] $samples samples (lastPts=${pts}us)")
                     }
                   }
                   val end = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
@@ -584,6 +619,11 @@ class AsyncFramePipelineEngine(private val context: Context) {
       }
 
       drainDone.await(60, TimeUnit.SECONDS)
+      Log.i(tag, "[MUXER_STOP] totalEncodedFrames=${metrics.encodedFrames.get()} audioSamples=${audioSamplesProcessed.get()}")
+      Log.i(tag, "[FIRST_VIDEO_PTS] ${firstVideoPts.get()}us [LAST_VIDEO_PTS] ${lastVideoPts.get()}us")
+      if (hasAudio) {
+        Log.i(tag, "[FIRST_AUDIO_PTS] ${firstAudioPts.get()}us [LAST_AUDIO_PTS] ${lastAudioPts.get()}us")
+      }
       if (failure.get() != null) throw failure.get()!!
       if (cancelled.get() || !isMuxStarted.get()) { outputFile.delete(); return@withContext null }
       outputFile.takeIf { it.exists() && it.length() > 0L }
