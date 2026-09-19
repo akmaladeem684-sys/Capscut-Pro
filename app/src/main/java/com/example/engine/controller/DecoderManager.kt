@@ -1,5 +1,6 @@
 package com.example.engine.controller
 
+import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
@@ -19,13 +20,24 @@ class DecoderManager {
     const val MAX_SUPPORTED_2K_HEIGHT = 1440
     const val MAX_SUPPORTED_1080P_WIDTH = 1920
     const val MAX_SUPPORTED_1080P_HEIGHT = 1080
+
+    /**
+     * Recommended maximum concurrent hardware decoders on Android to prevent
+     * MediaCodec 0xfffffc0e (NO_MEMORY / codec exhaustion) errors.
+     */
+    const val MAX_RECOMMENDED_HARDWARE_DECODERS = 4
   }
 
   private var _decoderState: DecoderState = DecoderState.UNINITIALIZED
   val decoderState: DecoderState get() = _decoderState
+  val isHardwareAccelerated: Boolean get() = _decoderState == DecoderState.HARDWARE_ACCELERATED
 
   private var fallbackTriggered = false
   private var lastErrorMessage: String? = null
+
+  fun forceSoftwareFallback(reason: String = "Forced software fallback") {
+    triggerSoftwareFallback(reason)
+  }
 
   init {
     detectCapabilities()
@@ -57,13 +69,13 @@ class DecoderManager {
         DecoderState.SOFTWARE_FALLBACK
       }
       Log.d(TAG, "Decoder capabilities detected: state=$_decoderState (H264_HW=$hasHardwareH264, HEVC_HW=$hasHardwareHEVC)")
-    } catch (e: Exception) {
-      Log.w(TAG, "Failed to query MediaCodecList, defaulting to software fallback", e)
+    } catch (e: Throwable) {
+      Log.w(TAG, "Failed to query MediaCodecList, defaulting to software fallback: ${e.message}")
       _decoderState = DecoderState.SOFTWARE_FALLBACK
     }
   }
 
-  private fun isHardwareAccelerated(codecInfo: MediaCodecInfo): Boolean {
+  fun isHardwareAccelerated(codecInfo: MediaCodecInfo): Boolean {
     val name = codecInfo.name.lowercase()
     val isSoftware = name.startsWith("omx.google.") ||
         name.startsWith("c2.android.") ||
@@ -71,6 +83,111 @@ class DecoderManager {
         name.contains("software") ||
         name.contains("ffmpeg")
     return !isSoftware
+  }
+
+  /**
+   * Discovers a software decoder name for the given MIME type from MediaCodecList.
+   */
+  fun findSoftwareDecoderName(mimeType: String): String? {
+    return try {
+      val codecList = MediaCodecList(MediaCodecList.ALL_CODECS)
+      for (info in codecList.codecInfos) {
+        if (info.isEncoder) continue
+        for (type in info.supportedTypes) {
+          if (type.equals(mimeType, ignoreCase = true)) {
+            if (!isHardwareAccelerated(info)) {
+              return info.name
+            }
+          }
+        }
+      }
+      null
+    } catch (e: Exception) {
+      Log.w(TAG, "Error looking up software decoder for $mimeType", e)
+      null
+    }
+  }
+
+  /**
+   * Discovers a hardware decoder name for the given MIME type from MediaCodecList.
+   */
+  fun findHardwareDecoderName(mimeType: String): String? {
+    return try {
+      val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+      for (info in codecList.codecInfos) {
+        if (info.isEncoder) continue
+        for (type in info.supportedTypes) {
+          if (type.equals(mimeType, ignoreCase = true)) {
+            if (isHardwareAccelerated(info)) {
+              return info.name
+            }
+          }
+        }
+      }
+      null
+    } catch (e: Exception) {
+      Log.w(TAG, "Error looking up hardware decoder for $mimeType", e)
+      null
+    }
+  }
+
+  /**
+   * Factory method to create a MediaCodec decoder with automatic fallback.
+   * If hardware creation fails or if fallback is active, creates a software decoder.
+   *
+   * @return Pair<MediaCodec, Boolean> where boolean indicates if it is hardware-accelerated.
+   */
+  fun createDecoder(mimeType: String, preferHardware: Boolean = true): Pair<MediaCodec, Boolean> {
+    val shouldAttemptHardware = preferHardware && !fallbackTriggered && _decoderState != DecoderState.SOFTWARE_FALLBACK
+
+    if (shouldAttemptHardware) {
+      val hwName = findHardwareDecoderName(mimeType)
+      if (hwName != null) {
+        try {
+          val codec = MediaCodec.createByCodecName(hwName)
+          return Pair(codec, true)
+        } catch (e: Exception) {
+          Log.w(TAG, "Failed creating hardware decoder by name $hwName, attempting generic createDecoderByType", e)
+        }
+      }
+
+      try {
+        val codec = MediaCodec.createDecoderByType(mimeType)
+        val isHw = !isSoftwareCodec(codec)
+        return Pair(codec, isHw)
+      } catch (e: Exception) {
+        Log.w(TAG, "Hardware decoder creation failed for $mimeType; triggering software fallback", e)
+        triggerSoftwareFallback("Failed creating hardware decoder for $mimeType: ${e.message}")
+      }
+    }
+
+    // Software fallback path
+    val swName = findSoftwareDecoderName(mimeType)
+    if (swName != null) {
+      try {
+        val codec = MediaCodec.createByCodecName(swName)
+        return Pair(codec, false)
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed creating software decoder by name $swName", e)
+      }
+    }
+
+    // Default fallback
+    val codec = MediaCodec.createDecoderByType(mimeType)
+    return Pair(codec, false)
+  }
+
+  private fun isSoftwareCodec(codec: MediaCodec): Boolean {
+    return try {
+      val name = codec.name.lowercase()
+      name.startsWith("omx.google.") ||
+          name.startsWith("c2.android.") ||
+          name.contains(".sw.") ||
+          name.contains("software") ||
+          name.contains("ffmpeg")
+    } catch (_: Exception) {
+      false
+    }
   }
 
   fun checkResolutionSupport(mimeType: String, width: Int, height: Int): Boolean {
@@ -108,6 +225,12 @@ class DecoderManager {
     triggerSoftwareFallback(error.message ?: "Unknown codec exception")
     return true // successfully handled with fallback
   }
+
+  fun isFallbackActive(): Boolean = fallbackTriggered || _decoderState == DecoderState.SOFTWARE_FALLBACK
+
+  fun isRuntimeFallbackTriggered(): Boolean = fallbackTriggered
+
+  fun getLastErrorMessage(): String? = lastErrorMessage
 
   fun reset() {
     fallbackTriggered = false

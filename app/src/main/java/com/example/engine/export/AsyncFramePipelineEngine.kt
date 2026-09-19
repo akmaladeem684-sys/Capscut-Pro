@@ -23,7 +23,9 @@ import com.example.domain.model.*
 import com.example.engine.composition.VideoCompositionEngine
 import com.example.engine.composition.gpu.EglCore
 import com.example.engine.composition.gpu.GpuCompositionRenderer
+import com.example.engine.composition.gpu.HardwareVideoTextureSource
 import com.example.engine.composition.gpu.WindowSurface
+import com.example.engine.controller.DecoderManager
 import com.example.engine.media.MediaRelinkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -86,194 +88,45 @@ class FramePacketQueue<T>(val capacity: Int) {
 }
 
 /**
- * Hardware-accelerated clip decoder rendering directly to an OpenGL OES texture.
+ * Hardware-accelerated clip decoder rendering directly to an OpenGL OES texture with software fallback.
  */
 private class HardwareClipDecoder(
   private val context: Context,
   val clip: VideoClip,
   private val glHandler: Handler,
-  private val decoderHandler: Handler
-) : SurfaceTexture.OnFrameAvailableListener {
+  private val decoderHandler: Handler,
+  private val decoderManager: DecoderManager = DecoderManager()
+) {
   private val tag = "HardwareClipDecoder"
-  private val frameAvailable = AtomicBoolean(false)
-  private var codec: MediaCodec? = null
-  private var extractor: MediaExtractor? = null
-  private var surface: Surface? = null
-  private var surfaceTexture: SurfaceTexture? = null
-  var textureId: Int = 0
-    private set
-  var width: Int = clip.width.coerceAtLeast(1)
-    private set
-  var height: Int = clip.height.coerceAtLeast(1)
-    private set
-  private var lastRequestUs = Long.MIN_VALUE
-  private var isInputEos = false
-  private var isInitialized = false
-  val transformMatrix = FloatArray(16)
+  private val textureSource = HardwareVideoTextureSource()
+
+  val textureId: Int get() = textureSource.oesTextureId
+  val width: Int get() = textureSource.effectiveWidth
+  val height: Int get() = textureSource.effectiveHeight
+  val rotationDegrees: Int get() = textureSource.rotationDegrees
+  val isHardwareAccelerated: Boolean get() = textureSource.isHardwareAccelerated
+  val transformMatrix: FloatArray get() = textureSource.transformMatrix
 
   fun init(): Boolean {
-    if (isInitialized) return true
-    try {
-      val ex = MediaExtractor()
-      val uri = Uri.parse(clip.uri)
-      if (uri.scheme == "content" || uri.scheme == "file") {
-        ex.setDataSource(context, uri, null)
-      } else {
-        ex.setDataSource(clip.uri)
-      }
-
-      var trackIndex = -1
-      var trackFormat: MediaFormat? = null
-      for (i in 0 until ex.trackCount) {
-        val format = ex.getTrackFormat(i)
-        val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-        if (mime.startsWith("video/")) {
-          trackIndex = i
-          trackFormat = format
-          break
-        }
-      }
-
-      if (trackIndex < 0 || trackFormat == null) {
-        ex.release()
-        return false
-      }
-
-      ex.selectTrack(trackIndex)
-      extractor = ex
-      width = trackFormat.getInteger(MediaFormat.KEY_WIDTH).coerceAtLeast(1)
-      height = trackFormat.getInteger(MediaFormat.KEY_HEIGHT).coerceAtLeast(1)
-
-      // Create OES texture on GL thread
-      val latch = CountDownLatch(1)
-      glHandler.post {
-        try {
-          val ids = IntArray(1)
-          GLES20.glGenTextures(1, ids, 0)
-          textureId = ids[0]
-          GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-          GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-          GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-          GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-          GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-
-          surfaceTexture = SurfaceTexture(textureId).apply {
-            setOnFrameAvailableListener(this@HardwareClipDecoder, decoderHandler)
-          }
-          surface = Surface(surfaceTexture)
-        } finally {
-          latch.countDown()
-        }
-      }
-      if (!latch.await(3, TimeUnit.SECONDS)) {
-        release()
-        return false
-      }
-
-      val mime = trackFormat.getString(MediaFormat.KEY_MIME) ?: MediaFormat.MIMETYPE_VIDEO_AVC
-      codec = MediaCodec.createDecoderByType(mime).apply {
-        configure(trackFormat, surface, null, 0)
-        start()
-      }
-      isInitialized = true
-      return true
-    } catch (e: Exception) {
-      Log.w(tag, "Failed to initialize HardwareClipDecoder for ${clip.uri}", e)
-      release()
-      return false
-    }
-  }
-
-  override fun onFrameAvailable(st: SurfaceTexture) {
-    frameAvailable.set(true)
+    return textureSource.initialize(
+      context = context,
+      clip = clip,
+      glHandler = glHandler,
+      decoderHandler = decoderHandler,
+      decoderManager = decoderManager
+    )
   }
 
   fun decodeFrame(targetUs: Long, cancelled: AtomicBoolean): Boolean {
-    if (!isInitialized) return false
-    val c = codec ?: return false
-    val ex = extractor ?: return false
-
-    // Seek if starting or jumping backwards or jumping far forward
-    if (targetUs < lastRequestUs || lastRequestUs == Long.MIN_VALUE || (targetUs - lastRequestUs > 1_500_000L)) {
-      ex.seekTo(targetUs.coerceAtLeast(0L), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-      try { c.flush() } catch (_: Exception) {}
-      frameAvailable.set(false)
-      isInputEos = false
-    }
-    lastRequestUs = targetUs
-
-    val info = MediaCodec.BufferInfo()
-    var outputRendered = false
-    var attempts = 0
-
-    while (!outputRendered && !cancelled.get() && attempts < 40) {
-      attempts++
-      if (!isInputEos) {
-        val inputIndex = c.dequeueInputBuffer(1_500L)
-        if (inputIndex >= 0) {
-          val input = c.getInputBuffer(inputIndex)
-          if (input != null) {
-            input.clear()
-            val sampleSize = ex.readSampleData(input, 0)
-            if (sampleSize < 0) {
-              c.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-              isInputEos = true
-            } else {
-              val samplePts = ex.sampleTime.coerceAtLeast(0L)
-              c.queueInputBuffer(inputIndex, 0, sampleSize, samplePts, 0)
-              ex.advance()
-            }
-          }
-        }
-      }
-
-      val outIndex = c.dequeueOutputBuffer(info, 1_500L)
-      if (outIndex >= 0) {
-        val outPts = info.presentationTimeUs.coerceAtLeast(0L)
-        // Direct zero-copy hardware render to Surface
-        c.releaseOutputBuffer(outIndex, true)
-        if (outPts >= targetUs || isInputEos) {
-          outputRendered = true
-        }
-        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-          isInputEos = true
-          break
-        }
-      } else if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER && isInputEos) {
-        break
-      }
-    }
-    return outputRendered
+    return textureSource.decodeFrame(targetUs, cancelled)
   }
 
   fun updateTexImageOnGl() {
-    val st = surfaceTexture ?: return
-    try {
-      st.updateTexImage()
-      st.getTransformMatrix(transformMatrix)
-    } catch (e: Exception) {
-      Log.w(tag, "updateTexImage caught: ${e.message}")
-    }
-    frameAvailable.set(false)
+    textureSource.updateTexImage()
   }
 
   fun release() {
-    isInitialized = false
-    try { codec?.stop() } catch (_: Throwable) {}
-    try { codec?.release() } catch (_: Throwable) {}
-    try { extractor?.release() } catch (_: Throwable) {}
-    try { surface?.release() } catch (_: Throwable) {}
-    try { surfaceTexture?.release() } catch (_: Throwable) {}
-    codec = null
-    extractor = null
-    surface = null
-    surfaceTexture = null
-    if (textureId != 0) {
-      glHandler.post {
-        GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
-        textureId = 0
-      }
-    }
+    textureSource.release()
   }
 }
 
@@ -289,6 +142,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
   private val decoderHandler = Handler(decoderThread.looper)
   private val composition = VideoCompositionEngine(context)
   private val audioProcessor = AudioExportProcessor(context)
+  private val decoderManager = DecoderManager()
   val metrics = AsyncFramePipelineMetrics()
 
   fun cancel() {
@@ -564,6 +418,30 @@ class AsyncFramePipelineEngine(private val context: Context) {
       val totalAudioFrames = if (hasAudio) masterPcm.size / audioChannels else 0
       var fedAudioFrames = 0
       val renderCompleteLatch = CountDownLatch(1)
+      val maxConcurrentDecoders = DecoderManager.MAX_RECOMMENDED_HARDWARE_DECODERS
+
+      fun getOrCreateDecoder(clip: VideoClip, currentActiveIds: Set<String>): HardwareClipDecoder? {
+        val existing = decoders[clip.id]
+        if (existing != null) return existing
+
+        if (decoders.size >= maxConcurrentDecoders) {
+          val evictCandidate = decoders.keys.firstOrNull { it !in currentActiveIds }
+          if (evictCandidate != null) {
+            val evicted = decoders.remove(evictCandidate)
+            evicted?.release()
+            Log.d(tag, "Evicted idle decoder for clip $evictCandidate to avoid codec exhaustion")
+          }
+        }
+
+        val newDecoder = HardwareClipDecoder(context, clip, glHandler, decoderHandler, decoderManager)
+        return if (newDecoder.init()) {
+          decoders[clip.id] = newDecoder
+          newDecoder
+        } else {
+          newDecoder.release()
+          null
+        }
+      }
 
       glHandler.post {
         try {
@@ -575,6 +453,12 @@ class AsyncFramePipelineEngine(private val context: Context) {
             val frame = composition.evaluateFrame(timeline, timelinePosMs)
             val activeClip = frame.activeClip
 
+            val currentNeededClipIds = mutableSetOf<String>()
+            if (activeClip != null && activeClip.isVideo) currentNeededClipIds.add(activeClip.id)
+            for (ov in frame.activeOverlays) {
+              if (ov.clip.isVideo) currentNeededClipIds.add(ov.clip.id)
+            }
+
             var mainTexId = 0
             var isMainOes = false
             var mainTexMatrix: FloatArray? = null
@@ -582,10 +466,8 @@ class AsyncFramePipelineEngine(private val context: Context) {
             // 1. Process Main Clip
             if (activeClip != null) {
               if (activeClip.isVideo && activeClip.uri.isNotBlank()) {
-                val decoder = decoders.getOrPut(activeClip.id) {
-                  HardwareClipDecoder(context, activeClip, glHandler, decoderHandler).apply { init() }
-                }
-                if (decoder.textureId != 0) {
+                val decoder = getOrCreateDecoder(activeClip, currentNeededClipIds)
+                if (decoder != null && decoder.textureId != 0) {
                   decoder.decodeFrame(frame.clipSourcePosMs * 1000L, cancelled)
                   decoder.updateTexImageOnGl()
                   mainTexId = decoder.textureId
@@ -604,10 +486,8 @@ class AsyncFramePipelineEngine(private val context: Context) {
             val overlayTextures = HashMap<String, Int>()
             for (overlay in frame.activeOverlays) {
               if (overlay.clip.isVideo && overlay.clip.uri.isNotBlank()) {
-                val ovDecoder = decoders.getOrPut(overlay.clip.id) {
-                  HardwareClipDecoder(context, overlay.clip, glHandler, decoderHandler).apply { init() }
-                }
-                if (ovDecoder.textureId != 0) {
+                val ovDecoder = getOrCreateDecoder(overlay.clip, currentNeededClipIds)
+                if (ovDecoder != null && ovDecoder.textureId != 0) {
                   ovDecoder.decodeFrame(overlay.sourcePosMs * 1000L, cancelled)
                   ovDecoder.updateTexImageOnGl()
                   overlayTextures[overlay.clip.id] = ovDecoder.textureId

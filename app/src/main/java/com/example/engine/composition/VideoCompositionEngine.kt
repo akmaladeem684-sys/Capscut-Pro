@@ -230,7 +230,7 @@ class VideoCompositionEngine(private val context: Context) {
     val overlays = if (!isOverlayHidden) {
       timeline.overlayClips.filter {
         !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs
-      }.map { clip ->
+      }.sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs })).map { clip ->
         val rel = posMs - clip.timelineStartMs
         val kf = KeyframeInterpolator.interpolate(clip, rel)
         ComposedOverlay(
@@ -365,8 +365,16 @@ class VideoCompositionEngine(private val context: Context) {
     // 2. Draw Main Clip Bitmap
     if (mainBitmap != null && !mainBitmap.isRecycled) {
       val clip = frame.activeClip
-      val scaleX = canvasWidth.toFloat() / mainBitmap.width
-      val scaleY = canvasHeight.toFloat() / mainBitmap.height
+      val totalRot = if (clip != null) {
+        val rel = frame.timelinePosMs - clip.timelineStartMs
+        val kf = frame.activeClipTransform ?: KeyframeInterpolator.interpolate(clip, rel)
+        kotlin.math.abs((clip.rotationDegrees + kf.rotation).toInt() % 360)
+      } else 0
+      val isTransposed = (totalRot == 90 || totalRot == 270)
+      val effBitmapW = if (isTransposed) mainBitmap.height else mainBitmap.width
+      val effBitmapH = if (isTransposed) mainBitmap.width else mainBitmap.height
+      val scaleX = canvasWidth.toFloat() / effBitmapW
+      val scaleY = canvasHeight.toFloat() / effBitmapH
       val baseScale = min(scaleX, scaleY)
 
       val matrix = Matrix()

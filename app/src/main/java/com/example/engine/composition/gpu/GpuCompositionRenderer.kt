@@ -166,27 +166,36 @@ class GpuCompositionRenderer(private val context: Context) {
       val overlay = frame.activeOverlays[i]
       val overlayTexId = overlayTextures[overlay.clip.id]
       if (overlayTexId != null && overlayTexId > 0) {
+        val isOvOes = overlay.clip.isVideo
         val ov2dTexId = processOverlayVideoTo2D(
           overlay = overlay,
           textureId = overlayTexId,
+          isOes = isOvOes,
           viewportWidth = viewportWidth,
           viewportHeight = viewportHeight,
           chromaKey = chromaKey
         )
 
         if (ov2dTexId > 0) {
-          val ovW = if (overlay.clip.width > 0) overlay.clip.width else viewportWidth
-          val ovH = if (overlay.clip.height > 0) overlay.clip.height else viewportHeight
+          val ovRawW = if (overlay.clip.width > 0) overlay.clip.width else viewportWidth
+          val ovRawH = if (overlay.clip.height > 0) overlay.clip.height else viewportHeight
+          val totalRot = (overlay.clip.rotationDegrees.toFloat() + overlay.rotation) % 360f
+          val ovRot = kotlin.math.abs(totalRot.toInt())
+          val ovTransposed = (ovRot == 90 || ovRot == 270)
+          val ovW = if (ovTransposed) ovRawH else ovRawW
+          val ovH = if (ovTransposed) ovRawW else ovRawH
           val ovAspect = ovW.toFloat() / max(1, ovH)
           val vpAspect = viewportWidth.toFloat() / max(1, viewportHeight)
 
-          val baseScaleY = (overlay.scaleY * 0.5f).coerceAtLeast(0.01f)
-          val baseScaleX = (baseScaleY * (ovAspect / vpAspect)).coerceAtLeast(0.01f)
+          val flipX = if (overlay.clip.flipHorizontal) -overlay.clip.cropScale else overlay.clip.cropScale
+          val flipY = if (overlay.clip.flipVertical) -overlay.clip.cropScale else overlay.clip.cropScale
+          val baseScaleY = (overlay.scaleY * 0.5f).coerceAtLeast(0.01f) * flipY
+          val baseScaleX = (baseScaleY * (ovAspect / vpAspect)).coerceAtLeast(0.01f) * flipX
 
           val ovMatrix = FloatArray(16)
           Matrix.setIdentityM(ovMatrix, 0)
-          Matrix.translateM(ovMatrix, 0, overlay.posX, -overlay.posY, 0f)
-          Matrix.rotateM(ovMatrix, 0, -overlay.rotation, 0f, 0f, 1f)
+          Matrix.translateM(ovMatrix, 0, overlay.clip.cropOffsetX + overlay.posX, -(overlay.clip.cropOffsetY + overlay.posY), 0f)
+          Matrix.rotateM(ovMatrix, 0, -totalRot, 0f, 0f, 1f)
           Matrix.scaleM(ovMatrix, 0, baseScaleX, baseScaleY, 1f)
 
           val calculatedZ = 100 + (i * 10)
@@ -483,8 +492,12 @@ class GpuCompositionRenderer(private val context: Context) {
       val kf = frame.activeClipTransform ?: KeyframeInterpolator.interpolate(clip, frame.timelinePosMs - clip.timelineStartMs)
 
       val cachedMain = imageTextureCache.values.find { it.texId == textureId }
-      val texW = cachedMain?.width ?: if (clip.width > 0) clip.width else viewportWidth
-      val texH = cachedMain?.height ?: if (clip.height > 0) clip.height else viewportHeight
+      val rawW = cachedMain?.width ?: if (clip.width > 0) clip.width else viewportWidth
+      val rawH = cachedMain?.height ?: if (clip.height > 0) clip.height else viewportHeight
+      val totalRot = kotlin.math.abs((clip.rotationDegrees + kf.rotation).toInt() % 360)
+      val isTransposed = (totalRot == 90 || totalRot == 270)
+      val texW = if (isTransposed) rawH else rawW
+      val texH = if (isTransposed) rawW else rawH
       val texAspect = texW.toFloat() / max(1, texH)
       val vpAspect = viewportWidth.toFloat() / max(1, viewportHeight)
 
@@ -562,6 +575,7 @@ class GpuCompositionRenderer(private val context: Context) {
   private fun processOverlayVideoTo2D(
     overlay: ComposedOverlay,
     textureId: Int,
+    isOes: Boolean,
     viewportWidth: Int,
     viewportHeight: Int,
     chromaKey: ChromaKeySettings
@@ -574,7 +588,7 @@ class GpuCompositionRenderer(private val context: Context) {
     GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f)
     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-    val program = program2D
+    val program = if (isOes) programOes else program2D
     GLES20.glUseProgram(program)
 
     Matrix.setIdentityM(mvpMatrix, 0)
@@ -589,7 +603,7 @@ class GpuCompositionRenderer(private val context: Context) {
     bindCommonUniforms(
       program = program,
       textureId = textureId,
-      isOes = false,
+      isOes = isOes,
       opacity = 1.0f,
       adjustments = overlayAdj,
       filter = overlay.clip.filter ?: FilterSettings(),
