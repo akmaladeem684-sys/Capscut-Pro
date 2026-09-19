@@ -1,0 +1,6 @@
+{
+  "name": "AH Video Studio",
+  "description": "Professional video editing studio with multi-track timeline, visual effects, filters, audio editing, and AI creative tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
