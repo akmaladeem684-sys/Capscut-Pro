@@ -12,6 +12,7 @@ import com.example.data.local.ProjectEntity
 import com.example.data.local.TimelineSerializer
 import com.example.data.presets.TemplatesCatalog
 import com.example.data.presets.VideoTemplate
+import com.example.data.repository.EditorToolsRepository
 import com.example.data.repository.ProjectRepository
 import com.example.domain.StudioPreferencesManager
 import com.example.domain.UserSettings
@@ -131,6 +132,17 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
   val exportedVideos: StateFlow<List<ExportedVideoEntity>> = repository.exportedVideos
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val editorToolsRepository: EditorToolsRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    EditorToolsRepository()
+  }
+
+  val editorTools: StateFlow<List<EditorToolItem>> = editorToolsRepository.getEditorToolsStream()
+    .stateIn(
+      scope = viewModelScope,
+      started = SharingStarted.Eagerly,
+      initialValue = editorToolsRepository.getDefaultEditorTools()
+    )
 
   fun getSelectedVideoClip(): VideoClip? {
     val sel = timelineEngine.selectedElement.value

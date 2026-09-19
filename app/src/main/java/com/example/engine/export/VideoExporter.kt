@@ -23,6 +23,7 @@ import com.example.engine.composition.gpu.GpuCompositionRenderer
 import com.example.engine.composition.gpu.WindowSurface
 import com.example.engine.media.MediaRelinkManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -584,41 +585,44 @@ class VideoExporter(private val context: Context) {
     val resLabel = config.resolution.label.lowercase()
     val outputFile = File(outputDir, "${sanitizedName}_${resLabel}_${System.currentTimeMillis()}.mp4")
 
-    // Use Chunked Export for long projects (>15 seconds) or 4K to prevent OOM
-    if (totalDurationMs > 15_000L || config.resolution == Resolution.RES_4K || config.resolution == Resolution.RES_VERTICAL_4K) {
-      Log.i(tag, "Project length $totalDurationMs ms / 4K resolution detected. Delegating to ChunkedExportEngine...")
-      val chunkedEngine = ChunkedExportEngine(context)
-      val chunkedSuccess = chunkedEngine.exportInChunks(timeline, config, outputFile, this@VideoExporter) { progress, status ->
-        val frames = ((totalDurationMs / 1000.0) * config.frameRate.fps).toInt()
-        val curFrame = (progress * frames).toInt()
-        _exportState.value = ExportState.Rendering(
-          progressPercent = progress,
-          currentFrame = curFrame,
-          totalFrames = frames,
-          status = status,
-          resolution = config.resolution,
-          renderEngine = "Chunked Hardware Export Engine"
-        )
+    // High-performance Hardware GPU Surface Export Pipeline (CapCut-level)
+    val pipeline = AsyncFramePipelineEngine(context)
+    val totalFrames = maxOf(1, ((totalDurationMs / 1000.0) * config.frameRate.fps).toInt())
+
+    val result = kotlinx.coroutines.coroutineScope {
+      val progressJob = launch(Dispatchers.Default) {
+        while (isActive) {
+          val encoded = pipeline.metrics.encodedFrames.get()
+          val fraction = if (totalFrames > 0) (encoded.toFloat() / totalFrames).coerceIn(0f, 1f) else 0f
+          _exportState.value = ExportState.Rendering(
+            progressPercent = fraction,
+            currentFrame = encoded.toInt(),
+            totalFrames = totalFrames,
+            status = "Hardware GPU Encoding: $encoded / $totalFrames frames (${(fraction * 100).toInt()}%)",
+            resolution = config.resolution,
+            renderEngine = "Hardware GPU Acceleration Engine"
+          )
+          delay(100L)
+        }
       }
-      if (chunkedSuccess) {
-        val sizeBytes = outputFile.length()
-        _exportState.value = ExportState.Success(outputFile, totalDurationMs, sizeBytes)
-        return@withContext outputFile
-      } else {
-        Log.w(tag, "Chunked export encountered error, falling back to single-pass hardware export.")
+
+      try {
+        pipeline.export(timeline, config, outputFile)
+      } catch (e: Exception) {
+        Log.w(tag, "Hardware pipeline threw exception, falling back to buffer pipeline", e)
+        null
+      } finally {
+        progressJob.cancel()
       }
     }
 
-    // 1. Attempt export via Media3 Transformer if eligible
-    if (canExportWithMedia3Transformer(timeline)) {
-      val transformerResult = exportWithMedia3Transformer(timeline, outputFile, config)
-      if (transformerResult != null) {
-        return@withContext transformerResult
-      }
-      Log.i(tag, "Media3 Transformer pipeline deferred to hardware composition engine")
+    if (result != null && result.exists() && result.length() > 0L) {
+      val sizeBytes = result.length()
+      _exportState.value = ExportState.Success(result, totalDurationMs, sizeBytes)
+      return@withContext result
     }
 
-    // 2. Hardware composition pipeline with strict MediaCodec & MediaMuxer lifecycle
+    // Fallback if needed
     return@withContext exportWithHardwarePipeline(projectName, timeline, config, outputFile)
   }
 

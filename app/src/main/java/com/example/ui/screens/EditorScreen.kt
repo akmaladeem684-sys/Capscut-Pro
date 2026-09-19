@@ -133,6 +133,7 @@ fun EditorScreen(
   val timelineFps by viewModel.timelineEngine.timelineFps.collectAsState()
   val isFrameSnapping by viewModel.timelineEngine.isFrameSnapping.collectAsState()
   val isTracksSyncEnabled by viewModel.timelineEngine.isTracksSyncEnabled.collectAsState()
+  val editorTools by viewModel.editorTools.collectAsState()
 
   val configuration = LocalConfiguration.current
   val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -150,6 +151,24 @@ fun EditorScreen(
   var pendingReplaceClipId by remember { mutableStateOf<String?>(null) }
   var draggedTransitionType by remember { mutableStateOf<TransitionType?>(null) }
   var activeTextSubTool by remember { mutableStateOf(TextSubTool.TEXT_TEMPLATES) }
+
+  val handleToolClick: (EditorToolItem) -> Unit = { tool ->
+    when {
+      tool.actionKey.equals("TOOL_EXPORT_PRESETS", ignoreCase = true) -> {
+        viewModel.saveCurrentProject()
+        showExportConfigDialog = true
+      }
+      tool.actionKey.equals("TOOL_VIDEO_TEMPLATES", ignoreCase = true) -> {
+        viewModel.setActiveToolbarTab(EditorToolbarTab.ASSET_STORE)
+      }
+      else -> {
+        val tab = tool.mappedTab
+        if (tab != null) {
+          viewModel.setActiveToolbarTab(if (activeTab == tab) null else tab)
+        }
+      }
+    }
+  }
 
   val replaceMediaPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
@@ -703,10 +722,9 @@ fun EditorScreen(
 
         // Bottom Navigation Bar is displayed at the bottom of the screen in normal editor mode
         EditorBottomToolbar(
+          tools = editorTools,
           activeTab = activeTab,
-          onTabSelected = { tab ->
-            viewModel.setActiveToolbarTab(if (activeTab == tab) null else tab)
-          },
+          onToolClick = handleToolClick,
           onMoreClick = { showMoreToolsDialog = true }
         )
       } // End of Column (Timeline + Bottom Navigation Bar)
@@ -1056,10 +1074,11 @@ fun EditorScreen(
   // More Tools Dialog
   if (showMoreToolsDialog) {
     MoreToolsDialog(
+      tools = editorTools,
       onDismiss = { showMoreToolsDialog = false },
-      onSelectTab = { tab ->
+      onSelectTool = { tool ->
         showMoreToolsDialog = false
-        viewModel.setActiveToolbarTab(tab)
+        handleToolClick(tool)
       }
     )
   }
@@ -2205,96 +2224,39 @@ private fun FilmstripThumbnailCell(
   }
 }
 
-// BOTTOM TOOLBAR: 8 Main Tools + More Dialog
+// BOTTOM TOOLBAR: Firestore-driven Tools + More Dialog
 @Composable
 private fun EditorBottomToolbar(
+  tools: List<EditorToolItem>,
   activeTab: EditorToolbarTab?,
-  onTabSelected: (EditorToolbarTab) -> Unit,
+  onToolClick: (EditorToolItem) -> Unit,
   onMoreClick: () -> Unit
 ) {
-  val navItems = listOf(
-    FuturisticNavItemData(
-      id = "edit",
-      label = "Edit",
-      icon = Icons.Default.ContentCut,
-      theme = NavItemThemes.Edit,
-      isSelected = activeTab == EditorToolbarTab.EDIT,
-      testTag = "edit_btn",
-      onClick = { onTabSelected(EditorToolbarTab.EDIT) }
-    ),
-    FuturisticNavItemData(
-      id = "audio",
-      label = "Audio",
-      icon = Icons.Default.MusicNote,
-      theme = NavItemThemes.Audio,
-      isSelected = activeTab == EditorToolbarTab.AUDIO,
-      testTag = "audio_btn",
-      onClick = { onTabSelected(EditorToolbarTab.AUDIO) }
-    ),
-    FuturisticNavItemData(
-      id = "text",
-      label = "Text",
-      icon = Icons.Default.Title,
-      theme = NavItemThemes.AddText,
-      isSelected = activeTab == EditorToolbarTab.TEXT,
-      testTag = "text_btn",
-      onClick = { onTabSelected(EditorToolbarTab.TEXT) }
-    ),
-    FuturisticNavItemData(
-      id = "elements",
-      label = "Elements",
-      icon = Icons.Default.Category,
-      theme = NavItemThemes.Elements,
-      isSelected = activeTab == EditorToolbarTab.ELEMENTS,
-      testTag = "elements_btn",
-      onClick = { onTabSelected(EditorToolbarTab.ELEMENTS) }
-    ),
-    FuturisticNavItemData(
-      id = "effects",
-      label = "Effects",
-      icon = Icons.Default.StarBorder,
-      theme = NavItemThemes.Effects,
-      isSelected = activeTab == EditorToolbarTab.EFFECTS,
-      testTag = "effects_btn",
-      onClick = { onTabSelected(EditorToolbarTab.EFFECTS) }
-    ),
-    FuturisticNavItemData(
-      id = "overlay",
-      label = "Overlay",
-      icon = Icons.Default.Layers,
-      theme = NavItemThemes.Overlay,
-      isSelected = activeTab == EditorToolbarTab.OVERLAY,
-      testTag = "overlay_btn",
-      onClick = { onTabSelected(EditorToolbarTab.OVERLAY) }
-    ),
-    FuturisticNavItemData(
-      id = "captions",
-      label = "Captions",
-      icon = Icons.Default.Subtitles,
-      theme = NavItemThemes.Captions,
-      isSelected = activeTab == EditorToolbarTab.CAPTIONS,
-      testTag = "captions_btn",
-      onClick = { onTabSelected(EditorToolbarTab.CAPTIONS) }
-    ),
-    FuturisticNavItemData(
-      id = "filters",
-      label = "Filters",
-      icon = Icons.Default.ColorLens,
-      theme = NavItemThemes.Filters,
-      isSelected = activeTab == EditorToolbarTab.FILTERS,
-      testTag = "filters_btn",
-      onClick = { onTabSelected(EditorToolbarTab.FILTERS) }
-    ),
-    FuturisticNavItemData(
-      id = "more",
-      label = "Adjust",
+  val activeTools = remember(tools) {
+    tools.filter { it.isActive }.sortedBy { it.order }
+  }
+
+  val navItems = remember(activeTools, activeTab) {
+    activeTools.map { tool ->
+      FuturisticNavItemData(
+        id = tool.id,
+        label = tool.name,
+        icon = tool.icon,
+        theme = tool.theme,
+        isSelected = tool.mappedTab != null && activeTab == tool.mappedTab,
+        testTag = "tool_${tool.id.lowercase()}_btn",
+        onClick = { onToolClick(tool) }
+      )
+    } + FuturisticNavItemData(
+      id = "more_tools",
+      label = "More",
       icon = Icons.Default.Tune,
       theme = NavItemThemes.DefaultSlate,
       isSelected = false,
       testTag = "more_btn",
       onClick = onMoreClick
     )
-  )
+  }
 
   FuturisticBottomNavBarContainer(
     items = navItems,
@@ -2304,74 +2266,134 @@ private fun EditorBottomToolbar(
 
 @Composable
 private fun MoreToolsDialog(
+  tools: List<EditorToolItem>,
   onDismiss: () -> Unit,
-  onSelectTab: (EditorToolbarTab) -> Unit
+  onSelectTool: (EditorToolItem) -> Unit
 ) {
+  var selectedCategory by remember { mutableStateOf("All") }
+  val activeTools = remember(tools) { tools.filter { it.isActive }.sortedBy { it.order } }
+  val categories = remember(activeTools) {
+    val cats = activeTools.map { it.category.replaceFirstChar { c -> c.uppercase() } }.distinct()
+    listOf("All") + cats
+  }
+  val filteredTools = remember(activeTools, selectedCategory) {
+    if (selectedCategory == "All") activeTools
+    else activeTools.filter { it.category.equals(selectedCategory, ignoreCase = true) }
+  }
+
   AlertDialog(
     onDismissRequest = onDismiss,
     containerColor = Color(0xFF0F1523),
     title = {
-      Text(
-        text = "More Editor Tools",
-        color = Color.White,
-        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-      )
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text(
+          text = "Editor Tools",
+          color = Color.White,
+          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+        )
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = Color(0xFF1E283E)
+        ) {
+          Text(
+            text = "${activeTools.size} Tools",
+            color = CyanAccent,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+          )
+        }
+      }
     },
     text = {
-      val tools = listOf(
-        Triple("Speed", Icons.Default.Speed, EditorToolbarTab.SPEED),
-        Triple("Elements", Icons.Default.Category, EditorToolbarTab.ELEMENTS),
-        Triple("Trim", Icons.Default.Crop, EditorToolbarTab.TRIM),
-        Triple("Adjust", Icons.Default.Tune, EditorToolbarTab.ADJUST),
-        Triple("Volume", Icons.Default.VolumeUp, EditorToolbarTab.VOLUME),
-        Triple("Mask", Icons.Default.Layers, EditorToolbarTab.MASK),
-        Triple("Animations", Icons.Default.Animation, EditorToolbarTab.ANIMATIONS),
-        Triple("Keyframe", Icons.Default.Diamond, EditorToolbarTab.KEYFRAME),
-        Triple("Transitions", Icons.Default.Transform, EditorToolbarTab.TRANSITIONS),
-        Triple("Canvas", Icons.Default.CropSquare, EditorToolbarTab.CANVAS),
-        Triple("Background", Icons.Default.Texture, EditorToolbarTab.BACKGROUND),
-        Triple("Chroma", Icons.Default.FilterFrames, EditorToolbarTab.CHROMA),
-        Triple("AI Media", Icons.Default.VideoLibrary, EditorToolbarTab.AI),
-        Triple("AI Avatar", Icons.Default.AccountBox, EditorToolbarTab.AI_AVATAR),
-        Triple("Asset Store", Icons.Default.Download, EditorToolbarTab.ASSET_STORE),
-        Triple("Media", Icons.Default.AddPhotoAlternate, EditorToolbarTab.MEDIA)
-      )
-
-      LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        modifier = Modifier
-          .fillMaxWidth()
-          .height(320.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
       ) {
-        items(tools) { (label, icon, tab) ->
-          Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF1B2233),
-            border = BorderStroke(1.dp, Color(0xFF2E3852)),
+        // Category Filter Chips
+        if (categories.size > 2) {
+          Row(
             modifier = Modifier
               .fillMaxWidth()
-              .height(72.dp)
-              .clickable { onSelectTab(tab) }
+              .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
           ) {
-            Column(
+            categories.forEach { cat ->
+              val isSelected = selectedCategory == cat
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isSelected) CyanAccent.copy(alpha = 0.2f) else Color(0xFF1B2233),
+                border = BorderStroke(1.dp, if (isSelected) CyanAccent else Color(0xFF2E3852)),
+                modifier = Modifier.clickable { selectedCategory = cat }
+              ) {
+                Text(
+                  text = cat,
+                  color = if (isSelected) CyanAccent else Color(0xFF9EABB8),
+                  fontSize = 11.sp,
+                  fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+              }
+            }
+          }
+        }
+
+        // Tools Grid (Displaying all Firestore tools)
+        LazyVerticalGrid(
+          columns = GridCells.Fixed(3),
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(340.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          items(filteredTools, key = { it.id }) { tool ->
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color(0xFF1B2233),
+              border = BorderStroke(1.dp, Color(0xFF2E3852)),
               modifier = Modifier
-                .fillMaxSize()
-                .padding(6.dp),
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.Center
+                .fillMaxWidth()
+                .height(76.dp)
+                .clickable { onSelectTool(tool) }
+                .testTag("editor_tool_${tool.id}")
             ) {
-              Icon(imageVector = icon, contentDescription = label, tint = CyanAccent, modifier = Modifier.size(24.dp))
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                text = label,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
+              Column(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .padding(6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+              ) {
+                Box(
+                  modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(tool.theme.bgCircle.copy(alpha = 0.85f)),
+                  contentAlignment = Alignment.Center
+                ) {
+                  Icon(
+                    imageVector = tool.icon,
+                    contentDescription = tool.name,
+                    tint = tool.theme.iconTint,
+                    modifier = Modifier.size(18.dp)
+                  )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                  text = tool.name,
+                  color = Color.White,
+                  fontSize = 10.5.sp,
+                  fontWeight = FontWeight.Medium,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  textAlign = TextAlign.Center
+                )
+              }
             }
           }
         }

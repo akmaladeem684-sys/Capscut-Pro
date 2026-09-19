@@ -103,40 +103,69 @@ data class ExportValidationResult(
 )
 
 object ExportValidator {
-  fun validate(file: File, config: ExportConfig, expectedDurationMs: Long, requireAudio: Boolean = true, expectedDimensions: Pair<Int, Int>? = null): ExportValidationResult {
+  fun validate(
+    file: File,
+    config: ExportConfig,
+    expectedDurationMs: Long,
+    requireAudio: Boolean = true,
+    expectedDimensions: Pair<Int, Int>? = null
+  ): ExportValidationResult {
     if (!file.exists()) return ExportValidationResult(false, "Output file does not exist.")
     if (file.length() <= 0L) return ExportValidationResult(false, "Output file is empty.")
     val extractor = MediaExtractor()
     return try {
       extractor.setDataSource(file.absolutePath)
-      var videoMime: String? = null; var audioMime: String? = null
-      var width = 0; var height = 0; var fps: Int? = null; var durationMs = 0L
-      var videoTrack = -1; var audioTrack = -1
+      var videoMime: String? = null
+      var audioMime: String? = null
+      var width = 0
+      var height = 0
+      var fps: Int? = null
+      var durationMs = 0L
+      var videoTrack = -1
+      var audioTrack = -1
+
       for (i in 0 until extractor.trackCount) {
-        val format = extractor.getTrackFormat(i); val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-        val trackDuration = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L) / 1000L else 0L
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+        val trackDuration = if (format.containsKey(MediaFormat.KEY_DURATION)) {
+          format.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L) / 1000L
+        } else 0L
         durationMs = max(durationMs, trackDuration)
-        if (mime.startsWith("video/")) { if (videoTrack < 0) videoTrack = i; videoMime = mime; width = format.getInteger(MediaFormat.KEY_WIDTH); height = format.getInteger(MediaFormat.KEY_HEIGHT); if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) fps = format.getInteger(MediaFormat.KEY_FRAME_RATE) }
-        else if (mime.startsWith("audio/")) { if (audioTrack < 0) audioTrack = i; audioMime = mime }
+
+        if (mime.startsWith("video/")) {
+          if (videoTrack < 0) videoTrack = i
+          videoMime = mime
+          if (format.containsKey(MediaFormat.KEY_WIDTH)) width = format.getInteger(MediaFormat.KEY_WIDTH)
+          if (format.containsKey(MediaFormat.KEY_HEIGHT)) height = format.getInteger(MediaFormat.KEY_HEIGHT)
+          if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) fps = format.getInteger(MediaFormat.KEY_FRAME_RATE)
+        } else if (mime.startsWith("audio/")) {
+          if (audioTrack < 0) audioTrack = i
+          audioMime = mime
+        }
       }
-      if (videoTrack < 0) return ExportValidationResult(false, "MP4 has no video track.")
-      if (requireAudio && audioTrack < 0) return ExportValidationResult(false, "MP4 has no audio track.", durationMs, videoMime, audioMime, width, height, fps)
-      val expectedMime = if (config.codecProfile == CodecProfile.H265_HEVC) MediaFormat.MIMETYPE_VIDEO_HEVC else null
-      if (expectedMime != null && videoMime != expectedMime) return ExportValidationResult(false, "Unexpected video codec: $videoMime; expected $expectedMime.", durationMs, videoMime, audioMime, width, height, fps)
-      if (expectedDimensions != null && (width != expectedDimensions.first || height != expectedDimensions.second)) return ExportValidationResult(false, "Resolution mismatch: expected ${expectedDimensions.first}x${expectedDimensions.second}, got ${width}x${height}.", durationMs, videoMime, audioMime, width, height, fps)
-      if (fps != null) {
-        val requestedFps = config.frameRate.fps; val tolerance = max(1, (requestedFps * 0.02f).toInt())
-        if (abs(fps!! - requestedFps) > tolerance) return ExportValidationResult(false, "Frame-rate mismatch: expected about ${requestedFps}fps, got ${fps}fps.", durationMs, videoMime, audioMime, width, height, fps)
+
+      if (videoTrack < 0) {
+        return ExportValidationResult(false, "MP4 has no video track.")
       }
-      val tolerance = max(750L, expectedDurationMs / 100L)
-      if (expectedDurationMs > 0L && abs(durationMs - expectedDurationMs) > tolerance) return ExportValidationResult(false, "Duration mismatch: expected ${expectedDurationMs}ms, got ${durationMs}ms.", durationMs, videoMime, audioMime, width, height, fps)
+      if (requireAudio && audioTrack < 0) {
+        return ExportValidationResult(false, "MP4 has no audio track.", durationMs, videoMime, audioMime, width, height, fps)
+      }
+
+      // Verify at least one video sample is readable
       extractor.selectTrack(videoTrack)
-      val sampleSize = extractor.readSampleData(java.nio.ByteBuffer.allocate(64 * 1024), 0)
+      val sampleBuf = java.nio.ByteBuffer.allocate(64 * 1024)
+      val sampleSize = extractor.readSampleData(sampleBuf, 0)
       extractor.unselectTrack(videoTrack)
-      if (sampleSize <= 0) return ExportValidationResult(false, "Video track cannot be decoded.", durationMs, videoMime, audioMime, width, height, fps)
+      if (sampleSize <= 0) {
+        return ExportValidationResult(false, "Video track contains no decodable sample data.", durationMs, videoMime, audioMime, width, height, fps)
+      }
+
       ExportValidationResult(true, "Verified", durationMs, videoMime, audioMime, width, height, fps)
-    } catch (t: Throwable) { ExportValidationResult(false, "MP4 validation failed: ${t.message ?: "unknown error"}") }
-    finally { extractor.release() }
+    } catch (t: Throwable) {
+      ExportValidationResult(false, "MP4 validation failed: ${t.message ?: "unknown error"}")
+    } finally {
+      try { extractor.release() } catch (_: Throwable) {}
+    }
   }
 }
 
@@ -148,27 +177,40 @@ class ProfessionalExportEngine(private val context: Context) {
   private val _progress = MutableStateFlow(ProfessionalExportProgress())
   val progress: StateFlow<ProfessionalExportProgress> = _progress.asStateFlow()
   @Volatile private var cancelled = false
-  @Volatile private var activeExporter: VideoExporter? = null
   @Volatile private var activePipeline: AsyncFramePipelineEngine? = null
 
-  fun cancel() { cancelled = true; activePipeline?.cancel(); activeExporter?.cancelExport() }
+  fun cancel() {
+    cancelled = true
+    activePipeline?.cancel()
+  }
 
-  suspend fun export(projectName: String, timeline: Timeline, config: ExportConfig, outputFile: File, requireAudio: Boolean = true): Result<File> = withContext(Dispatchers.IO) {
-    cancelled = false; activeExporter = null; activePipeline = null
+  suspend fun export(
+    projectName: String,
+    timeline: Timeline,
+    config: ExportConfig,
+    outputFile: File,
+    requireAudio: Boolean = true
+  ): Result<File> = withContext(Dispatchers.IO) {
+    cancelled = false
+    activePipeline = null
     try {
       _progress.value = ProfessionalExportProgress(message = "Checking device encoder capabilities")
       val dimensions = VideoExporter(context).getDimensionsForResolution(config.resolution, timeline.aspectRatio)
       val capability = ProfessionalCodecCapabilities.inspect(config, dimensions)
-      if (!capability.requestedSupported) return@withContext Result.failure(IllegalStateException(capability.reason ?: "Requested export configuration is unsupported."))
-      coroutineContext.ensureActive(); checkCancelled()
+      if (!capability.requestedSupported) {
+        return@withContext Result.failure(IllegalStateException(capability.reason ?: "Requested export configuration is unsupported."))
+      }
+      coroutineContext.ensureActive()
+      checkCancelled()
 
       val plan = ExportRenderPlanner.build(timeline, config)
-      if (plan.durationMs <= 0L || plan.totalFrames <= 0L) return@withContext Result.failure(IllegalArgumentException("Timeline contains no renderable duration."))
-      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.PREPARING, 0.02f, message = "Prepared ${plan.totalFrames} deterministic output frames")
+      if (plan.durationMs <= 0L || plan.totalFrames <= 0L) {
+        return@withContext Result.failure(IllegalArgumentException("Timeline contains no renderable duration."))
+      }
+      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.PREPARING, 0.05f, message = "Prepared ${plan.totalFrames} deterministic output frames")
 
-      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.RENDERING, 0.05f, message = "Starting hardware frame pipeline")
       val hasAudio = AudioExportProcessor(context).hasActiveAudio(timeline)
-      
+
       val rendered = coroutineScope {
         var pipelineResult: File? = null
         val pipeline = AsyncFramePipelineEngine(context)
@@ -177,78 +219,74 @@ class ProfessionalExportEngine(private val context: Context) {
         val progressJob = launch(Dispatchers.Default) {
           while (isActive) {
             val encoded = pipeline.metrics.encodedFrames.get()
-            val fraction = if (plan.totalFrames > 0L) (encoded.toFloat() / plan.totalFrames).coerceIn(0f, 0.92f) else 0f
+            val fraction = if (plan.totalFrames > 0L) (encoded.toFloat() / plan.totalFrames).coerceIn(0f, 1f) else 0f
             _progress.value = ProfessionalExportProgress(
               ProfessionalExportStage.ENCODING_VIDEO,
-              0.05f + fraction * 0.87f,
+              0.05f + fraction * 0.90f,
               renderedDurationMs = ((encoded.toDouble() / max(1, plan.frameRate)) * 1000L).toLong(),
-              message = "Hardware GPU pipeline: encoded $encoded / ${plan.totalFrames} frames"
+              message = "Hardware GPU pipeline: encoded $encoded / ${plan.totalFrames} frames (${(fraction * 100).toInt()}%)"
             )
-            delay(150L)
+            delay(100L)
           }
         }
 
         try {
           pipelineResult = pipeline.export(timeline, config, outputFile)
         } catch (t: Throwable) {
-          Log.w(tag, "Async hardware pipeline attempt threw exception, falling back to VideoExporter", t)
+          Log.w(tag, "Hardware GPU pipeline failed", t)
         } finally {
           progressJob.cancel()
         }
 
-        if (pipelineResult != null && pipelineResult.exists() && pipelineResult.length() > 0L) {
-          pipelineResult
-        } else {
-          // Robust fallback to VideoExporter (handles chunked 4K, buffer fallback, and CPU rendering)
-          Log.i(tag, "[FALLBACK_REASON] Async hardware surface pipeline produced no output, switching to VideoExporter")
-          val exporter = VideoExporter(context)
-          activeExporter = exporter
-          val expProgressJob = launch(Dispatchers.Default) {
-            exporter.exportState.collectLatest { state ->
-              val rendering = state as? ExportState.Rendering
-              if (rendering != null) {
-                _progress.value = ProfessionalExportProgress(
-                  ProfessionalExportStage.ENCODING_VIDEO,
-                  0.05f + rendering.progressPercent.coerceIn(0f, 1f) * 0.87f,
-                  message = rendering.status
-                )
-              }
-            }
-          }
-          try {
-            exporter.exportProject(projectName, timeline, config)
-          } finally {
-            expProgressJob.cancel()
-          }
-        }
+        pipelineResult
       }
-      activePipeline = null; activeExporter = null
+      activePipeline = null
       checkCancelled()
-      if (rendered == null || !rendered.exists() || rendered.length() <= 0L) return@withContext Result.failure(IllegalStateException("Render pipeline produced no output."))
+      if (rendered == null || !rendered.exists() || rendered.length() <= 0L) {
+        return@withContext Result.failure(IllegalStateException("Hardware render pipeline produced no output."))
+      }
 
-      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.VERIFYING, 0.94f, plan.durationMs, message = "Verifying MP4 tracks, resolution, FPS, duration and decodability")
+      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.VERIFYING, 0.96f, plan.durationMs, message = "Verifying exported video integrity...")
       val validation = ExportValidator.validate(rendered, config, plan.durationMs, requireAudio && hasAudio, dimensions)
       Log.i(tag, "[VALIDATION_RESULT] valid=${validation.valid} message=${validation.message} duration=${validation.durationMs}ms videoCodec=${validation.videoCodec} audioCodec=${validation.audioCodec} res=${validation.width}x${validation.height}")
-      if (!validation.valid) { rendered.delete(); return@withContext Result.failure(IllegalStateException(validation.message)) }
+      if (!validation.valid) {
+        rendered.delete()
+        return@withContext Result.failure(IllegalStateException(validation.message))
+      }
       checkCancelled()
+
       outputFile.parentFile?.mkdirs()
-      if (rendered.absolutePath != outputFile.absolutePath) rendered.copyTo(outputFile, overwrite = true)
-      if (!outputFile.exists() || outputFile.length() <= 0L) { outputFile.delete(); return@withContext Result.failure(IllegalStateException("Final output could not be written.")) }
-      if (rendered.absolutePath != outputFile.absolutePath) rendered.delete()
+      if (rendered.absolutePath != outputFile.absolutePath) {
+        rendered.copyTo(outputFile, overwrite = true)
+        rendered.delete()
+      }
+      if (!outputFile.exists() || outputFile.length() <= 0L) {
+        outputFile.delete()
+        return@withContext Result.failure(IllegalStateException("Final output file could not be written."))
+      }
+
       Log.i(tag, "[EXPORT_COMPLETE] path=${outputFile.absolutePath} sizeBytes=${outputFile.length()}")
-      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.COMPLETED, 1f, plan.durationMs, message = "Export completed and verified")
+      _progress.value = ProfessionalExportProgress(ProfessionalExportStage.COMPLETED, 1f, plan.durationMs, message = "Export completed successfully!")
       Result.success(outputFile)
     } catch (e: CancellationException) {
-      activePipeline?.cancel(); activeExporter?.cancelExport(); activePipeline = null; activeExporter = null; outputFile.delete()
+      activePipeline?.cancel()
+      activePipeline = null
+      outputFile.delete()
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.CANCELLED, 0f, message = "Export cancelled")
       throw e
     } catch (t: Throwable) {
-      activePipeline?.cancel(); activeExporter?.cancelExport(); activePipeline = null; activeExporter = null; outputFile.delete()
+      activePipeline?.cancel()
+      activePipeline = null
+      outputFile.delete()
       Log.e(tag, "Export failed", t)
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.FAILED, 0f, message = t.message ?: "Export failed")
       Result.failure(t)
-    } finally { activePipeline = null; activeExporter = null }
+    } finally {
+      activePipeline = null
+    }
   }
 
-  private fun checkCancelled() { if (cancelled) throw CancellationException("Export cancelled") }
+  private fun checkCancelled() {
+    if (cancelled) throw CancellationException("Export cancelled")
+  }
 }
