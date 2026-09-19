@@ -48,6 +48,7 @@ class AsyncFramePipelineMetrics {
   val gpuFrames = AtomicLong()
   val encodedFrames = AtomicLong()
   val zeroCopyFrames = AtomicLong()
+  val gpuToCpuCopies = AtomicLong()
   val decodeTimeNs = AtomicLong()
   val gpuRenderTimeNs = AtomicLong()
 
@@ -55,8 +56,33 @@ class AsyncFramePipelineMetrics {
     "decodedFrames" to decodedFrames.get(),
     "gpuFrames" to gpuFrames.get(),
     "encodedFrames" to encodedFrames.get(),
-    "zeroCopyFrames" to zeroCopyFrames.get()
+    "zeroCopyFrames" to zeroCopyFrames.get(),
+    "gpuToCpuCopies" to gpuToCpuCopies.get()
   )
+}
+
+/**
+ * Thread-safe bounded queue for pipeline frame synchronization.
+ */
+class FramePacketQueue<T>(val capacity: Int) {
+  private val queue = java.util.concurrent.ArrayBlockingQueue<T>(capacity)
+
+  fun put(item: T, cancelled: AtomicBoolean): Boolean {
+    while (!cancelled.get()) {
+      if (queue.offer(item, 50, TimeUnit.MILLISECONDS)) return true
+    }
+    return false
+  }
+
+  fun take(cancelled: AtomicBoolean): T? {
+    while (!cancelled.get()) {
+      val item = queue.poll(50, TimeUnit.MILLISECONDS)
+      if (item != null) return item
+    }
+    return null
+  }
+
+  fun depth(): Int = queue.size
 }
 
 /**
