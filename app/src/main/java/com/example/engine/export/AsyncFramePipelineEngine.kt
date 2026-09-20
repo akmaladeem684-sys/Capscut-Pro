@@ -20,6 +20,7 @@ import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
 import com.example.domain.model.*
+import com.example.engine.composition.ComposedOverlay
 import com.example.engine.composition.VideoCompositionEngine
 import com.example.engine.composition.gpu.EglCore
 import com.example.engine.composition.gpu.GpuCompositionRenderer
@@ -413,6 +414,8 @@ class AsyncFramePipelineEngine(private val context: Context) {
             var isMainOes = false
             var mainTexMatrix: FloatArray? = null
 
+            var effectiveFrame = frame
+
             // 1. Process Main Clip
             if (activeClip != null) {
               if (activeClip.isVideo && activeClip.uri.isNotBlank()) {
@@ -423,6 +426,11 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   mainTexId = decoder.textureId
                   isMainOes = true
                   mainTexMatrix = decoder.transformMatrix
+                  if (decoder.width > 0 && decoder.height > 0 && (activeClip.width <= 0 || activeClip.height <= 0)) {
+                    effectiveFrame = effectiveFrame.copy(
+                      activeClip = activeClip.copy(width = decoder.width, height = decoder.height)
+                    )
+                  }
                   metrics.decodedFrames.incrementAndGet()
                   metrics.zeroCopyFrames.incrementAndGet()
                 }
@@ -434,6 +442,8 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
             // 2. Process Overlays
             val overlayTextures = HashMap<String, Int>()
+            val overlayTexMatrices = HashMap<String, FloatArray>()
+            val updatedOverlays = mutableListOf<ComposedOverlay>()
             for (overlay in frame.activeOverlays) {
               if (overlay.clip.isVideo && overlay.clip.uri.isNotBlank()) {
                 val ovDecoder = getOrCreateDecoder(overlay.clip, currentNeededClipIds)
@@ -441,23 +451,36 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   ovDecoder.decodeFrame(overlay.sourcePosMs * 1000L, cancelled)
                   ovDecoder.updateTexImageOnGl()
                   overlayTextures[overlay.clip.id] = ovDecoder.textureId
+                  overlayTexMatrices[overlay.clip.id] = ovDecoder.transformMatrix
+                  if (ovDecoder.width > 0 && ovDecoder.height > 0 && (overlay.clip.width <= 0 || overlay.clip.height <= 0)) {
+                    updatedOverlays.add(overlay.copy(clip = overlay.clip.copy(width = ovDecoder.width, height = ovDecoder.height)))
+                  } else {
+                    updatedOverlays.add(overlay)
+                  }
+                } else {
+                  updatedOverlays.add(overlay)
                 }
               } else {
                 val texId = imageTextures[overlay.clip.uri]
                 if (texId != null && texId > 0) {
                   overlayTextures[overlay.clip.id] = texId
                 }
+                updatedOverlays.add(overlay)
               }
+            }
+            if (updatedOverlays.isNotEmpty()) {
+              effectiveFrame = effectiveFrame.copy(activeOverlays = updatedOverlays)
             }
 
             // 3. Render Composition to EGL Surface
             val renderStart = System.nanoTime()
             gpuRenderer?.render(
-              frame = frame,
+              frame = effectiveFrame,
               mainTextureId = mainTexId,
               isMainOes = isMainOes,
               mainTexMatrix = mainTexMatrix,
               overlayTextures = overlayTextures,
+              overlayTexMatrices = overlayTexMatrices,
               viewportWidth = exportWidth,
               viewportHeight = exportHeight,
               timelineAdjustments = timeline.adjustments,

@@ -35,7 +35,7 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
   companion object {
     private const val TAG = "HwVideoTextureSource"
     private const val DEFAULT_TIMEOUT_US = 2_000L
-    private const val MAX_DECODE_ATTEMPTS = 50
+    private const val MAX_DECODE_ATTEMPTS = 150
   }
 
   var oesTextureId: Int = 0
@@ -141,7 +141,7 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
         }
       }
 
-      if (glHandler != null) {
+      if (glHandler != null && android.os.Looper.myLooper() != glHandler.looper) {
         glHandler.post(setupGlAction)
         if (!latch.await(3, TimeUnit.SECONDS) || !glSuccess) {
           release()
@@ -305,6 +305,11 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
 
   fun updateTexImage(): FloatArray {
     val st = surfaceTexture ?: return transformMatrix
+    var waitAttempts = 0
+    while (!frameAvailable.get() && waitAttempts < 15) {
+      try { Thread.sleep(1) } catch (_: InterruptedException) { break }
+      waitAttempts++
+    }
     try {
       st.updateTexImage()
       st.getTransformMatrix(transformMatrix)
@@ -349,7 +354,7 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
         GLES20.glDeleteTextures(1, intArrayOf(texId), 0)
       }
       val handler = glHandler
-      if (handler != null) {
+      if (handler != null && android.os.Looper.myLooper() != handler.looper) {
         handler.post(action)
       } else {
         action.run()

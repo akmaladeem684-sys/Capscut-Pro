@@ -29,6 +29,79 @@ import kotlin.math.max
 class GpuCompositionRenderer(private val context: Context) {
   companion object {
     private const val TAG = "GpuCompositionRenderer"
+
+    fun isProceduralOverlayEffect(type: EffectType): Boolean {
+      return when (type) {
+        EffectType.FIRE_SPARK,
+        EffectType.LASER_GRID, EffectType.BACKGROUND_NEON_GRID,
+        EffectType.MANGA_LINE, EffectType.AI_MANGA_UNIVERSE,
+        EffectType.BODY_AURA, EffectType.FIRE_AURA,
+        EffectType.NEON_OUTLINE, EffectType.GLOW_EYES,
+        EffectType.ANGEL_WINGS, EffectType.CYBER_WINGS,
+        EffectType.LIGHTNING_BODY, EffectType.AI_SPEED_FORCE,
+        EffectType.HEART_TRAIL, EffectType.FLORAL_CROWN,
+        EffectType.CYBER_FACE, EffectType.CYBER_VISOR,
+        EffectType.NEON_SPARKLE_CHEEKS, EffectType.DRAGON_FLAME,
+        EffectType.MUSCLE_GLOW, EffectType.GHOST_CLONE,
+        EffectType.FUNNY_BIG_EYES, EffectType.DARK_SHADOW_AURA,
+        EffectType.DOUBLE_EXPOSURE,
+        EffectType.CELEBRATE_CONFETTI, EffectType.CELEBRATE_FIREWORKS,
+        EffectType.STAMP_ART,
+        EffectType.SCREEN_SWAP_HOLO, EffectType.FACE_SWAP_AI,
+        EffectType.AI_CYBERPUNK_CITY, EffectType.AI_BG_SWAP,
+        EffectType.AI_PARTICLE_DISPERSE, EffectType.AI_NEON_TRAIL,
+        EffectType.AI_SCI_FI_PORTAL, EffectType.AI_FREEZE_TIME,
+        EffectType.AI_LIQUID_GOLD, EffectType.AI_GOLDEN_GOD,
+        EffectType.AI_EXPANSION,
+        EffectType.AI_FANTASY_KINGDOM -> true
+        else -> false
+      }
+    }
+
+    fun isPostProcessShaderEffect(type: EffectType): Boolean {
+      return when (type) {
+        EffectType.BLUR, EffectType.SOFT_FOCUS, EffectType.SHARPEN,
+        EffectType.VFX_BLUR_1, EffectType.VFX_BLUR_3, EffectType.VFX_BLUR_8,
+        EffectType.VFX_BLUR_9, EffectType.VFX_BLUR_10, EffectType.VFX_BLUR_11,
+        EffectType.VFX_BLUR_12, EffectType.VFX_BLUR_13, EffectType.VFX_BLUR_15,
+        EffectType.MOTION_BLUR, EffectType.VFX_VIRAL_1, EffectType.VFX_VIRAL_14,
+        EffectType.VFX_BLUR_2, EffectType.VFX_BLUR_4, EffectType.VFX_BLUR_5,
+        EffectType.VFX_BLUR_6, EffectType.VFX_BLUR_7, EffectType.VFX_BLUR_14,
+        EffectType.GLOW, EffectType.HALO_GLOW, EffectType.BODY_AURA, EffectType.FIRE_AURA,
+        EffectType.LIGHTNING_BODY, EffectType.MUSCLE_GLOW, EffectType.DARK_SHADOW_AURA,
+        EffectType.VFX_LIGHT_4, EffectType.VFX_LIGHT_7, EffectType.VFX_LIGHT_14,
+        EffectType.VFX_LIGHT_18, EffectType.VFX_LIGHT_19, EffectType.VFX_VIRAL_21,
+        EffectType.VFX_VIRAL_22,
+        EffectType.SHAKE, EffectType.CAMERA_MOVEMENT, EffectType.PARTY_CONFUSED,
+        EffectType.VFX_VIRAL_6, EffectType.VFX_VIRAL_15, EffectType.VFX_GLITCH_14,
+        EffectType.VFX_GLITCH_16, EffectType.VFX_GLITCH_19,
+        EffectType.ZOOM, EffectType.SKATER_ZOOM, EffectType.VERTIGO_DOLLY, EffectType.WARP_SPEED,
+        EffectType.VFX_VIRAL_12, EffectType.VFX_VIRAL_16, EffectType.VFX_VIRAL_17,
+        EffectType.VFX_VIRAL_35, EffectType.VFX_3D_9,
+        EffectType.SPIN, EffectType.VFX_VIRAL_20, EffectType.VFX_3D_8, EffectType.VFX_3D_15,
+        EffectType.FLASH, EffectType.STROBE, EffectType.VFX_VIRAL_11, EffectType.VFX_VIRAL_36,
+        EffectType.VFX_LIGHT_16, EffectType.VFX_VIRAL_23,
+        EffectType.GLITCH, EffectType.CRT_TV, EffectType.VHS_VINTAGE, EffectType.AI_GLITCH_REALITY,
+        EffectType.VFX_GLITCH_1, EffectType.VFX_GLITCH_2, EffectType.VFX_GLITCH_3,
+        EffectType.VFX_GLITCH_6, EffectType.VFX_GLITCH_7, EffectType.VFX_GLITCH_8,
+        EffectType.VFX_GLITCH_9, EffectType.VFX_GLITCH_10, EffectType.VFX_GLITCH_11,
+        EffectType.VFX_GLITCH_13, EffectType.VFX_GLITCH_17, EffectType.VFX_GLITCH_18,
+        EffectType.VFX_GLITCH_20, EffectType.VFX_RETRO_1, EffectType.VFX_RETRO_10,
+        EffectType.VFX_VIRAL_4, EffectType.VFX_VIRAL_30, EffectType.VFX_VIRAL_31,
+        EffectType.RGB_SPLIT, EffectType.VFX_VIRAL_5, EffectType.VFX_VIRAL_29,
+        EffectType.VFX_GLITCH_12,
+        EffectType.DISTORTION, EffectType.WAVE, EffectType.RIPPLE, EffectType.FISHEYE,
+        EffectType.ACID_TRIP, EffectType.FUNNY_ALIEN_WARP, EffectType.VFX_GLITCH_4,
+        EffectType.VFX_GLITCH_5, EffectType.VFX_GLITCH_15, EffectType.VFX_VIRAL_8,
+        EffectType.VFX_VIRAL_9, EffectType.VFX_3D_2,
+        EffectType.LENS_FLARE, EffectType.SOLAR_FLARE, EffectType.VFX_LIGHT_2,
+        EffectType.LIGHT_LEAK, EffectType.GOLDEN_HOUR, EffectType.BOKEH, EffectType.PARTY_PRISM,
+        EffectType.VFX_LIGHT_1, EffectType.VFX_LIGHT_3, EffectType.VFX_LIGHT_5,
+        EffectType.VFX_LIGHT_10, EffectType.VFX_LIGHT_17, EffectType.VFX_RETRO_7,
+        EffectType.VFX_VIRAL_24 -> true
+        else -> false
+      }
+    }
     private const val FLOAT_SIZE_BYTES = 4
     private const val TRIANGLE_VERTICES_DATA_STRIDE_BYTES = 4 * FLOAT_SIZE_BYTES
     private const val POSITION_DATA_OFFSET = 0
@@ -78,6 +151,8 @@ class GpuCompositionRenderer(private val context: Context) {
   private val stickerTextureCache = mutableMapOf<String, CachedTexture>()
   private val imageTextureCache = mutableMapOf<String, CachedTexture>()
   private val proceduralEffectCache = mutableMapOf<String, CachedTexture>()
+  private var proceduralBitmap: Bitmap? = null
+  private var proceduralCanvas: Canvas? = null
 
   private var currentFrameCounter = 0L
 
@@ -111,6 +186,7 @@ class GpuCompositionRenderer(private val context: Context) {
     isMainOes: Boolean,
     mainTexMatrix: FloatArray? = null,
     overlayTextures: Map<String, Int> = emptyMap(),
+    overlayTexMatrices: Map<String, FloatArray> = emptyMap(),
     viewportWidth: Int,
     viewportHeight: Int,
     timelineAdjustments: VideoAdjustments = VideoAdjustments(),
@@ -134,6 +210,13 @@ class GpuCompositionRenderer(private val context: Context) {
 
     val nativeLayers = mutableListOf<NativeLayer>()
 
+    val fxColorMatrix = if (frame.activeEffects.isNotEmpty()) {
+      VideoEffectRenderer.calculateEffectColorMatrix(
+        frame.activeEffects.map { it.clip },
+        frame.timelinePosMs
+      )
+    } else null
+
     // 1. Process Main Base Video Clip
     if (mainTextureId > 0) {
       val main2dTexId = processMainVideoTo2D(
@@ -145,7 +228,8 @@ class GpuCompositionRenderer(private val context: Context) {
         viewportHeight = viewportHeight,
         adjustments = timelineAdjustments,
         filter = timelineFilter,
-        chromaKey = chromaKey
+        chromaKey = chromaKey,
+        effectColorMatrix = fxColorMatrix
       )
 
       if (main2dTexId > 0) {
@@ -173,32 +257,46 @@ class GpuCompositionRenderer(private val context: Context) {
           overlay = overlay,
           textureId = overlayTexId,
           isOes = isOvOes,
+          customTexMatrix = overlayTexMatrices[overlay.clip.id],
           viewportWidth = viewportWidth,
           viewportHeight = viewportHeight,
-          chromaKey = chromaKey
+          chromaKey = chromaKey,
+          effectColorMatrix = fxColorMatrix
         )
 
         if (ov2dTexId > 0) {
-          val ovRawW = if (overlay.clip.width > 0) overlay.clip.width else viewportWidth
-          val ovRawH = if (overlay.clip.height > 0) overlay.clip.height else viewportHeight
-          val totalRot = (overlay.clip.rotationDegrees.toFloat() + overlay.rotation) % 360f
-          val ovRot = kotlin.math.abs(totalRot.toInt())
-          val ovTransposed = (ovRot == 90 || ovRot == 270)
-          val ovW = if (ovTransposed) ovRawH else ovRawW
-          val ovH = if (ovTransposed) ovRawW else ovRawH
-          val ovAspect = ovW.toFloat() / max(1, ovH)
+          val ovDisplayW = if (overlay.clip.width > 0) overlay.clip.width else viewportWidth
+          val ovDisplayH = if (overlay.clip.height > 0) overlay.clip.height else viewportHeight
+          val ovDisplayAspect = ovDisplayW.toFloat() / max(1, ovDisplayH)
           val vpAspect = viewportWidth.toFloat() / max(1, viewportHeight)
+
+          val ovScreenFitX: Float
+          val ovScreenFitY: Float
+          if (ovDisplayAspect > vpAspect) {
+            ovScreenFitX = 1.0f
+            ovScreenFitY = vpAspect / ovDisplayAspect
+          } else {
+            ovScreenFitX = ovDisplayAspect / vpAspect
+            ovScreenFitY = 1.0f
+          }
 
           val flipX = if (overlay.clip.flipHorizontal) -overlay.clip.cropScale else overlay.clip.cropScale
           val flipY = if (overlay.clip.flipVertical) -overlay.clip.cropScale else overlay.clip.cropScale
-          val baseScaleY = (overlay.scaleY * 0.5f).coerceAtLeast(0.01f) * flipY
-          val baseScaleX = (baseScaleY * (ovAspect / vpAspect)).coerceAtLeast(0.01f) * flipX
+
+          val totalRot = ((overlay.clip.rotationDegrees.toFloat() + overlay.rotation) % 360f + 360f) % 360f
+          val isTransposed = (totalRot == 90f || totalRot == 270f)
+
+          val baseScaleX = ovScreenFitX * overlay.scaleX * 0.5f * flipX
+          val baseScaleY = ovScreenFitY * overlay.scaleY * 0.5f * flipY
+
+          val localScaleX = if (isTransposed) baseScaleY else baseScaleX
+          val localScaleY = if (isTransposed) baseScaleX else baseScaleY
 
           val ovMatrix = FloatArray(16)
           Matrix.setIdentityM(ovMatrix, 0)
           Matrix.translateM(ovMatrix, 0, overlay.clip.cropOffsetX + overlay.posX, -(overlay.clip.cropOffsetY + overlay.posY), 0f)
           Matrix.rotateM(ovMatrix, 0, -totalRot, 0f, 0f, 1f)
-          Matrix.scaleM(ovMatrix, 0, baseScaleX, baseScaleY, 1f)
+          Matrix.scaleM(ovMatrix, 0, localScaleX, localScaleY, 1f)
 
           val calculatedZ = 100 + (i * 10)
           val overlayLayer = NativeLayer(
@@ -218,7 +316,8 @@ class GpuCompositionRenderer(private val context: Context) {
     }
 
     // 2.5. Process Procedural Visual Effects Overlay (Canvas drawing, Particles, Wings, Confetti, Sparks, Grids)
-    if (frame.activeEffects.isNotEmpty()) {
+    val proceduralOverlayEffects = frame.activeEffects.filter { isProceduralOverlayEffect(it.effectType) }
+    if (proceduralOverlayEffects.isNotEmpty()) {
       val fxCached = getOrCreateProceduralEffectTexture(frame, viewportWidth, viewportHeight)
       if (fxCached != null && fxCached.texId > 0) {
         fxCached.lastFrameUsed = currentFrameCounter
@@ -312,11 +411,12 @@ class GpuCompositionRenderer(private val context: Context) {
     }
 
     // 6. Render via Native C++ OpenGL ES 3.0 Engine or Kotlin OpenGL ES Fallback Compositor
-    val hasEffects = frame.activeEffects.isNotEmpty()
+    val postProcessEffects = frame.activeEffects.filter { isPostProcessShaderEffect(it.effectType) }
+    val hasPostProcess = postProcessEffects.isNotEmpty()
     val isNativeLoaded = NativeRenderBridge.isLoaded
 
     if (isNativeLoaded) {
-      if (hasEffects) {
+      if (hasPostProcess) {
         NativeRenderBridge.beginOffscreen()
       } else {
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
@@ -329,7 +429,7 @@ class GpuCompositionRenderer(private val context: Context) {
       }
       NativeRenderBridge.renderFrame(nativeLayers)
     } else {
-      if (hasEffects) {
+      if (hasPostProcess) {
         fboA.setup(viewportWidth, viewportHeight)
         fboA.bind()
       } else {
@@ -343,13 +443,13 @@ class GpuCompositionRenderer(private val context: Context) {
       }
       GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
       renderNativeLayersKotlin(nativeLayers, viewportWidth, viewportHeight)
-      if (hasEffects) {
+      if (hasPostProcess) {
         fboA.unbind()
       }
     }
 
     // 7. Apply Active Visual Effects (Multi-pass ping-ponging)
-    if (hasEffects) {
+    if (hasPostProcess) {
       val offscreenTex = if (isNativeLoaded) NativeRenderBridge.endOffscreen() else fboA.getTextureId()
       if (offscreenTex > 0) {
         fboB.setup(viewportWidth, viewportHeight)
@@ -357,9 +457,9 @@ class GpuCompositionRenderer(private val context: Context) {
         var currentInputTex = offscreenTex
         var currentOutputFbo = fboB
 
-        for (i in frame.activeEffects.indices) {
-          val effect = frame.activeEffects[i]
-          val isLast = (i == frame.activeEffects.size - 1)
+        for (i in postProcessEffects.indices) {
+          val effect = postProcessEffects[i]
+          val isLast = (i == postProcessEffects.size - 1)
 
           if (isLast) {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -489,7 +589,8 @@ class GpuCompositionRenderer(private val context: Context) {
     viewportHeight: Int,
     adjustments: VideoAdjustments,
     filter: FilterSettings,
-    chromaKey: ChromaKeySettings
+    chromaKey: ChromaKeySettings,
+    effectColorMatrix: android.graphics.ColorMatrix? = null
   ): Int {
     fboMain2D.setup(viewportWidth, viewportHeight)
     fboMain2D.bind()
@@ -512,31 +613,33 @@ class GpuCompositionRenderer(private val context: Context) {
       val kf = frame.activeClipTransform ?: KeyframeInterpolator.interpolate(clip, frame.timelinePosMs - clip.timelineStartMs)
 
       val cachedMain = imageTextureCache.values.find { it.texId == textureId }
-      val rawW = cachedMain?.width ?: if (clip.width > 0) clip.width else viewportWidth
-      val rawH = cachedMain?.height ?: if (clip.height > 0) clip.height else viewportHeight
-      val totalRot = kotlin.math.abs((clip.rotationDegrees + kf.rotation).toInt() % 360)
-      val isTransposed = (totalRot == 90 || totalRot == 270)
-      val texW = if (isTransposed) rawH else rawW
-      val texH = if (isTransposed) rawW else rawH
-      val texAspect = texW.toFloat() / max(1, texH)
+      val displayW = cachedMain?.width ?: if (clip.width > 0) clip.width else viewportWidth
+      val displayH = cachedMain?.height ?: if (clip.height > 0) clip.height else viewportHeight
+      val displayAspect = displayW.toFloat() / max(1, displayH)
       val vpAspect = viewportWidth.toFloat() / max(1, viewportHeight)
 
-      val baseScaleX: Float
-      val baseScaleY: Float
-      if (texAspect > vpAspect) {
-        baseScaleX = 1.0f
-        baseScaleY = vpAspect / texAspect
+      val screenFitX: Float
+      val screenFitY: Float
+      if (displayAspect > vpAspect) {
+        screenFitX = 1.0f
+        screenFitY = vpAspect / displayAspect
       } else {
-        baseScaleX = texAspect / vpAspect
-        baseScaleY = 1.0f
+        screenFitX = displayAspect / vpAspect
+        screenFitY = 1.0f
       }
 
-      val scaleX = baseScaleX * (if (clip.flipHorizontal) -clip.cropScale else clip.cropScale) * kf.scaleX
-      val scaleY = baseScaleY * (if (clip.flipVertical) -clip.cropScale else clip.cropScale) * kf.scaleY
+      val userScaleX = (if (clip.flipHorizontal) -clip.cropScale else clip.cropScale) * kf.scaleX
+      val userScaleY = (if (clip.flipVertical) -clip.cropScale else clip.cropScale) * kf.scaleY
+
+      val totalRot = ((clip.rotationDegrees.toFloat() + kf.rotation) % 360f + 360f) % 360f
+      val isTransposed = (totalRot == 90f || totalRot == 270f)
+
+      val localScaleX = (if (isTransposed) screenFitY else screenFitX) * userScaleX
+      val localScaleY = (if (isTransposed) screenFitX else screenFitY) * userScaleY
 
       Matrix.translateM(mvpMatrix, 0, clip.cropOffsetX + kf.posX, -(clip.cropOffsetY + kf.posY), 0f)
-      Matrix.rotateM(mvpMatrix, 0, -((clip.rotationDegrees.toFloat() + kf.rotation) % 360f), 0f, 0f, 1f)
-      Matrix.scaleM(mvpMatrix, 0, scaleX, scaleY, 1f)
+      Matrix.rotateM(mvpMatrix, 0, -totalRot, 0f, 0f, 1f)
+      Matrix.scaleM(mvpMatrix, 0, localScaleX, localScaleY, 1f)
 
       finalOpacity *= kf.opacity
       keyframeBlur = kf.blur
@@ -595,7 +698,8 @@ class GpuCompositionRenderer(private val context: Context) {
       viewportWidth = viewportWidth,
       viewportHeight = viewportHeight,
       blur = keyframeBlur,
-      effectParam = keyframeEffectParam
+      effectParam = keyframeEffectParam,
+      effectColorMatrix = effectColorMatrix
     )
 
     drawQuad(program)
@@ -608,9 +712,11 @@ class GpuCompositionRenderer(private val context: Context) {
     overlay: ComposedOverlay,
     textureId: Int,
     isOes: Boolean,
+    customTexMatrix: FloatArray? = null,
     viewportWidth: Int,
     viewportHeight: Int,
-    chromaKey: ChromaKeySettings
+    chromaKey: ChromaKeySettings,
+    effectColorMatrix: android.graphics.ColorMatrix? = null
   ): Int {
     val fbo = fboOverlayMap.getOrPut(overlay.clip.id) { GlFramebuffer() }
     fbo.setup(viewportWidth, viewportHeight)
@@ -624,10 +730,14 @@ class GpuCompositionRenderer(private val context: Context) {
     GLES20.glUseProgram(program)
 
     Matrix.setIdentityM(mvpMatrix, 0)
-    Matrix.setIdentityM(texMatrix, 0)
-    if (!isOes) {
-      Matrix.translateM(texMatrix, 0, 0f, 1f, 0f)
-      Matrix.scaleM(texMatrix, 0, 1f, -1f, 1f)
+    if (customTexMatrix != null) {
+      System.arraycopy(customTexMatrix, 0, texMatrix, 0, 16)
+    } else {
+      Matrix.setIdentityM(texMatrix, 0)
+      if (!isOes) {
+        Matrix.translateM(texMatrix, 0, 0f, 1f, 0f)
+        Matrix.scaleM(texMatrix, 0, 1f, -1f, 1f)
+      }
     }
 
     val overlayAdj = VideoAdjustments(
@@ -647,7 +757,8 @@ class GpuCompositionRenderer(private val context: Context) {
       viewportWidth = viewportWidth,
       viewportHeight = viewportHeight,
       blur = overlay.blur,
-      effectParam = overlay.effectParam
+      effectParam = overlay.effectParam,
+      effectColorMatrix = effectColorMatrix
     )
 
     drawQuad(program)
@@ -779,11 +890,12 @@ class GpuCompositionRenderer(private val context: Context) {
     viewportWidth: Int,
     viewportHeight: Int
   ): CachedTexture? {
-    if (frame.activeEffects.isEmpty() || viewportWidth <= 0 || viewportHeight <= 0) return null
+    val overlayEffects = frame.activeEffects.filter { isProceduralOverlayEffect(it.effectType) }
+    if (overlayEffects.isEmpty() || viewportWidth <= 0 || viewportHeight <= 0) return null
 
     val timeStep = (frame.timelinePosMs / 33L).toInt()
     var hash = timeStep xor viewportWidth xor (viewportHeight shl 16)
-    for (eff in frame.activeEffects) {
+    for (eff in overlayEffects) {
       hash = hash xor eff.clip.id.hashCode() xor eff.effectType.hashCode() xor (eff.intensity * 1000f).toInt()
     }
 
@@ -794,20 +906,29 @@ class GpuCompositionRenderer(private val context: Context) {
       return cached
     }
 
-    val bitmap = Bitmap.createBitmap(viewportWidth, viewportHeight, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
+    val currentBmp = proceduralBitmap
+    val bmp = if (currentBmp != null && !currentBmp.isRecycled && currentBmp.width == viewportWidth && currentBmp.height == viewportHeight) {
+      currentBmp.eraseColor(0)
+      currentBmp
+    } else {
+      currentBmp?.recycle()
+      val newBmp = Bitmap.createBitmap(viewportWidth, viewportHeight, Bitmap.Config.ARGB_8888)
+      proceduralBitmap = newBmp
+      proceduralCanvas = Canvas(newBmp)
+      newBmp
+    }
+    val canvas = proceduralCanvas ?: Canvas(bmp)
 
     VideoEffectRenderer.renderEffectsOnCanvas(
       canvas = canvas,
-      activeEffects = frame.activeEffects.map { it.clip },
+      activeEffects = overlayEffects.map { it.clip },
       currentPosMs = frame.timelinePosMs,
       width = viewportWidth,
       height = viewportHeight
     )
 
     val oldTexId = cached?.texId ?: 0
-    val texId = GlShaderUtil.uploadBitmapToTexture(bitmap, oldTexId)
-    bitmap.recycle()
+    val texId = GlShaderUtil.uploadBitmapToTexture(bmp, oldTexId)
 
     if (texId == 0) return null
     val entry = CachedTexture(texId, viewportWidth, viewportHeight, hash, currentFrameCounter)
@@ -862,7 +983,8 @@ class GpuCompositionRenderer(private val context: Context) {
     viewportWidth: Int,
     viewportHeight: Int,
     blur: Float = 0f,
-    effectParam: Float = 0f
+    effectParam: Float = 0f,
+    effectColorMatrix: android.graphics.ColorMatrix? = null
   ) {
     val uMVPMatrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
     val uTexMatrixHandle = GLES20.glGetUniformLocation(program, "uTexMatrix")
@@ -944,8 +1066,19 @@ class GpuCompositionRenderer(private val context: Context) {
     val uUseColorMatrixHandle = GLES20.glGetUniformLocation(program, "uUseColorMatrix")
 
     val filterMatrix = com.example.engine.composition.ColorFilterGenerator.getFilterMatrix(filter.type, filter.intensity)
-    if (filterMatrix != null && uUseColorMatrixHandle >= 0) {
-      val arr = filterMatrix.array
+    val finalMatrix = when {
+      filterMatrix != null && effectColorMatrix != null -> {
+        val combined = android.graphics.ColorMatrix(filterMatrix)
+        combined.postConcat(effectColorMatrix)
+        combined
+      }
+      filterMatrix != null -> filterMatrix
+      effectColorMatrix != null -> effectColorMatrix
+      else -> null
+    }
+
+    if (finalMatrix != null && uUseColorMatrixHandle >= 0) {
+      val arr = finalMatrix.array
       val glMat = floatArrayOf(
         arr[0], arr[5], arr[10], arr[15],
         arr[1], arr[6], arr[11], arr[16],
@@ -967,27 +1100,32 @@ class GpuCompositionRenderer(private val context: Context) {
   }
 
   private fun drawQuad(program: Int) {
+    GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
     val aPositionHandle = GLES20.glGetAttribLocation(program, "aPosition")
     val aTextureCoordHandle = GLES20.glGetAttribLocation(program, "aTextureCoord")
 
-    vertexBuffer.position(POSITION_DATA_OFFSET)
-    GLES20.glVertexAttribPointer(
-      aPositionHandle, 2, GLES20.GL_FLOAT, false,
-      TRIANGLE_VERTICES_DATA_STRIDE_BYTES, vertexBuffer
-    )
-    GLES20.glEnableVertexAttribArray(aPositionHandle)
+    if (aPositionHandle >= 0) {
+      vertexBuffer.position(POSITION_DATA_OFFSET)
+      GLES20.glVertexAttribPointer(
+        aPositionHandle, 2, GLES20.GL_FLOAT, false,
+        TRIANGLE_VERTICES_DATA_STRIDE_BYTES, vertexBuffer
+      )
+      GLES20.glEnableVertexAttribArray(aPositionHandle)
+    }
 
-    vertexBuffer.position(TEXTURE_DATA_OFFSET)
-    GLES20.glVertexAttribPointer(
-      aTextureCoordHandle, 2, GLES20.GL_FLOAT, false,
-      TRIANGLE_VERTICES_DATA_STRIDE_BYTES, vertexBuffer
-    )
-    GLES20.glEnableVertexAttribArray(aTextureCoordHandle)
+    if (aTextureCoordHandle >= 0) {
+      vertexBuffer.position(TEXTURE_DATA_OFFSET)
+      GLES20.glVertexAttribPointer(
+        aTextureCoordHandle, 2, GLES20.GL_FLOAT, false,
+        TRIANGLE_VERTICES_DATA_STRIDE_BYTES, vertexBuffer
+      )
+      GLES20.glEnableVertexAttribArray(aTextureCoordHandle)
+    }
 
     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-    GLES20.glDisableVertexAttribArray(aPositionHandle)
-    GLES20.glDisableVertexAttribArray(aTextureCoordHandle)
+    if (aPositionHandle >= 0) GLES20.glDisableVertexAttribArray(aPositionHandle)
+    if (aTextureCoordHandle >= 0) GLES20.glDisableVertexAttribArray(aTextureCoordHandle)
   }
 
   fun onContextLost() {
@@ -996,6 +1134,9 @@ class GpuCompositionRenderer(private val context: Context) {
     stickerTextureCache.clear()
     imageTextureCache.clear()
     proceduralEffectCache.clear()
+    proceduralBitmap?.recycle()
+    proceduralBitmap = null
+    proceduralCanvas = null
     fboOverlayMap.clear()
     NativeRenderBridge.onContextLost()
   }
@@ -1023,6 +1164,9 @@ class GpuCompositionRenderer(private val context: Context) {
     stickerTextureCache.clear()
     imageTextureCache.clear()
     proceduralEffectCache.clear()
+    proceduralBitmap?.recycle()
+    proceduralBitmap = null
+    proceduralCanvas = null
 
     if (program2D != 0) {
       GLES20.glDeleteProgram(program2D)
@@ -1134,7 +1278,7 @@ class GpuCompositionRenderer(private val context: Context) {
       EffectType.VFX_LIGHT_10, EffectType.VFX_LIGHT_17, EffectType.VFX_RETRO_7,
       EffectType.VFX_VIRAL_24 -> GpuShaders.EFFECT_LIGHT_LEAK
 
-      else -> GpuShaders.EFFECT_GLOW
+      else -> return
     }
 
     if (uEffectTypeHandle >= 0) GLES20.glUniform1i(uEffectTypeHandle, glEffectType)
@@ -1142,6 +1286,7 @@ class GpuCompositionRenderer(private val context: Context) {
     if (uTimeHandle >= 0) GLES20.glUniform1f(uTimeHandle, timeSec)
     if (uTexelSizeHandle >= 0) GLES20.glUniform2f(uTexelSizeHandle, 1.0f / max(1, viewportWidth), 1.0f / max(1, viewportHeight))
 
+    GLES20.glDisable(GLES20.GL_BLEND)
     GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTexId)
     if (uTextureHandle >= 0) GLES20.glUniform1i(uTextureHandle, 0)

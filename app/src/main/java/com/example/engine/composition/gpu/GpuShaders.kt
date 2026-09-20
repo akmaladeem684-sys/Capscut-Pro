@@ -96,44 +96,40 @@ object GpuShaders {
       }
       
       void main() {
-        // Texture boundaries check
-        if (vTextureCoord.x < 0.0 || vTextureCoord.x > 1.0 || vTextureCoord.y < 0.0 || vTextureCoord.y > 1.0) {
-          gl_FragColor = vec4(0.0);
-          return;
-        }
+        vec2 clampedCoord = clamp(vTextureCoord, 0.0, 1.0);
         
         vec4 color;
         if (uBlur > 0.005) {
           float bRad = uBlur * 0.02;
           vec4 bc = vec4(0.0);
-          bc += texture2D(uTexture, vTextureCoord + vec2(-bRad, -bRad)) * 0.0625;
-          bc += texture2D(uTexture, vTextureCoord + vec2(0.0, -bRad)) * 0.125;
-          bc += texture2D(uTexture, vTextureCoord + vec2(bRad, -bRad)) * 0.0625;
-          bc += texture2D(uTexture, vTextureCoord + vec2(-bRad, 0.0)) * 0.125;
-          bc += texture2D(uTexture, vTextureCoord) * 0.25;
-          bc += texture2D(uTexture, vTextureCoord + vec2(bRad, 0.0)) * 0.125;
-          bc += texture2D(uTexture, vTextureCoord + vec2(-bRad, bRad)) * 0.0625;
-          bc += texture2D(uTexture, vTextureCoord + vec2(0.0, bRad)) * 0.125;
-          bc += texture2D(uTexture, vTextureCoord + vec2(bRad, bRad)) * 0.0625;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(-bRad, -bRad), 0.0, 1.0)) * 0.0625;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(0.0, -bRad), 0.0, 1.0)) * 0.125;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(bRad, -bRad), 0.0, 1.0)) * 0.0625;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(-bRad, 0.0), 0.0, 1.0)) * 0.125;
+          bc += texture2D(uTexture, clampedCoord) * 0.25;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(bRad, 0.0), 0.0, 1.0)) * 0.125;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(-bRad, bRad), 0.0, 1.0)) * 0.0625;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(0.0, bRad), 0.0, 1.0)) * 0.125;
+          bc += texture2D(uTexture, clamp(clampedCoord + vec2(bRad, bRad), 0.0, 1.0)) * 0.0625;
           color = bc;
         } else if (uSharpness > 0.01) {
           // 4-tap Laplacian sharpening
-          vec4 c = texture2D(uTexture, vTextureCoord);
-          vec4 up = texture2D(uTexture, vTextureCoord + vec2(0.0, uTexelSize.y));
-          vec4 down = texture2D(uTexture, vTextureCoord - vec2(0.0, uTexelSize.y));
-          vec4 left = texture2D(uTexture, vTextureCoord - vec2(uTexelSize.x, 0.0));
-          vec4 right = texture2D(uTexture, vTextureCoord + vec2(uTexelSize.x, 0.0));
+          vec4 c = texture2D(uTexture, clampedCoord);
+          vec4 up = texture2D(uTexture, clamp(clampedCoord + vec2(0.0, uTexelSize.y), 0.0, 1.0));
+          vec4 down = texture2D(uTexture, clamp(clampedCoord - vec2(0.0, uTexelSize.y), 0.0, 1.0));
+          vec4 left = texture2D(uTexture, clamp(clampedCoord - vec2(uTexelSize.x, 0.0), 0.0, 1.0));
+          vec4 right = texture2D(uTexture, clamp(clampedCoord + vec2(uTexelSize.x, 0.0), 0.0, 1.0));
           vec4 laplacian = (up + down + left + right) - 4.0 * c;
           color = c - uSharpness * laplacian;
         } else {
-          color = texture2D(uTexture, vTextureCoord);
+          color = texture2D(uTexture, clampedCoord);
         }
         
         if (uEffectParam > 0.005) {
           float splitDist = uEffectParam * 0.02;
-          float r = texture2D(uTexture, vTextureCoord + vec2(splitDist, 0.0)).r;
+          float r = texture2D(uTexture, clamp(clampedCoord + vec2(splitDist, 0.0), 0.0, 1.0)).r;
           float g = color.g;
-          float b = texture2D(uTexture, vTextureCoord - vec2(splitDist, 0.0)).b;
+          float b = texture2D(uTexture, clamp(clampedCoord - vec2(splitDist, 0.0), 0.0, 1.0)).b;
           color.rgb = vec3(r, g, b);
         }
         
