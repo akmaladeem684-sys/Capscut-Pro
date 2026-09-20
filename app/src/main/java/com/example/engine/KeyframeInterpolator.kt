@@ -109,6 +109,62 @@ object KeyframeInterpolator {
     )
   }
 
+  fun interpolate(clip: TextClip, relTimeMs: Long): InterpolatedClipTransform {
+    val keyframes = clip.keyframes.sortedBy { it.timeMs }
+    if (keyframes.isEmpty()) {
+      return InterpolatedClipTransform(
+        scaleX = clip.scale,
+        scaleY = clip.scale,
+        rotation = clip.rotation,
+        posX = clip.posX,
+        posY = clip.posY,
+        opacity = clip.opacity,
+        volume = 1.0f,
+        blur = 0.0f,
+        brightness = 0.0f,
+        contrast = 1.0f,
+        saturation = 1.0f,
+        effectParam = 0.0f
+      )
+    }
+
+    if (relTimeMs <= keyframes.first().timeMs) {
+      return keyframeToTransform(keyframes.first())
+    }
+    if (relTimeMs >= keyframes.last().timeMs) {
+      return keyframeToTransform(keyframes.last())
+    }
+
+    var before = keyframes.first()
+    var after = keyframes.last()
+    for (i in 0 until keyframes.size - 1) {
+      if (relTimeMs >= keyframes[i].timeMs && relTimeMs <= keyframes[i + 1].timeMs) {
+        before = keyframes[i]
+        after = keyframes[i + 1]
+        break
+      }
+    }
+
+    val range = (after.timeMs - before.timeMs).toFloat().coerceAtLeast(1f)
+    val rawT = ((relTimeMs - before.timeMs) / range).coerceIn(0f, 1f)
+    val factor = computeFactor(before.interpolation, before.customCurvePoints, rawT)
+
+    return InterpolatedClipTransform(
+      scaleX = lerp(before.scaleX, after.scaleX, factor),
+      scaleY = lerp(before.scaleY, after.scaleY, factor),
+      rotation = lerp(before.rotation, after.rotation, factor),
+      posX = lerp(before.posX, after.posX, factor),
+      posY = lerp(before.posY, after.posY, factor),
+      opacity = lerp(before.opacity, after.opacity, factor).coerceIn(0f, 1f),
+      volume = 1.0f,
+      blur = 0.0f,
+      brightness = 0.0f,
+      contrast = 1.0f,
+      saturation = 1.0f,
+      effectParam = 0.0f
+    )
+  }
+
   private fun interpolateBaseKeyframes(clip: VideoClip, relTimeMs: Long): InterpolatedClipTransform {
     val keyframes = clip.keyframes.sortedBy { it.timeMs }
     if (keyframes.isEmpty()) {

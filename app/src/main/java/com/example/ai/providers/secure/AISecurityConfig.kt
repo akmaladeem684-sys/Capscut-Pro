@@ -49,9 +49,10 @@ object AISecurityConfig {
       if (custom.isNotBlank()) return custom
     }
     return try {
-      val key = BuildConfig.GEMINI_API_KEY
+      val field = BuildConfig::class.java.getField("GEMINI_API_KEY")
+      val key = field.get(null) as? String ?: ""
       if (key.isNotBlank() && key != "MY_GEMINI_API_KEY") key else ""
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
       ""
     }
   }

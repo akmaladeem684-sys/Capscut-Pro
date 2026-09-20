@@ -464,7 +464,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
               timelineFilter = timeline.filter,
               chromaKey = timeline.chromaKey
             )
-            GLES20.glFlush()
+            GLES20.glFinish()
             windowSurface?.setPresentationTime(ptsUs * 1000L)
             windowSurface?.swapBuffers()
             metrics.gpuRenderTimeNs.addAndGet(System.nanoTime() - renderStart)

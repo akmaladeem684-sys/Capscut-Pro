@@ -38,10 +38,10 @@ class GpuCompositionRenderer(private val context: Context) {
 
   // Full-screen quad geometry: (x, y, u, v)
   private val quadVertices = floatArrayOf(
-    -1.0f, -1.0f,  0.0f, 1.0f,
-     1.0f, -1.0f,  1.0f, 1.0f,
-    -1.0f,  1.0f,  0.0f, 0.0f,
-     1.0f,  1.0f,  1.0f, 0.0f
+    -1.0f, -1.0f,  0.0f, 0.0f,
+     1.0f, -1.0f,  1.0f, 0.0f,
+    -1.0f,  1.0f,  0.0f, 1.0f,
+     1.0f,  1.0f,  1.0f, 1.0f
   )
 
   private val vertexBuffer: FloatBuffer = ByteBuffer
@@ -231,8 +231,8 @@ class GpuCompositionRenderer(private val context: Context) {
           isVisible = true,
           zOrder = 450,
           opacity = 1.0f,
-          vScale = -1.0f,
-          vOffset = 1.0f,
+          vScale = 1.0f,
+          vOffset = 0.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = fxMatrix
@@ -266,8 +266,8 @@ class GpuCompositionRenderer(private val context: Context) {
           isVisible = true,
           zOrder = calculatedZ,
           opacity = sticker.opacity.coerceIn(0f, 1f),
-          vScale = -1.0f,
-          vOffset = 1.0f,
+          vScale = 1.0f,
+          vOffset = 0.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = stkMatrix
@@ -282,16 +282,11 @@ class GpuCompositionRenderer(private val context: Context) {
       val cached = getOrCreateTextTexture(text.clip, text.currentPosMs, viewportWidth, viewportHeight)
       if (cached != null && cached.texId > 0) {
         cached.lastFrameUsed = currentFrameCounter
-        val aspect = viewportWidth.toFloat() / max(1, viewportHeight)
-        val txtAspect = cached.width.toFloat() / max(1, cached.height)
-        val scaleY = ((cached.height.toFloat() / viewportHeight) * 2f * text.scale).coerceAtLeast(0.01f)
-        val scaleX = (scaleY * txtAspect / aspect).coerceAtLeast(0.01f)
 
+        // TextLayerRenderer draws text onto a full viewport bitmap at exact coordinates and scale.
+        // Identity matrix maps the full-viewport texture 1:1 onto the GPU framebuffer.
         val txtMatrix = FloatArray(16)
         Matrix.setIdentityM(txtMatrix, 0)
-        Matrix.translateM(txtMatrix, 0, text.posX, -text.posY, 0f)
-        Matrix.rotateM(txtMatrix, 0, -text.rotation, 0f, 0f, 1f)
-        Matrix.scaleM(txtMatrix, 0, scaleX, scaleY, 1f)
 
         val calculatedZ = 1000 + (text.clip.trackIndex * 10) + i
         val textLayer = NativeLayer(
@@ -300,9 +295,9 @@ class GpuCompositionRenderer(private val context: Context) {
           type = NativeLayerType.TEXT,
           isVisible = true,
           zOrder = calculatedZ,
-          opacity = text.opacity.coerceIn(0f, 1f),
-          vScale = -1.0f,
-          vOffset = 1.0f,
+          opacity = 1.0f,
+          vScale = 1.0f,
+          vOffset = 0.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = txtMatrix
@@ -357,7 +352,6 @@ class GpuCompositionRenderer(private val context: Context) {
     if (hasEffects) {
       val offscreenTex = if (isNativeLoaded) NativeRenderBridge.endOffscreen() else fboA.getTextureId()
       if (offscreenTex > 0) {
-        fboA.setup(viewportWidth, viewportHeight)
         fboB.setup(viewportWidth, viewportHeight)
 
         var currentInputTex = offscreenTex
@@ -660,7 +654,7 @@ class GpuCompositionRenderer(private val context: Context) {
     viewportWidth: Int,
     viewportHeight: Int
   ): CachedTexture? {
-    val hasAnim = clip.animationType != "None" || clip.animation3D != "None"
+    val hasAnim = clip.animationType != "None" || clip.animation3D != "None" || clip.keyframes.isNotEmpty()
     val animTimeStep = if (hasAnim) (currentPosMs / 33L).toInt() else 0
 
     val hash = clip.text.hashCode() xor
@@ -671,6 +665,7 @@ class GpuCompositionRenderer(private val context: Context) {
         clip.strokeColor.toInt() xor
         clip.strokeWidth.toInt() xor
         clip.fontFamily.hashCode() xor
+        (clip.customFontPath?.hashCode() ?: 0) xor
         clip.animationType.hashCode() xor
         clip.animation3D.hashCode() xor
         clip.effectStyle.hashCode() xor
@@ -679,12 +674,18 @@ class GpuCompositionRenderer(private val context: Context) {
         clip.is3D.hashCode() xor
         clip.hasGradient.hashCode() xor
         clip.gradientColorStart.toInt() xor
+        clip.gradientColorEnd.toInt() xor
         clip.hasGlow.hashCode() xor
         clip.hasShadow.hashCode() xor
         clip.opacity.hashCode() xor
         clip.scale.hashCode() xor
+        clip.rotation.hashCode() xor
+        clip.posX.hashCode() xor
+        clip.posY.hashCode() xor
+        clip.alignment.hashCode() xor
         animTimeStep xor
-        viewportWidth
+        viewportWidth xor
+        (viewportHeight shl 16)
 
     val cached = textTextureCache[clip.id]
     if (cached != null && cached.hash == hash && cached.texId > 0) {
@@ -1048,11 +1049,18 @@ class GpuCompositionRenderer(private val context: Context) {
     if (programEffect == 0) return
     GLES20.glUseProgram(programEffect)
 
+    val uMVPMatrixHandle = GLES20.glGetUniformLocation(programEffect, "uMVPMatrix")
+    val uTexMatrixHandle = GLES20.glGetUniformLocation(programEffect, "uTexMatrix")
     val uTextureHandle = GLES20.glGetUniformLocation(programEffect, "uTexture")
     val uEffectTypeHandle = GLES20.glGetUniformLocation(programEffect, "uEffectType")
     val uIntensityHandle = GLES20.glGetUniformLocation(programEffect, "uIntensity")
     val uTimeHandle = GLES20.glGetUniformLocation(programEffect, "uTime")
     val uTexelSizeHandle = GLES20.glGetUniformLocation(programEffect, "uTexelSize")
+
+    val identity = FloatArray(16)
+    Matrix.setIdentityM(identity, 0)
+    if (uMVPMatrixHandle >= 0) GLES20.glUniformMatrix4fv(uMVPMatrixHandle, 1, false, identity, 0)
+    if (uTexMatrixHandle >= 0) GLES20.glUniformMatrix4fv(uTexMatrixHandle, 1, false, identity, 0)
 
     val glEffectType = when (effectType) {
       // Blur & Soft Focus

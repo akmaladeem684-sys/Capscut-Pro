@@ -257,9 +257,20 @@ class VideoCompositionEngine(private val context: Context) {
       timeline.textClips.filter {
         !it.isHidden && posMs >= it.timelineStartMs && posMs < it.timelineStartMs + it.durationMs
       }.sortedWith(compareBy({ it.trackIndex }, { it.timelineStartMs })).map { clip ->
-        val state = TextLayerRenderer.evaluateAnimation(clip, posMs)
+        val relMs = posMs - clip.timelineStartMs
+        val kf = KeyframeInterpolator.interpolate(clip, relMs)
+        val effectiveClip = if (clip.keyframes.isNotEmpty()) {
+          clip.copy(
+            posX = kf.posX,
+            posY = kf.posY,
+            scale = kf.scale,
+            rotation = kf.rotation,
+            opacity = kf.opacity
+          )
+        } else clip
+        val state = TextLayerRenderer.evaluateAnimation(effectiveClip, posMs)
         ComposedText(
-          clip = clip,
+          clip = effectiveClip,
           posX = state.posX,
           posY = state.posY,
           scale = state.scale,

@@ -982,7 +982,7 @@ class VideoExporter(private val context: Context) {
           // Flush the GL command stream before handing the encoder surface to
           // BufferQueue. Some GPU drivers otherwise submit the surface before
           // deferred rendering has completed, producing black encoded frames.
-          GLES20.glFlush()
+          GLES20.glFinish()
           val glError = GLES20.glGetError()
           if (glError != GLES20.GL_NO_ERROR) {
             Log.w(tag, "GL error before encoder swap at frame $frameIndex: 0x" + Integer.toHexString(glError))

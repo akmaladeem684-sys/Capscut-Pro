@@ -413,7 +413,8 @@ data class TextClip(
   val animation3D: String = "None",
   val effectStyle: String = "None",
   val isLocked: Boolean = false,
-  val isHidden: Boolean = false
+  val isHidden: Boolean = false,
+  val keyframes: List<ClipKeyframe> = emptyList()
 )
 
 enum class StickerAnimationType(val displayName: String) {
