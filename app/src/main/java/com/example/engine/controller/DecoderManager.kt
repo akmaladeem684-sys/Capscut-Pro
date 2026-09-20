@@ -76,12 +76,17 @@ class DecoderManager {
   }
 
   fun isHardwareAccelerated(codecInfo: MediaCodecInfo): Boolean {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+      if (codecInfo.isSoftwareOnly) return false
+      if (codecInfo.isHardwareAccelerated) return true
+    }
     val name = codecInfo.name.lowercase()
     val isSoftware = name.startsWith("omx.google.") ||
         name.startsWith("c2.android.") ||
         name.contains(".sw.") ||
         name.contains("software") ||
-        name.contains("ffmpeg")
+        name.contains("ffmpeg") ||
+        name.contains("google")
     return !isSoftware
   }
 
@@ -129,6 +134,88 @@ class DecoderManager {
       Log.w(TAG, "Error looking up hardware decoder for $mimeType", e)
       null
     }
+  }
+
+  /**
+   * Discovers the best hardware-accelerated video encoder name for the given MIME type,
+   * prioritizing native SoC hardware drivers (Qualcomm, MediaTek, Samsung Exynos, Kirin)
+   * over software implementations.
+   */
+  fun findHardwareEncoderName(
+    mimeType: String,
+    width: Int = 1920,
+    height: Int = 1080,
+    requireSurface: Boolean = true
+  ): String? {
+    return try {
+      val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+      var bestName: String? = null
+      var bestScore = -1
+
+      for (info in codecList.codecInfos) {
+        if (!info.isEncoder) continue
+        val types = info.supportedTypes
+        val matchesMime = types.any { it.equals(mimeType, ignoreCase = true) }
+        if (!matchesMime) continue
+
+        if (!isHardwareAccelerated(info)) continue
+
+        val caps = runCatching { info.getCapabilitiesForType(mimeType) }.getOrNull() ?: continue
+        if (requireSurface && !caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)) {
+          continue
+        }
+        val vc = caps.videoCapabilities
+        if (vc != null && width > 0 && height > 0 && !vc.isSizeSupported(width, height)) {
+          continue
+        }
+
+        // Score based on vendor hardware tier:
+        // Qualcomm (qcom, qti) > Exynos/Samsung > MediaTek (mtk) > HiSilicon/Kirin > Other hardware
+        val name = info.name.lowercase()
+        var score = 10
+        if (name.contains("qcom") || name.contains("qti")) score = 50
+        else if (name.contains("exynos") || name.contains("samsung")) score = 40
+        else if (name.contains("mtk") || name.contains("mediatek")) score = 35
+        else if (name.contains("hisi") || name.contains("kirin")) score = 30
+        else if (name.contains("intel") || name.contains("nvidia")) score = 25
+
+        if (score > bestScore) {
+          bestScore = score
+          bestName = info.name
+        }
+      }
+      bestName
+    } catch (e: Exception) {
+      Log.w(TAG, "Error looking up hardware encoder for $mimeType", e)
+      null
+    }
+  }
+
+  /**
+   * Factory method to create a MediaCodec encoder, prioritizing hardware acceleration.
+   * Returns Pair<MediaCodec, Boolean> (codec, isHardwareAccelerated).
+   */
+  fun createEncoder(
+    mimeType: String,
+    width: Int = 1920,
+    height: Int = 1080,
+    requireSurface: Boolean = true
+  ): Pair<MediaCodec, Boolean> {
+    val hwName = findHardwareEncoderName(mimeType, width, height, requireSurface)
+    if (hwName != null) {
+      try {
+        val codec = MediaCodec.createByCodecName(hwName)
+        Log.i(TAG, "Successfully created hardware video encoder: $hwName")
+        return Pair(codec, true)
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed creating hardware encoder by name $hwName, falling back to createEncoderByType", e)
+      }
+    }
+
+    val fallbackCodec = MediaCodec.createEncoderByType(mimeType)
+    val isHw = !isSoftwareCodec(fallbackCodec)
+    Log.i(TAG, "Created fallback video encoder: ${fallbackCodec.name} (hardwareAccelerated=$isHw)")
+    return Pair(fallbackCodec, isHw)
   }
 
   /**

@@ -207,18 +207,11 @@ class AsyncFramePipelineEngine(private val context: Context) {
     val pendingSamples = ConcurrentLinkedQueue<PendingMuxerSample>()
 
     try {
-      // 1. Pre-load Images & Fallback Bitmaps
+      // 1. Pre-load Images & Fallback Bitmaps (Clamped strictly to export resolution to avoid texture bloat)
       for (clip in timeline.videoClips + timeline.overlayClips) {
         if (!clip.isVideo && clip.uri.isNotBlank()) {
           try {
-            val uri = Uri.parse(clip.uri)
-            val bmp = if (uri.scheme == "content") {
-              context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            } else if (uri.scheme == "file") {
-              BitmapFactory.decodeFile(uri.path)
-            } else {
-              BitmapFactory.decodeFile(clip.uri)
-            }
+            val bmp = decodeSampledBitmap(context, clip.uri, exportWidth, exportHeight)
             if (bmp != null) {
               imageBitmaps[clip.uri] = bmp
             }
@@ -228,7 +221,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
       }
 
-      // 2. Configure Video Encoder
+      // 2. Configure Hardware-Accelerated Video Encoder
       val videoMime = selectEncoder(config, exportWidth, exportHeight, fps) ?: MediaFormat.MIMETYPE_VIDEO_AVC
       val bitrateBps = bitrate(config)
       val videoFormat = MediaFormat.createVideoFormat(videoMime, exportWidth, exportHeight).apply {
@@ -241,10 +234,17 @@ class AsyncFramePipelineEngine(private val context: Context) {
         } catch (_: Exception) {}
       }
 
-      videoEncoder = MediaCodec.createEncoderByType(videoMime).apply {
+      val (chosenEncoder, isHardwareEncoder) = decoderManager.createEncoder(
+        mimeType = videoMime,
+        width = exportWidth,
+        height = exportHeight,
+        requireSurface = true
+      )
+      videoEncoder = chosenEncoder.apply {
         configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         encoderInputSurface = createInputSurface()
       }
+      Log.i(tag, "Video Encoder initialized: ${videoEncoder.name} (hardwareAccelerated=$isHardwareEncoder, surface=true)")
 
       // 3. Initialize EGL & GPU Composition on Dedicated GL Thread
       val glInitLatch = CountDownLatch(1)
@@ -317,14 +317,64 @@ class AsyncFramePipelineEngine(private val context: Context) {
           val aInfo = MediaCodec.BufferInfo()
 
           while (!cancelled.get() && (!videoEos.get() || (hasAudio && !audioEos.get()))) {
-            // Drain Video
+            var drainedSomething = false
+
+            // Drain Video: burst-drain all available encoder buffers immediately
             if (!videoEos.get()) {
-              val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 2_000L)
-              when {
-                vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+              while (!videoEos.get()) {
+                val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 0L)
+                if (vIndex >= 0) {
+                  drainedSomething = true
+                  val out = videoEncoder.getOutputBuffer(vIndex)
+                  if (out != null && vInfo.size > 0) {
+                    localCoordinator.writeVideoSample(out, vInfo)
+                    metrics.encodedFrames.incrementAndGet()
+                  }
+                  val isEos = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                  videoEncoder.releaseOutputBuffer(vIndex, false)
+                  if (isEos) {
+                    videoEos.set(true)
+                    break
+                  }
+                } else if (vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                  drainedSomething = true
                   localCoordinator.setVideoFormat(videoEncoder.outputFormat)
+                } else {
+                  break
                 }
-                vIndex >= 0 -> {
+              }
+            }
+
+            // Drain Audio: burst-drain all available audio buffers immediately
+            if (hasAudio && audioEncoder != null && !audioEos.get()) {
+              while (!audioEos.get()) {
+                val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 0L)
+                if (aIndex >= 0) {
+                  drainedSomething = true
+                  val out = audioEncoder.getOutputBuffer(aIndex)
+                  if (out != null && aInfo.size > 0) {
+                    localCoordinator.writeAudioSample(out, aInfo)
+                  }
+                  val isEos = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                  audioEncoder.releaseOutputBuffer(aIndex, false)
+                  if (isEos) {
+                    audioEos.set(true)
+                    break
+                  }
+                } else if (aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                  drainedSomething = true
+                  localCoordinator.setAudioFormat(audioEncoder.outputFormat)
+                } else {
+                  break
+                }
+              }
+            }
+
+            // If neither encoder produced buffers on this pass, wait briefly to prevent CPU spinning
+            if (!drainedSomething) {
+              if (!videoEos.get()) {
+                val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 2_000L)
+                if (vIndex >= 0) {
                   val out = videoEncoder.getOutputBuffer(vIndex)
                   if (out != null && vInfo.size > 0) {
                     localCoordinator.writeVideoSample(out, vInfo)
@@ -333,25 +383,21 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   val isEos = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                   videoEncoder.releaseOutputBuffer(vIndex, false)
                   if (isEos) videoEos.set(true)
+                } else if (vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                  localCoordinator.setVideoFormat(videoEncoder.outputFormat)
                 }
-              }
-            }
-
-            // Drain Audio
-            if (hasAudio && audioEncoder != null && !audioEos.get()) {
-              val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 2_000L)
-              when {
-                aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                  localCoordinator.setAudioFormat(audioEncoder.outputFormat)
-                }
-                aIndex >= 0 -> {
-                  val out = audioEncoder.getOutputBuffer(aIndex)
+              } else if (hasAudio && !audioEos.get()) {
+                val aIndex = audioEncoder?.dequeueOutputBuffer(aInfo, 2_000L) ?: -1
+                if (aIndex >= 0) {
+                  val out = audioEncoder?.getOutputBuffer(aIndex)
                   if (out != null && aInfo.size > 0) {
                     localCoordinator.writeAudioSample(out, aInfo)
                   }
                   val isEos = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                  audioEncoder.releaseOutputBuffer(aIndex, false)
+                  audioEncoder?.releaseOutputBuffer(aIndex, false)
                   if (isEos) audioEos.set(true)
+                } else if (aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                  audioEncoder?.outputFormat?.let { localCoordinator.setAudioFormat(it) }
                 }
               }
             }
@@ -487,19 +533,19 @@ class AsyncFramePipelineEngine(private val context: Context) {
               timelineFilter = timeline.filter,
               chromaKey = timeline.chromaKey
             )
-            GLES20.glFinish()
+            GLES20.glFlush()
             windowSurface?.setPresentationTime(ptsUs * 1000L)
             windowSurface?.swapBuffers()
             metrics.gpuRenderTimeNs.addAndGet(System.nanoTime() - renderStart)
             metrics.gpuFrames.incrementAndGet()
 
-            // 4. Feed Audio Pro-Rata with Exact PTS
+            // 4. Feed Audio Pro-Rata with Exact PTS (Non-blocking so GL thread is never stalled)
             if (hasAudio && audioEncoder != null) {
               val targetAudioFrames = (((frameIndex + 1).toDouble() * audioSampleRate) / fps).toInt().coerceAtMost(totalAudioFrames)
               while (fedAudioFrames < targetAudioFrames && !cancelled.get()) {
                 val framesToFeed = min(1024, targetAudioFrames - fedAudioFrames)
                 if (framesToFeed <= 0) break
-                val inputIndex = audioEncoder.dequeueInputBuffer(2_000L)
+                val inputIndex = audioEncoder.dequeueInputBuffer(0L)
                 if (inputIndex >= 0) {
                   val inputBuffer = audioEncoder.getInputBuffer(inputIndex)
                   if (inputBuffer != null) {
@@ -655,6 +701,52 @@ class AsyncFramePipelineEngine(private val context: Context) {
       Resolution.RES_2K, Resolution.RES_VERTICAL_2K -> 18_000_000
       Resolution.RES_4K, Resolution.RES_VERTICAL_4K -> 35_000_000
       Resolution.RES_SQUARE_2K -> 22_000_000
+    }
+  }
+
+  private fun decodeSampledBitmap(context: Context, uriString: String, maxW: Int, maxH: Int): Bitmap? {
+    return try {
+      val uri = Uri.parse(uriString)
+      val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      if (uri.scheme == "content") {
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOpts) }
+      } else {
+        val path = if (uri.scheme == "file") uri.path ?: uriString else uriString
+        BitmapFactory.decodeFile(path, boundsOpts)
+      }
+      var sampleSize = 1
+      val srcW = boundsOpts.outWidth
+      val srcH = boundsOpts.outHeight
+      if (srcW > 0 && srcH > 0 && maxW > 0 && maxH > 0) {
+        while ((srcW / (sampleSize * 2)) >= maxW && (srcH / (sampleSize * 2)) >= maxH) {
+          sampleSize *= 2
+        }
+      }
+      val decodeOpts = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+      }
+      val rawBmp = if (uri.scheme == "content") {
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOpts) }
+      } else {
+        val path = if (uri.scheme == "file") uri.path ?: uriString else uriString
+        BitmapFactory.decodeFile(path, decodeOpts)
+      } ?: return null
+
+      // Scale to strictly fit within timeline export resolution if still larger
+      if (rawBmp.width > maxW || rawBmp.height > maxH) {
+        val scale = minOf(maxW.toFloat() / rawBmp.width, maxH.toFloat() / rawBmp.height)
+        val targetW = (rawBmp.width * scale).toInt().coerceAtLeast(1)
+        val targetH = (rawBmp.height * scale).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(rawBmp, targetW, targetH, true)
+        if (scaled != rawBmp) rawBmp.recycle()
+        scaled
+      } else {
+        rawBmp
+      }
+    } catch (e: Exception) {
+      Log.w(tag, "Failed to decode sampled bitmap for $uriString: ${e.message}")
+      null
     }
   }
 

@@ -21,6 +21,8 @@ import com.example.engine.composition.VideoCompositionEngine
 import com.example.engine.composition.gpu.EglCore
 import com.example.engine.composition.gpu.GpuCompositionRenderer
 import com.example.engine.composition.gpu.WindowSurface
+import com.example.engine.controller.DecoderManager
+import com.example.engine.effects.media3.Media3EffectPipeline
 import com.example.engine.media.MediaRelinkManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.*
@@ -394,25 +396,24 @@ class VideoExporter(private val context: Context) {
    */
   fun canExportWithMedia3Transformer(timeline: Timeline): Boolean {
     if (timeline.videoClips.isEmpty()) return false
-    // Timelines with filters, color adjustments, chroma key, custom canvas overlays, text layers, stickers, animations, effects, or clip transformations use composition engine
-    if (timeline.filter.type != com.example.domain.model.FilterType.NONE ||
-        timeline.adjustments != com.example.domain.model.VideoAdjustments() ||
-        timeline.chromaKey.enabled ||
+    // Chroma key, multi-track overlays, text layers, stickers, or animated transforms require composition engine
+    // Note: Color grading, adjustments, and filter shaders are now natively supported via Media3EffectPipeline!
+    if (timeline.chromaKey.enabled ||
+        timeline.overlayClips.isNotEmpty() ||
+        timeline.textClips.isNotEmpty() ||
+        timeline.stickerClips.isNotEmpty() ||
+        timeline.effectClips.isNotEmpty() ||
         timeline.videoClips.any {
-          it.filter?.type != com.example.domain.model.FilterType.NONE ||
           it.rotationDegrees != 0 ||
           it.cropScale != 1.0f ||
           it.cropOffsetX != 0f ||
           it.cropOffsetY != 0f ||
           it.flipHorizontal ||
           it.flipVertical ||
-          it.opacity != 1.0f
-        } ||
-        timeline.overlayClips.isNotEmpty() ||
-        timeline.textClips.isNotEmpty() ||
-        timeline.stickerClips.isNotEmpty() ||
-        timeline.effectClips.isNotEmpty() ||
-        timeline.videoClips.any { it.animation.hasAnimation || it.keyframes.isNotEmpty() }
+          it.opacity != 1.0f ||
+          it.animation.hasAnimation ||
+          it.keyframes.isNotEmpty()
+        }
     ) {
       return false
     }
@@ -423,7 +424,8 @@ class VideoExporter(private val context: Context) {
   }
 
   /**
-   * High-level MP4 Exporter using Media3 Transformer when applicable.
+   * High-level MP4 Exporter using Media3 Transformer when applicable,
+   * injecting custom OpenGL shaders (LUTs, Color Grading, Filters) via the Media3 Effect API.
    */
   suspend fun exportWithMedia3Transformer(
     timeline: Timeline,
@@ -435,7 +437,7 @@ class VideoExporter(private val context: Context) {
     val latch = java.util.concurrent.CountDownLatch(1)
 
     try {
-      _exportState.value = ExportState.Rendering(0.05f, 0, 100, "Configuring Media3 Transformer pipeline...")
+      _exportState.value = ExportState.Rendering(0.05f, 0, 100, "Configuring Media3 Transformer & Effect pipeline...")
 
       val (exportWidth, exportHeight) = getDimensionsForResolution(config.resolution, timeline.aspectRatio)
       val targetFps = config.frameRate.fps
@@ -453,10 +455,6 @@ class VideoExporter(private val context: Context) {
         (baseBitrate * config.quality.bitrateMultiplier * (config.frameRate.fps / 30f)).toInt()
       }
 
-      val presentation = Presentation.createForWidthAndHeight(exportWidth, exportHeight, Presentation.LAYOUT_SCALE_TO_FIT)
-      val frameDrop = FrameDropEffect.createDefaultFrameDropEffect(targetFps.toFloat())
-      val videoEffects = listOf(presentation, frameDrop)
-
       val editedMediaItems = mutableListOf<EditedMediaItem>()
       for (clip in timeline.videoClips) {
         val uri = Uri.parse(clip.uri)
@@ -472,9 +470,20 @@ class VideoExporter(private val context: Context) {
           .setUri(uri)
           .setClippingConfiguration(clippingConfig)
           .build()
+
+        // Build clip-specific Media3 Effect pipeline with custom OpenGL shaders (LUTs, Color Grading, Filters)
+        val clipEffects = Media3EffectPipeline.buildClipEffects(
+          context = context,
+          clip = clip,
+          timeline = timeline,
+          exportWidth = exportWidth,
+          exportHeight = exportHeight,
+          targetFps = targetFps.toFloat()
+        )
+
         val editedItem = EditedMediaItem.Builder(mediaItem)
           .setRemoveAudio(clip.isMuted || !clip.hasAudio)
-          .setEffects(Effects(emptyList(), videoEffects))
+          .setEffects(Effects(emptyList(), clipEffects))
           .build()
         editedMediaItems.add(editedItem)
       }
@@ -584,6 +593,16 @@ class VideoExporter(private val context: Context) {
     val sanitizedName = projectName.replace("[^a-zA-Z0-9_-]".toRegex(), "_")
     val resLabel = config.resolution.label.lowercase()
     val outputFile = File(outputDir, "${sanitizedName}_${resLabel}_${System.currentTimeMillis()}.mp4")
+
+    // Attempt Media3 Transformer with OpenGL Effect Pipeline (LUTs, Color Grading) first if compatible
+    if (canExportWithMedia3Transformer(timeline)) {
+      Log.i(tag, "Attempting export via Media3 Transformer with OpenGL Effect pipeline...")
+      val transformerResult = exportWithMedia3Transformer(timeline, outputFile, config)
+      if (transformerResult != null && transformerResult.exists() && transformerResult.length() > 1024L) {
+        return@withContext transformerResult
+      }
+      Log.w(tag, "Media3 Transformer export did not produce output, falling back to hardware composition pipeline")
+    }
 
     // High-performance Hardware GPU Surface Export Pipeline (CapCut-level)
     val pipeline = AsyncFramePipelineEngine(context)
@@ -762,12 +781,9 @@ class VideoExporter(private val context: Context) {
         } catch (ignored: Exception) {}
       }
 
-      videoEncoder = try {
-        MediaCodec.createEncoderByType(videoMime)
-      } catch (e: Exception) {
-        Log.w(tag, "Failed to create encoder for $videoMime, falling back to AVC", e)
-        MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-      }
+      val (chosenEncoder, isHwEncoder) = DecoderManager().createEncoder(videoMime, exportWidth, exportHeight, requireSurface = false)
+      videoEncoder = chosenEncoder
+      Log.i(tag, "VideoExporter initialized encoder: ${videoEncoder.name} (hardwareAccelerated=$isHwEncoder)")
       val codecInfo = videoEncoder.codecInfo
       val caps = codecInfo.getCapabilitiesForType(videoEncoder.name.let {
         try { videoEncoder.inputFormat.getString(MediaFormat.KEY_MIME) ?: videoMime } catch (e: Exception) { videoMime }
