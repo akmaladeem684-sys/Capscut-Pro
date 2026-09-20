@@ -439,6 +439,16 @@ class AsyncFramePipelineEngine(private val context: Context) {
           for (frameIndex in 0 until totalFrames) {
             if (cancelled.get()) break
 
+            // Enforce keyframe generation on the first rendered frame so MP4 moov/stss index table is clean
+            if (frameIndex == 0L) {
+              try {
+                val syncParams = android.os.Bundle().apply {
+                  putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+                }
+                videoEncoder?.setParameters(syncParams)
+              } catch (ignored: Exception) {}
+            }
+
             val ptsUs = (frameIndex * 1_000_000L) / fps
             val timelinePosMs = (ptsUs / 1000L).coerceAtMost(durationMs - 1L)
             val frame = composition.evaluateFrame(timeline, timelinePosMs)

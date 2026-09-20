@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import java.io.File
+import java.io.FileInputStream
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -118,18 +119,22 @@ object ExportValidator {
       return ExportValidationResult(false, "Output file does not exist.")
     }
     val fileLength = file.length()
-    if (fileLength <= 1024L) {
-      Log.e(TAG, "Validation failed: File is incomplete or empty (${fileLength} bytes) at ${file.absolutePath}")
-      return ExportValidationResult(false, "Output file is empty or incomplete ($fileLength bytes).")
+    if (fileLength <= 4096L) {
+      Log.e(TAG, "Validation failed: File is incomplete or too small (${fileLength} bytes, expected > 4096 bytes) at ${file.absolutePath}")
+      return ExportValidationResult(false, "Output file is incomplete or too small ($fileLength bytes).")
     }
 
+    var fis: FileInputStream? = null
     val retriever = MediaMetadataRetriever()
     val extractor = MediaExtractor()
 
     return try {
-      // 1. Validate MP4 container header using MediaMetadataRetriever
+      fis = FileInputStream(file)
+      val fd = fis.fd
+
+      // 1. Validate MP4 container header using MediaMetadataRetriever via FileDescriptor
       try {
-        retriever.setDataSource(file.absolutePath)
+        retriever.setDataSource(fd)
       } catch (e: Throwable) {
         Log.e(TAG, "MediaMetadataRetriever setDataSource failed on ${file.absolutePath} (size=$fileLength)", e)
         return ExportValidationResult(
@@ -149,9 +154,9 @@ object ExportValidator {
       val width = widthStr?.toIntOrNull() ?: 0
       val height = heightStr?.toIntOrNull() ?: 0
 
-      // 2. Validate tracks using MediaExtractor
+      // 2. Validate tracks using MediaExtractor via FileDescriptor
       try {
-        extractor.setDataSource(file.absolutePath)
+        extractor.setDataSource(fd)
       } catch (e: Throwable) {
         Log.e(TAG, "MediaExtractor setDataSource failed on ${file.absolutePath} (size=$fileLength)", e)
         return ExportValidationResult(
@@ -215,6 +220,7 @@ object ExportValidator {
     } finally {
       try { retriever.release() } catch (_: Throwable) {}
       try { extractor.release() } catch (_: Throwable) {}
+      try { fis?.close() } catch (_: Throwable) {}
     }
   }
 }

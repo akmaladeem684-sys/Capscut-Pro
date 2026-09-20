@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileDescriptor
+import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
@@ -1227,18 +1229,19 @@ class VideoExporter(private val context: Context) {
 
       // Validate output file
       val finalSize = outputFile.length()
-      if (finalSize > 1024L) {
-        val isValid = validatePlayableMp4(outputFile)
+      if (finalSize > 4096L) {
+        val isValid = validateMp4Safely(outputFile)
         if (isValid) {
           _exportState.value = ExportState.Success(outputFile, totalDurationMs, finalSize)
           return@withContext outputFile
         } else {
-          _exportState.value = ExportState.Error("Exported MP4 header validation failed")
+          Log.w(tag, "Export completed but validateMp4Safely reported missing video track or header on ${outputFile.absolutePath} ($finalSize bytes)")
+          _exportState.value = ExportState.Error("Exported MP4 header validation failed ($finalSize bytes)")
           cleanUp(videoEncoder, audioEncoder, encoderInputSurface, windowSurface, eglCore, gpuRenderer, mediaMuxer, outputFile)
           return@withContext null
         }
       } else {
-        _exportState.value = ExportState.Error("Export resulted in incomplete or empty file")
+        _exportState.value = ExportState.Error("Export resulted in incomplete or empty file ($finalSize bytes, expected > 4096 bytes)")
         cleanUp(videoEncoder, audioEncoder, encoderInputSurface, windowSurface, eglCore, gpuRenderer, mediaMuxer, outputFile)
         return@withContext null
       }
@@ -1392,19 +1395,42 @@ class VideoExporter(private val context: Context) {
     }
   }
 
-  private fun validatePlayableMp4(file: File): Boolean {
+  /**
+   * Safely validates the exported MP4 file by opening a direct FileInputStream file descriptor,
+   * avoiding path translation and permission exceptions inside MediaMetadataRetriever on Android storage.
+   */
+  fun validateMp4Safely(file: File): Boolean {
+    if (!file.exists()) {
+      Log.w(tag, "MP4 validation failed: Output file does not exist at ${file.absolutePath}")
+      return false
+    }
+    val fileLength = file.length()
+    if (fileLength <= 4096L) {
+      Log.w(tag, "MP4 validation failed: File size too small or incomplete ($fileLength bytes, required > 4096 bytes)")
+      return false
+    }
+
+    var fis: FileInputStream? = null
     val retriever = MediaMetadataRetriever()
     return try {
-      retriever.setDataSource(file.absolutePath)
+      fis = FileInputStream(file)
+      retriever.setDataSource(fis.fd)
       val hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
+      val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+      val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+      val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+      Log.i(tag, "validateMp4Safely verified playable MP4: hasVideo=$hasVideo, duration=${duration}ms, dimensions=${width}x${height}, size=${fileLength} bytes")
       hasVideo != null
     } catch (e: Exception) {
-      Log.w(tag, "Failed to validate MP4 with retriever", e)
+      Log.w(tag, "validateMp4Safely warning: MediaMetadataRetriever inspection encountered ${e.javaClass.simpleName}: ${e.message}", e)
       false
     } finally {
       try { retriever.release() } catch (ignored: Exception) {}
+      try { fis?.close() } catch (ignored: Exception) {}
     }
   }
+
+  private fun validatePlayableMp4(file: File): Boolean = validateMp4Safely(file)
 
   private fun fetchClipBitmap(
     clip: VideoClip?,
