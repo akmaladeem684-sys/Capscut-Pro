@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
+import com.example.domain.model.AspectRatio
 
 data class RealMediaMetadata(
   val durationMs: Long,
@@ -14,7 +15,8 @@ data class RealMediaMetadata(
   val frameRate: Float,
   val mimeType: String,
   val hasAudio: Boolean,
-  val isVideo: Boolean
+  val isVideo: Boolean,
+  val detectedAspectRatio: AspectRatio = AspectRatio.fromDimensions(width, height)
 )
 
 object MediaMetadataHelper {

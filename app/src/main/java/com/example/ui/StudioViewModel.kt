@@ -348,16 +348,30 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     checkMissingMedia()
   }
 
-  fun createProjectWithMedia(
-    name: String,
+  fun createProjectFromPickedVideo(
+    uri: String,
+    projectName: String? = null
+  ) {
+    createProjectWithAutoAspect(
+      uris = listOf(uri),
+      name = projectName ?: "Video Project",
+      isVideo = true
+    )
+  }
+
+  fun createProjectWithAutoAspect(
     uris: List<String>,
-    isVideo: Boolean = true,
-    aspectRatio: AspectRatio = AspectRatio.RATIO_9_16
+    name: String = "Video Project",
+    isVideo: Boolean = true
   ) {
     viewModelScope.launch {
       val appContext = getApplication<Application>().applicationContext
       val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
       var runningStart = 0L
+      var detectedAspect: AspectRatio = AspectRatio.RATIO_16_9
+      var detectedResolution: Resolution = Resolution.RES_1080P
+      var detectedFps: FrameRate = FrameRate.FPS_30
+
       val clips = persistentUris.mapIndexed { index, uri ->
         val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
         val duration = meta.durationMs
@@ -376,16 +390,77 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
           mimeType = meta.mimeType,
           hasAudio = meta.hasAudio
         )
+        if (index == 0) {
+          detectedAspect = meta.detectedAspectRatio
+          detectedFps = when {
+            meta.frameRate >= 50f -> FrameRate.FPS_60
+            meta.frameRate in 23.5f..26.5f -> FrameRate.FPS_24
+            meta.frameRate in 24.5f..26.0f -> FrameRate.FPS_25
+            else -> FrameRate.FPS_30
+          }
+          detectedResolution = when (detectedAspect) {
+            AspectRatio.RATIO_9_16 -> if (meta.width >= 1440 || meta.height >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
+            AspectRatio.RATIO_1_1 -> if (meta.width >= 2000 || meta.height >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
+            AspectRatio.RATIO_16_9 -> if (meta.width >= 3840 || meta.height >= 2160) Resolution.RES_4K else if (meta.width >= 2560) Resolution.RES_2K else Resolution.RES_1080P
+            else -> Resolution.RES_1080P
+          }
+        }
         runningStart += duration
         clip
       }
+
       createNewProject(
         name = name,
-        aspectRatio = aspectRatio,
-        resolution = Resolution.RES_1080P,
-        fps = FrameRate.FPS_30,
+        aspectRatio = detectedAspect,
+        resolution = detectedResolution,
+        fps = detectedFps,
         initialMediaClips = clips
       )
+    }
+  }
+
+  fun createProjectWithMedia(
+    name: String,
+    uris: List<String>,
+    isVideo: Boolean = true,
+    aspectRatio: AspectRatio? = null
+  ) {
+    if (aspectRatio == null) {
+      createProjectWithAutoAspect(uris = uris, name = name, isVideo = isVideo)
+    } else {
+      viewModelScope.launch {
+        val appContext = getApplication<Application>().applicationContext
+        val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
+        var runningStart = 0L
+        val clips = persistentUris.mapIndexed { index, uri ->
+          val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
+          val duration = meta.durationMs
+          val clip = VideoClip(
+            uri = uri,
+            name = if (meta.isVideo) "Video ${index + 1}" else "Photo ${index + 1}",
+            timelineStartMs = runningStart,
+            durationMs = duration,
+            sourceStartMs = 0L,
+            sourceEndMs = duration,
+            isVideo = meta.isVideo,
+            width = meta.width,
+            height = meta.height,
+            naturalRotation = meta.rotationDegrees,
+            frameRate = meta.frameRate,
+            mimeType = meta.mimeType,
+            hasAudio = meta.hasAudio
+          )
+          runningStart += duration
+          clip
+        }
+        createNewProject(
+          name = name,
+          aspectRatio = aspectRatio,
+          resolution = Resolution.RES_1080P,
+          fps = FrameRate.FPS_30,
+          initialMediaClips = clips
+        )
+      }
     }
   }
 

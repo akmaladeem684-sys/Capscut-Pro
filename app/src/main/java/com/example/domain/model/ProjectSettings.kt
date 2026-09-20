@@ -4,9 +4,26 @@ enum class AspectRatio(val label: String, val ratio: Float, val iconDesc: String
   RATIO_9_16("9:16", 9f / 16f, "TikTok / Reels / Shorts"),
   RATIO_16_9("16:9", 16f / 9f, "YouTube / Landscape"),
   RATIO_1_1("1:1", 1f, "Instagram Square"),
+  RATIO_4_3("4:3", 4f / 3f, "Standard Landscape (4:3)"),
   RATIO_4_5("4:5", 4f / 5f, "Instagram Portrait"),
   RATIO_3_4("3:4", 3f / 4f, "Classic Portrait"),
-  CUSTOM("Custom", 1f, "Freeform")
+  CUSTOM("Custom", 1f, "Freeform");
+
+  companion object {
+    fun fromDimensions(width: Int, height: Int): AspectRatio {
+      if (width <= 0 || height <= 0) return RATIO_16_9
+      val targetRatio = width.toFloat() / height.toFloat()
+      val standardRatios = listOf(
+        RATIO_16_9,
+        RATIO_9_16,
+        RATIO_1_1,
+        RATIO_4_3,
+        RATIO_3_4,
+        RATIO_4_5
+      )
+      return standardRatios.minByOrNull { kotlin.math.abs(it.ratio - targetRatio) } ?: RATIO_16_9
+    }
+  }
 }
 
 enum class Resolution(

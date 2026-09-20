@@ -55,6 +55,14 @@ fun HomeScreen(
   var selectedTab by remember { mutableStateOf("All Projects") } // "All Projects" or "Drafts"
   var activeHomeTab by rememberSaveable { mutableStateOf(HomeTab.PROJECTS) }
 
+  val instantNewProjectVideoPickerLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.PickVisualMedia()
+  ) { uri: Uri? ->
+    if (uri != null) {
+      viewModel.createProjectFromPickedVideo(uri.toString())
+    }
+  }
+
   val pickVideosForNewProjectLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 15)
   ) { uris: List<Uri> ->
@@ -226,7 +234,11 @@ fun HomeScreen(
           modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .clickable { showNewProjectDialog = true }
+            .clickable {
+              instantNewProjectVideoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+              )
+            }
             .testTag("hero_new_project_card"),
           colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
@@ -277,13 +289,25 @@ fun HomeScreen(
                       )
                     )
                     Text(
-                      text = "Multi-track timeline • 4K HDR • AI Tools",
+                      text = "Instant video picker • Auto aspect ratio • 4K HDR",
                       style = MaterialTheme.typography.bodySmall.copy(
                         color = CyanAccent,
                         fontSize = 12.sp
                       )
                     )
                   }
+                }
+
+                IconButton(
+                  onClick = { showNewProjectDialog = true },
+                  modifier = Modifier.testTag("custom_project_setup_button")
+                ) {
+                  Icon(
+                    Icons.Default.Tune,
+                    contentDescription = "Custom Blank Canvas Setup",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(22.dp)
+                  )
                 }
               }
 
@@ -295,16 +319,16 @@ fun HomeScreen(
                 contentPadding = PaddingValues(vertical = 2.dp)
               ) {
                 item {
-                  QuickActionChip(icon = Icons.Default.Collections, label = "Gallery") {
-                    pickGalleryForNewProjectLauncher.launch(
-                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                  QuickActionChip(icon = Icons.Default.VideoLibrary, label = "Instant Video") {
+                    instantNewProjectVideoPickerLauncher.launch(
+                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                     )
                   }
                 }
                 item {
-                  QuickActionChip(icon = Icons.Default.VideoLibrary, label = "Videos") {
-                    pickVideosForNewProjectLauncher.launch(
-                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                  QuickActionChip(icon = Icons.Default.Collections, label = "Gallery") {
+                    pickGalleryForNewProjectLauncher.launch(
+                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                     )
                   }
                 }
@@ -316,7 +340,7 @@ fun HomeScreen(
                   }
                 }
                 item {
-                  QuickActionChip(icon = Icons.Default.CameraAlt, label = "Camera") { showNewProjectDialog = true }
+                  QuickActionChip(icon = Icons.Default.Tune, label = "Blank Canvas") { showNewProjectDialog = true }
                 }
                 item {
                   QuickActionChip(icon = Icons.Default.AutoFixHigh, label = "AI Edit") { viewModel.navigateTo(AppScreen.AI_SUITE) }
@@ -451,7 +475,11 @@ fun HomeScreen(
               PrimaryPillButton(
                 text = "Start Editing",
                 icon = Icons.Default.Add,
-                onClick = { showNewProjectDialog = true }
+                onClick = {
+                  instantNewProjectVideoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                  )
+                }
               )
             }
           }

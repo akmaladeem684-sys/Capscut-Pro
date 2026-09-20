@@ -1486,6 +1486,7 @@ class VideoExporter(private val context: Context) {
           AspectRatio.RATIO_9_16 -> Pair(shortSide, longSide)
           AspectRatio.RATIO_16_9 -> Pair(longSide, shortSide)
           AspectRatio.RATIO_1_1 -> Pair(shortSide, shortSide)
+          AspectRatio.RATIO_4_3 -> Pair(longSide, (longSide * 3) / 4)
           AspectRatio.RATIO_4_5 -> Pair((shortSide * 4) / 5, shortSide)
           AspectRatio.RATIO_3_4 -> Pair((shortSide * 3) / 4, shortSide)
           AspectRatio.CUSTOM -> Pair(shortSide, shortSide)
