@@ -179,4 +179,51 @@ class Media3EffectPipelineTest {
     assertEquals("RgbSplitEffect", rgbSplit.name)
     assertFalse("Custom RGB split shader is not no-op", rgbSplit.isNoOp(1920, 1080))
   }
+
+  @Test
+  fun testMedia3EffectPipeline_mlStyleTransfers() {
+    val animeEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.ANIME_CEL_SHADING, intensity = 0.9f)
+    assertNotNull(animeEffect)
+    assertEquals("AnimeCelShadingEffect", animeEffect?.name)
+
+    val oilEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.OIL_PAINTING_KUWAHARA, intensity = 0.85f)
+    assertNotNull(oilEffect)
+    assertEquals("OilPaintingKuwaharaEffect", oilEffect?.name)
+
+    val sketchEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.SKETCH_CHARCOAL, intensity = 1.0f)
+    assertNotNull(sketchEffect)
+    assertEquals("SketchCharcoalEffect", sketchEffect?.name)
+
+    val cyberpunkEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.CYBERPUNK_NEON, intensity = 0.75f)
+    assertNotNull(cyberpunkEffect)
+    assertEquals("CyberpunkNeonEffect", cyberpunkEffect?.name)
+
+    val bloomEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.DREAMY_BLOOM, intensity = 0.6f)
+    assertNotNull(bloomEffect)
+    assertEquals("DreamyBloomEffect", bloomEffect?.name)
+
+    val halftoneEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.HALFTONE_COMIC, intensity = 0.5f)
+    assertNotNull(halftoneEffect)
+    assertEquals("HalftoneComicEffect", halftoneEffect?.name)
+
+    val noneEffect = Media3EffectPipeline.createStyleTransferEffect(StyleTransferType.NONE)
+    assertNull(noneEffect)
+  }
+
+  @Test
+  fun testMedia3EffectPipeline_buildRealtimePreviewEffects() {
+    val adjustments = VideoAdjustments(brightness = 0.15f, contrast = 1.2f)
+    val filter = FilterSettings(type = FilterType.CINEMATIC, intensity = 0.8f)
+
+    val effects = Media3EffectPipeline.buildRealtimePreviewEffects(
+      adjustments = adjustments,
+      filterSettings = filter,
+      styleTransfer = StyleTransferType.ANIME_CEL_SHADING,
+      styleIntensity = 0.9f
+    )
+
+    assertTrue("Should generate at least 2 real-time effects (ColorGrading + Anime)", effects.size >= 2)
+    assertTrue("Should include ColorGradingGlEffect", effects.any { it is ColorGradingGlEffect })
+    assertTrue("Should include CustomShaderGlEffect for Anime", effects.any { it is CustomShaderGlEffect && it.name == "AnimeCelShadingEffect" })
+  }
 }
