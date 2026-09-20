@@ -3,16 +3,11 @@ package com.example.engine.timeline.nonlinear.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,6 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +40,7 @@ import com.example.engine.timeline.nonlinear.math.TimelineTimeMath
 import com.example.engine.timeline.nonlinear.models.*
 import com.example.engine.timeline.nonlinear.reducer.TimelineReducer
 import com.example.ui.components.timeline.VideoFilmstripView
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -67,9 +65,25 @@ fun NonLinearTimelineComponent(
   onAddText: (() -> Unit)? = null,
   showBottomActionBar: Boolean = false
 ) {
+  val density = androidx.compose.ui.platform.LocalDensity.current
   val horizontalScrollState = rememberScrollState()
+  val verticalScrollState = rememberScrollState()
   var zoomLevel by remember { mutableFloatStateOf(state.zoomLevelPxPerSec) }
   var activeSnapGuidePx by remember { mutableStateOf<Float?>(null) }
+  var viewportWidthPx by remember { mutableFloatStateOf(1080f) }
+  var isUserScrubbing by remember { mutableStateOf(false) }
+
+  // 10mm offset from center in pixels
+  val offset10mmPx = remember(density) {
+    with(density) { 38.dp.toPx() }
+  }
+
+  // Permanently stationary playhead needle X position in viewport space
+  val stationaryNeedleXPx = remember(viewportWidthPx, offset10mmPx) {
+    (viewportWidthPx / 2f) + offset10mmPx
+  }
+  val stationaryNeedleXDp = with(density) { stationaryNeedleXPx.toDp() }
+  val trailingPaddingDp = with(density) { (maxOf(0f, viewportWidthPx - stationaryNeedleXPx)).toDp() }
 
   // Total canvas width in pixels
   val totalWidthPx by remember(state.totalDurationUs, zoomLevel) {
@@ -78,10 +92,13 @@ fun NonLinearTimelineComponent(
     }
   }
 
-  // Playhead position in pixels
-  val playheadPx by remember(state.playheadUs, zoomLevel) {
-    derivedStateOf {
-      TimelineTimeMath.usToPixels(state.playheadUs, zoomLevel)
+  // Sync scroll position when playing
+  LaunchedEffect(state.playheadUs, isPlaying, zoomLevel, isUserScrubbing) {
+    if (!isUserScrubbing) {
+      val targetScrollPx = TimelineTimeMath.usToPixels(state.playheadUs, zoomLevel).roundToInt()
+      if (horizontalScrollState.value != targetScrollPx) {
+        horizontalScrollState.scrollTo(targetScrollPx)
+      }
     }
   }
 
@@ -89,16 +106,17 @@ fun NonLinearTimelineComponent(
   val surfaceColor = Color(0xFF121316)
   val rulerColor = Color(0xFF1A1C23)
   val trackLaneBg = Color(0xFF181A20)
-  val playheadColor = Color(0xFFFF5252)
   val snapGuideColor = Color(0xFF00E5FF)
 
   Column(
     modifier = modifier
       .fillMaxWidth()
       .background(surfaceColor)
+      .onGloballyPositioned { coords ->
+        if (coords.size.width > 0) viewportWidthPx = coords.size.width.toFloat()
+      }
       .pointerInput(Unit) {
-        // Pinch-to-zoom horizontally around playhead pivot
-        detectTransformGestures { centroid, _, zoomChange, _ ->
+        detectTransformGestures { _, _, zoomChange, _ ->
           if (zoomChange != 1.0f) {
             val newZoom = (zoomLevel * zoomChange).coerceIn(10f, 1000f)
             zoomLevel = newZoom
@@ -108,75 +126,89 @@ fun NonLinearTimelineComponent(
       }
       .testTag("nonlinear_timeline_container")
   ) {
-    // 1. Top Time-Ruler aligned with track lanes
-    Row(modifier = Modifier.fillMaxWidth()) {
+    // 1. Top Time-Ruler spanning 100% full width (Left headers removed)
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .height(36.dp)
+        .background(rulerColor)
+    ) {
       Box(
         modifier = Modifier
-          .width(96.dp)
-          .height(36.dp)
-          .background(Color(0xFF16181E)),
-        contentAlignment = Alignment.Center
+          .fillMaxSize()
+          .horizontalScroll(horizontalScrollState)
       ) {
-        Text(
-          text = "TRACKS",
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Bold,
-          color = Color(0xFF8B949E),
-          letterSpacing = 1.sp
-        )
+        Row(
+          modifier = Modifier.padding(start = stationaryNeedleXDp, end = trailingPaddingDp)
+        ) {
+          TimeRulerView(
+            scrollState = horizontalScrollState,
+            totalWidthPx = totalWidthPx,
+            zoomLevel = zoomLevel,
+            playheadPx = stationaryNeedleXPx,
+            playheadUs = state.playheadUs,
+            markers = state.markers,
+            rulerBg = rulerColor,
+            onSeek = { us -> onAction(TimelineAction.SetPlayhead(us)) },
+            modifier = Modifier.width(with(density) { totalWidthPx.toDp() })
+          )
+        }
       }
 
-      TimeRulerView(
-        scrollState = horizontalScrollState,
-        totalWidthPx = totalWidthPx,
-        zoomLevel = zoomLevel,
-        playheadPx = playheadPx,
-        playheadUs = state.playheadUs,
-        markers = state.markers,
-        rulerBg = rulerColor,
-        onSeek = { us -> onAction(TimelineAction.SetPlayhead(us)) },
-        modifier = Modifier.weight(1f)
-      )
+      // Timecode Badge
+      Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = Color(0xFF00E5FF),
+        modifier = Modifier
+          .align(Alignment.TopStart)
+          .offset(x = stationaryNeedleXDp - 30.dp, y = 2.dp)
+      ) {
+        Text(
+          text = TimelineTimeMath.formatTimecode(state.playheadUs),
+          color = Color.Black,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Bold,
+          fontFamily = FontFamily.Monospace,
+          modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+        )
+      }
     }
 
     HorizontalDivider(color = Color(0xFF282C37), thickness = 1.dp)
 
-    // 2. Tracks and Playhead needle - occupies expanded vertical height
+    // 2. Full-Width Vertically Scrollable Stacked Tracks + Stationary Playhead Needle
     Box(
       modifier = Modifier
         .fillMaxWidth()
         .weight(1f)
     ) {
-      Row(
-        modifier = Modifier.fillMaxSize()
-      ) {
-        // Track Header Controls column
-        Column(
-          modifier = Modifier
-            .width(96.dp)
-            .fillMaxHeight()
-            .background(Color(0xFF16181E))
-        ) {
-          state.tracks.forEach { track ->
-            TrackHeaderControlRow(
-              track = track,
-              onToggleMute = { onAction(TimelineAction.ToggleTrackMute(track.id)) },
-              onToggleLock = { onAction(TimelineAction.ToggleTrackLock(track.id)) }
+      Column(
+        modifier = Modifier
+          .fillMaxSize()
+          .verticalScroll(verticalScrollState)
+          .pointerInput(zoomLevel) {
+            detectDragGestures(
+              onDragStart = { isUserScrubbing = true },
+              onDragEnd = { isUserScrubbing = false },
+              onDragCancel = { isUserScrubbing = false },
+              onDrag = { change, dragAmount ->
+                change.consume()
+                val deltaUs = TimelineTimeMath.pixelsToUs(-dragAmount.x, zoomLevel)
+                val newPlayheadUs = (state.playheadUs + deltaUs).coerceIn(0L, state.totalDurationUs)
+                onAction(TimelineAction.SetPlayhead(newPlayheadUs))
+              }
             )
           }
-        }
-
-        // Scrollable multi-track lanes
+      ) {
         Box(
           modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
+            .fillMaxWidth()
             .horizontalScroll(horizontalScrollState)
         ) {
           Column(
             modifier = Modifier
-              .width(totalWidthPx.dp)
-              .fillMaxHeight()
+              .padding(start = stationaryNeedleXDp, end = trailingPaddingDp)
+              .width(with(density) { totalWidthPx.toDp() })
           ) {
             state.tracks.forEach { track ->
               TrackLaneRow(
@@ -188,32 +220,30 @@ fun NonLinearTimelineComponent(
                 onSnapGuide = { guidePx -> activeSnapGuidePx = guidePx }
               )
             }
+            Spacer(modifier = Modifier.height(32.dp))
           }
 
           // Magnetic Snapping Vertical Highlight Guide
           activeSnapGuidePx?.let { guideX ->
             Box(
               modifier = Modifier
-                .offset(x = guideX.dp)
+                .offset(x = with(density) { (stationaryNeedleXPx + guideX).toDp() })
                 .fillMaxHeight()
                 .width(1.5.dp)
                 .background(snapGuideColor)
             )
           }
-
-          // Draggable Playhead Needle
-          PlayheadNeedle(
-            playheadPx = playheadPx,
-            playheadUs = state.playheadUs,
-            zoomLevel = zoomLevel,
-            needleColor = playheadColor,
-            onScrub = { us -> onAction(TimelineAction.SetPlayhead(us)) }
-          )
         }
       }
+
+      // 3. Stationary Playhead Needle permanently fixed at Center + 10mm
+      StationaryPlayheadNeedle(
+        needleXDp = stationaryNeedleXDp,
+        modifier = Modifier.fillMaxSize()
+      )
     }
 
-    // 3. Optional Bottom Timeline Action Quick Bar (hidden by default to expand timeline height)
+    // 4. Optional Bottom Timeline Action Quick Bar
     if (showBottomActionBar) {
       TimelineBottomActionBar(
         state = state,
@@ -604,6 +634,68 @@ fun ClipItemView(
           }
       )
     }
+  }
+}
+
+/**
+ * Stationary Playhead Needle rendering cyan/white downward-pointing triangle cap and glowing 2dp line.
+ */
+@Composable
+fun StationaryPlayheadNeedle(
+  needleXDp: androidx.compose.ui.unit.Dp,
+  modifier: Modifier = Modifier
+) {
+  Canvas(
+    modifier = modifier
+      .fillMaxSize()
+      .testTag("stationary_fixed_playhead_needle")
+  ) {
+    val needleXPx = needleXDp.toPx()
+    val fullHeight = size.height
+
+    // 1. Glowing outer vertical guide beam
+    drawLine(
+      color = Color(0x6600E5FF),
+      start = androidx.compose.ui.geometry.Offset(needleXPx, 0f),
+      end = androidx.compose.ui.geometry.Offset(needleXPx, fullHeight),
+      strokeWidth = 4.dp.toPx()
+    )
+
+    // 2. Crisp 2dp solid core vertical line
+    drawLine(
+      brush = Brush.verticalGradient(
+        colors = listOf(Color.White, Color(0xFF00E5FF), Color(0xFF00B0FF))
+      ),
+      start = androidx.compose.ui.geometry.Offset(needleXPx, 0f),
+      end = androidx.compose.ui.geometry.Offset(needleXPx, fullHeight),
+      strokeWidth = 2.dp.toPx()
+    )
+
+    // 3. Ultra-sleek downward-pointing triangular needle cap
+    val capWidth = 14.dp.toPx()
+    val capHeight = 12.dp.toPx()
+    val capPath = Path().apply {
+      moveTo(needleXPx - capWidth / 2f, 0f)
+      lineTo(needleXPx + capWidth / 2f, 0f)
+      lineTo(needleXPx, capHeight)
+      close()
+    }
+
+    // Draw triangle shadow/glow
+    drawPath(
+      path = capPath,
+      brush = Brush.verticalGradient(
+        colors = listOf(Color.White, Color(0xFF00E5FF))
+      ),
+      style = androidx.compose.ui.graphics.drawscope.Fill
+    )
+
+    // Triangle border
+    drawPath(
+      path = capPath,
+      color = Color.White,
+      style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+    )
   }
 }
 
