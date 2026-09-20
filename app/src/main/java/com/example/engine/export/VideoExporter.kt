@@ -78,7 +78,8 @@ sealed class ExportState {
  * 1. Tracks are registered before MediaMuxer is started.
  * 2. Exact track indices returned by MediaMuxer are stored and used.
  * 3. CODEC_CONFIG packets are filtered out (CSD is supplied via MediaFormat).
- * 4. Microsecond-accurate monotonic timestamps prevent video freezes and playback stalls.
+ * 4. Microsecond-accurate strictly monotonic timestamps prevent video freezes and playback stalls.
+ * 5. Safe finalization of MP4 container (moov atom) before file inspection.
  */
 class MuxerCoordinator(
   private val mediaMuxer: MediaMuxer,
@@ -91,6 +92,8 @@ class MuxerCoordinator(
   var audioTrackIndex: Int = -1
     private set
   var isStarted: Boolean = false
+    private set
+  var isStopped: Boolean = false
     private set
 
   private var lastVideoPtsUs: Long = -1L
@@ -111,7 +114,7 @@ class MuxerCoordinator(
 
   @Synchronized
   fun setVideoFormat(format: MediaFormat) {
-    if (videoTrackIndex < 0) {
+    if (videoTrackIndex < 0 && !isStarted && !isStopped) {
       try {
         videoTrackIndex = mediaMuxer.addTrack(format)
         Log.d(tag, "Added video track with index $videoTrackIndex")
@@ -124,7 +127,7 @@ class MuxerCoordinator(
 
   @Synchronized
   fun setAudioFormat(format: MediaFormat) {
-    if (audioTrackIndex < 0) {
+    if (audioTrackIndex < 0 && !isStarted && !isStopped) {
       try {
         audioTrackIndex = mediaMuxer.addTrack(format)
         Log.d(tag, "Added audio track with index $audioTrackIndex")
@@ -137,7 +140,7 @@ class MuxerCoordinator(
 
   @Synchronized
   private fun checkStart() {
-    if (isStarted) return
+    if (isStarted || isStopped) return
     val videoReady = videoTrackIndex >= 0
     val audioReady = !hasAudio || audioTrackIndex >= 0
 
@@ -145,7 +148,7 @@ class MuxerCoordinator(
       try {
         mediaMuxer.start()
         isStarted = true
-        Log.d(tag, "MediaMuxer started successfully")
+        Log.d(tag, "MediaMuxer started successfully (videoTrack=$videoTrackIndex, audioTrack=$audioTrackIndex)")
         flushPending()
       } catch (e: Exception) {
         Log.e(tag, "Failed to start MediaMuxer", e)
@@ -155,6 +158,7 @@ class MuxerCoordinator(
 
   @Synchronized
   private fun flushPending() {
+    if (!isStarted || isStopped) return
     pendingQueue.sort()
     for (packet in pendingQueue) {
       val trackIndex = if (packet.isAudio) audioTrackIndex else videoTrackIndex
@@ -163,7 +167,7 @@ class MuxerCoordinator(
         var pts = packet.presentationTimeUs
         if (pts < 0L) pts = 0L
         if (pts <= lastPts) {
-          pts = lastPts + 1L // 1 microsecond nudge only to maintain strictly monotonic order
+          pts = lastPts + 1L // strictly monotonic increment
         }
 
         val bufferInfo = MediaCodec.BufferInfo().apply {
@@ -178,7 +182,7 @@ class MuxerCoordinator(
             lastVideoPtsUs = pts
           }
         } catch (e: Exception) {
-          Log.w(tag, "Failed to write queued sample", e)
+          Log.w(tag, "Failed to write queued sample (isAudio=${packet.isAudio}, pts=$pts)", e)
         }
       }
     }
@@ -187,6 +191,7 @@ class MuxerCoordinator(
 
   @Synchronized
   fun writeVideoSample(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
+    if (isStopped) return
     // Ignore codec config buffers (CSD) and empty buffers
     if ((info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 || info.size <= 0) {
       return
@@ -196,7 +201,7 @@ class MuxerCoordinator(
       var pts = info.presentationTimeUs
       if (pts < 0L) pts = 0L
       if (pts <= lastVideoPtsUs) {
-        pts = lastVideoPtsUs + 1L
+        pts = lastVideoPtsUs + 1L // Non-monotonic PTS protection: strictly increasing
       }
       val correctedInfo = MediaCodec.BufferInfo().apply {
         set(info.offset, info.size, pts, info.flags)
@@ -205,7 +210,7 @@ class MuxerCoordinator(
         mediaMuxer.writeSampleData(videoTrackIndex, buffer, correctedInfo)
         lastVideoPtsUs = pts
       } catch (e: Exception) {
-        Log.w(tag, "Failed to write video sample", e)
+        Log.w(tag, "Failed to write video sample at pts=$pts (lastPts=$lastVideoPtsUs)", e)
       }
     } else {
       val bytes = ByteArray(info.size)
@@ -217,6 +222,7 @@ class MuxerCoordinator(
 
   @Synchronized
   fun writeAudioSample(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
+    if (isStopped) return
     // Ignore codec config buffers and empty buffers
     if ((info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 || info.size <= 0) {
       return
@@ -226,7 +232,7 @@ class MuxerCoordinator(
       var pts = info.presentationTimeUs
       if (pts < 0L) pts = 0L
       if (pts <= lastAudioPtsUs) {
-        pts = lastAudioPtsUs + 1L
+        pts = lastAudioPtsUs + 1L // Non-monotonic PTS protection: strictly increasing
       }
       val correctedInfo = MediaCodec.BufferInfo().apply {
         set(info.offset, info.size, pts, info.flags)
@@ -235,7 +241,7 @@ class MuxerCoordinator(
         mediaMuxer.writeSampleData(audioTrackIndex, buffer, correctedInfo)
         lastAudioPtsUs = pts
       } catch (e: Exception) {
-        Log.w(tag, "Failed to write audio sample", e)
+        Log.w(tag, "Failed to write audio sample at pts=$pts (lastPts=$lastAudioPtsUs)", e)
       }
     } else {
       val bytes = ByteArray(info.size)
@@ -243,6 +249,36 @@ class MuxerCoordinator(
       buffer.get(bytes)
       pendingQueue.add(QueuedPacket(true, bytes, info.presentationTimeUs, info.flags))
     }
+  }
+
+  @Synchronized
+  fun stopAndRelease(): Boolean {
+    if (isStopped) return true
+    var success = true
+    try {
+      if (isStarted) {
+        flushPending()
+        try {
+          mediaMuxer.stop()
+          Log.i(tag, "MediaMuxer stopped successfully. MOOV atom finalized.")
+        } catch (e: Exception) {
+          Log.e(tag, "MediaMuxer.stop() failed", e)
+          success = false
+        }
+      } else {
+        Log.w(tag, "MuxerCoordinator was never started prior to stopAndRelease")
+        success = false
+      }
+    } finally {
+      isStopped = true
+      try {
+        mediaMuxer.release()
+        Log.d(tag, "MediaMuxer released.")
+      } catch (e: Exception) {
+        Log.w(tag, "MediaMuxer.release() warning", e)
+      }
+    }
+    return success
   }
 }
 
@@ -1173,26 +1209,21 @@ class VideoExporter(private val context: Context) {
         drainAudioEncoder(audioEncoder, coordinator, true)
       }
 
-      // Stop Muxer safely
-      if (coordinator.isStarted) {
-        try {
-          mediaMuxer.stop()
-        } catch (e: Exception) {
-          Log.w(tag, "Muxer stop warning", e)
-        }
+      // Stop & Release Muxer safely ensuring MOOV atom is fully written
+      val muxerSuccess = coordinator.stopAndRelease()
+      if (!muxerSuccess && !coordinator.isStarted) {
+        Log.w(tag, "Muxer was not started or encountered errors")
       }
+      mediaMuxer = null
 
-      // Release hardware encoders and muxer
-      try { videoEncoder.stop() } catch (ignored: Exception) {}
-      videoEncoder.release()
+      // Release hardware encoders
+      try { videoEncoder?.stop() } catch (ignored: Exception) {}
+      videoEncoder?.release()
       videoEncoder = null
 
       try { audioEncoder?.stop() } catch (ignored: Exception) {}
       audioEncoder?.release()
       audioEncoder = null
-
-      mediaMuxer.release()
-      mediaMuxer = null
 
       // Validate output file
       val finalSize = outputFile.length()

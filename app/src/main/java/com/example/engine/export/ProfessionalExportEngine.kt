@@ -5,6 +5,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.util.Log
 import com.example.domain.model.Timeline
 import kotlinx.coroutines.CancellationException
@@ -103,6 +104,8 @@ data class ExportValidationResult(
 )
 
 object ExportValidator {
+  private const val TAG = "ExportValidator"
+
   fun validate(
     file: File,
     config: ExportConfig,
@@ -110,19 +113,60 @@ object ExportValidator {
     requireAudio: Boolean = true,
     expectedDimensions: Pair<Int, Int>? = null
   ): ExportValidationResult {
-    if (!file.exists()) return ExportValidationResult(false, "Output file does not exist.")
-    if (file.length() <= 0L) return ExportValidationResult(false, "Output file is empty.")
+    if (!file.exists()) {
+      Log.e(TAG, "Validation failed: File does not exist at ${file.absolutePath}")
+      return ExportValidationResult(false, "Output file does not exist.")
+    }
+    val fileLength = file.length()
+    if (fileLength <= 1024L) {
+      Log.e(TAG, "Validation failed: File is incomplete or empty (${fileLength} bytes) at ${file.absolutePath}")
+      return ExportValidationResult(false, "Output file is empty or incomplete ($fileLength bytes).")
+    }
+
+    val retriever = MediaMetadataRetriever()
     val extractor = MediaExtractor()
+
     return try {
-      extractor.setDataSource(file.absolutePath)
+      // 1. Validate MP4 container header using MediaMetadataRetriever
+      try {
+        retriever.setDataSource(file.absolutePath)
+      } catch (e: Throwable) {
+        Log.e(TAG, "MediaMetadataRetriever setDataSource failed on ${file.absolutePath} (size=$fileLength)", e)
+        return ExportValidationResult(
+          false,
+          "MP4 header parsing failed (${e.javaClass.simpleName}: ${e.message ?: "corrupted or incomplete moov atom"})"
+        )
+      }
+
+      val hasVideoStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
+      val hasAudioStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+      val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+      val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+      val heightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+      val mimeTypeStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+
+      val durationMs = durationStr?.toLongOrNull() ?: 0L
+      val width = widthStr?.toIntOrNull() ?: 0
+      val height = heightStr?.toIntOrNull() ?: 0
+
+      // 2. Validate tracks using MediaExtractor
+      try {
+        extractor.setDataSource(file.absolutePath)
+      } catch (e: Throwable) {
+        Log.e(TAG, "MediaExtractor setDataSource failed on ${file.absolutePath} (size=$fileLength)", e)
+        return ExportValidationResult(
+          false,
+          "MP4 container track extraction failed (${e.javaClass.simpleName}: ${e.message ?: "unreadable tracks"})",
+          durationMs, mimeTypeStr, null, width, height, null
+        )
+      }
+
       var videoMime: String? = null
       var audioMime: String? = null
-      var width = 0
-      var height = 0
       var fps: Int? = null
-      var durationMs = 0L
       var videoTrack = -1
       var audioTrack = -1
+      var maxTrackDurationMs = durationMs
 
       for (i in 0 until extractor.trackCount) {
         val format = extractor.getTrackFormat(i)
@@ -130,13 +174,11 @@ object ExportValidator {
         val trackDuration = if (format.containsKey(MediaFormat.KEY_DURATION)) {
           format.getLong(MediaFormat.KEY_DURATION).coerceAtLeast(0L) / 1000L
         } else 0L
-        durationMs = max(durationMs, trackDuration)
+        maxTrackDurationMs = max(maxTrackDurationMs, trackDuration)
 
         if (mime.startsWith("video/")) {
           if (videoTrack < 0) videoTrack = i
           videoMime = mime
-          if (format.containsKey(MediaFormat.KEY_WIDTH)) width = format.getInteger(MediaFormat.KEY_WIDTH)
-          if (format.containsKey(MediaFormat.KEY_HEIGHT)) height = format.getInteger(MediaFormat.KEY_HEIGHT)
           if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) fps = format.getInteger(MediaFormat.KEY_FRAME_RATE)
         } else if (mime.startsWith("audio/")) {
           if (audioTrack < 0) audioTrack = i
@@ -144,26 +186,34 @@ object ExportValidator {
         }
       }
 
-      if (videoTrack < 0) {
-        return ExportValidationResult(false, "MP4 has no video track.")
+      if (videoTrack < 0 && hasVideoStr == null) {
+        Log.e(TAG, "Validation failed: No video track in MP4 (${extractor.trackCount} total tracks)")
+        return ExportValidationResult(false, "MP4 contains no video track.")
       }
-      if (requireAudio && audioTrack < 0) {
-        return ExportValidationResult(false, "MP4 has no audio track.", durationMs, videoMime, audioMime, width, height, fps)
-      }
-
-      // Verify at least one video sample is readable
-      extractor.selectTrack(videoTrack)
-      val sampleBuf = java.nio.ByteBuffer.allocate(64 * 1024)
-      val sampleSize = extractor.readSampleData(sampleBuf, 0)
-      extractor.unselectTrack(videoTrack)
-      if (sampleSize <= 0) {
-        return ExportValidationResult(false, "Video track contains no decodable sample data.", durationMs, videoMime, audioMime, width, height, fps)
+      if (requireAudio && audioTrack < 0 && hasAudioStr == null) {
+        Log.e(TAG, "Validation failed: No audio track in MP4 when audio is required")
+        return ExportValidationResult(false, "MP4 contains no audio track.", maxTrackDurationMs, videoMime, audioMime, width, height, fps)
       }
 
-      ExportValidationResult(true, "Verified", durationMs, videoMime, audioMime, width, height, fps)
+      // 3. Verify at least one video sample is readable and decodable
+      if (videoTrack >= 0) {
+        extractor.selectTrack(videoTrack)
+        val sampleBuf = java.nio.ByteBuffer.allocate(64 * 1024)
+        val sampleSize = extractor.readSampleData(sampleBuf, 0)
+        extractor.unselectTrack(videoTrack)
+        if (sampleSize <= 0) {
+          Log.e(TAG, "Validation failed: Video track contains no sample data (sampleSize=$sampleSize)")
+          return ExportValidationResult(false, "Video track contains no sample data.", maxTrackDurationMs, videoMime, audioMime, width, height, fps)
+        }
+      }
+
+      Log.i(TAG, "MP4 validation succeeded: duration=${maxTrackDurationMs}ms, res=${width}x${height}, videoMime=$videoMime, audioMime=$audioMime, fps=$fps")
+      ExportValidationResult(true, "Verified", maxTrackDurationMs, videoMime ?: mimeTypeStr, audioMime, width, height, fps)
     } catch (t: Throwable) {
-      ExportValidationResult(false, "MP4 validation failed: ${t.message ?: "unknown error"}")
+      Log.e(TAG, "Unexpected error validating MP4 file: ${file.absolutePath} (size=$fileLength)", t)
+      ExportValidationResult(false, "MP4 validation failed (${t.javaClass.simpleName}: ${t.message ?: "unknown parsing error"})")
     } finally {
+      try { retriever.release() } catch (_: Throwable) {}
       try { extractor.release() } catch (_: Throwable) {}
     }
   }

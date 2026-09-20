@@ -315,91 +315,85 @@ class AsyncFramePipelineEngine(private val context: Context) {
         try {
           val vInfo = MediaCodec.BufferInfo()
           val aInfo = MediaCodec.BufferInfo()
+          var consecutiveIdlePasses = 0
 
-          while (!cancelled.get() && (!videoEos.get() || (hasAudio && !audioEos.get()))) {
+          while (!cancelled.get()) {
+            val videoDone = videoEos.get()
+            val audioDone = !hasAudio || audioEncoder == null || audioEos.get()
+
+            if (videoDone && audioDone) {
+              Log.i(tag, "Drain thread: Both video and audio tracks reached BUFFER_FLAG_END_OF_STREAM")
+              break
+            }
+
             var drainedSomething = false
 
-            // Drain Video: burst-drain all available encoder buffers immediately
+            // Drain Video: burst-drain all available encoder output buffers
             if (!videoEos.get()) {
-              while (!videoEos.get()) {
-                val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 0L)
+              while (!videoEos.get() && !cancelled.get()) {
+                val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 5_000L)
                 if (vIndex >= 0) {
                   drainedSomething = true
-                  val out = videoEncoder.getOutputBuffer(vIndex)
-                  if (out != null && vInfo.size > 0) {
-                    localCoordinator.writeVideoSample(out, vInfo)
-                    metrics.encodedFrames.incrementAndGet()
-                  }
                   val isEos = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                  if ((vInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && vInfo.size > 0) {
+                    val out = videoEncoder.getOutputBuffer(vIndex)
+                    if (out != null) {
+                      localCoordinator.writeVideoSample(out, vInfo)
+                      metrics.encodedFrames.incrementAndGet()
+                    }
+                  }
                   videoEncoder.releaseOutputBuffer(vIndex, false)
                   if (isEos) {
                     videoEos.set(true)
+                    Log.i(tag, "Video encoder signaled BUFFER_FLAG_END_OF_STREAM")
                     break
                   }
                 } else if (vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                   drainedSomething = true
-                  localCoordinator.setVideoFormat(videoEncoder.outputFormat)
+                  val newFormat = videoEncoder.outputFormat
+                  Log.i(tag, "Video encoder output format changed: $newFormat")
+                  localCoordinator.setVideoFormat(newFormat)
                 } else {
-                  break
+                  break // INFO_TRY_AGAIN_LATER
                 }
               }
             }
 
-            // Drain Audio: burst-drain all available audio buffers immediately
+            // Drain Audio: burst-drain all available audio output buffers
             if (hasAudio && audioEncoder != null && !audioEos.get()) {
-              while (!audioEos.get()) {
-                val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 0L)
+              while (!audioEos.get() && !cancelled.get()) {
+                val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 5_000L)
                 if (aIndex >= 0) {
                   drainedSomething = true
-                  val out = audioEncoder.getOutputBuffer(aIndex)
-                  if (out != null && aInfo.size > 0) {
-                    localCoordinator.writeAudioSample(out, aInfo)
-                  }
                   val isEos = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                  if ((aInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && aInfo.size > 0) {
+                    val out = audioEncoder.getOutputBuffer(aIndex)
+                    if (out != null) {
+                      localCoordinator.writeAudioSample(out, aInfo)
+                    }
+                  }
                   audioEncoder.releaseOutputBuffer(aIndex, false)
                   if (isEos) {
                     audioEos.set(true)
+                    Log.i(tag, "Audio encoder signaled BUFFER_FLAG_END_OF_STREAM")
                     break
                   }
                 } else if (aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                   drainedSomething = true
-                  localCoordinator.setAudioFormat(audioEncoder.outputFormat)
+                  val newFormat = audioEncoder.outputFormat
+                  Log.i(tag, "Audio encoder output format changed: $newFormat")
+                  localCoordinator.setAudioFormat(newFormat)
                 } else {
-                  break
+                  break // INFO_TRY_AGAIN_LATER
                 }
               }
             }
 
-            // If neither encoder produced buffers on this pass, wait briefly to prevent CPU spinning
             if (!drainedSomething) {
-              if (!videoEos.get()) {
-                val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 2_000L)
-                if (vIndex >= 0) {
-                  val out = videoEncoder.getOutputBuffer(vIndex)
-                  if (out != null && vInfo.size > 0) {
-                    localCoordinator.writeVideoSample(out, vInfo)
-                    metrics.encodedFrames.incrementAndGet()
-                  }
-                  val isEos = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                  videoEncoder.releaseOutputBuffer(vIndex, false)
-                  if (isEos) videoEos.set(true)
-                } else if (vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                  localCoordinator.setVideoFormat(videoEncoder.outputFormat)
-                }
-              } else if (hasAudio && !audioEos.get()) {
-                val aIndex = audioEncoder?.dequeueOutputBuffer(aInfo, 2_000L) ?: -1
-                if (aIndex >= 0) {
-                  val out = audioEncoder?.getOutputBuffer(aIndex)
-                  if (out != null && aInfo.size > 0) {
-                    localCoordinator.writeAudioSample(out, aInfo)
-                  }
-                  val isEos = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                  audioEncoder?.releaseOutputBuffer(aIndex, false)
-                  if (isEos) audioEos.set(true)
-                } else if (aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                  audioEncoder?.outputFormat?.let { localCoordinator.setAudioFormat(it) }
-                }
-              }
+              consecutiveIdlePasses++
+              Thread.sleep(3)
+            } else {
+              consecutiveIdlePasses = 0
             }
           }
         } catch (t: Throwable) {
@@ -578,9 +572,10 @@ class AsyncFramePipelineEngine(private val context: Context) {
       renderCompleteLatch.await()
       failure.get()?.let { throw it }
 
-      // 8. Signal EOS
+      // 8. Signal EOS on both video and audio encoders
       if (!cancelled.get()) {
         try {
+          Log.i(tag, "Signaling end of stream to video encoder input surface...")
           videoEncoder.signalEndOfInputStream()
         } catch (e: Exception) {
           Log.w(tag, "signalEndOfInputStream error", e)
@@ -617,12 +612,13 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
           var audioEosSent = false
           var attempts = 0
-          while (!audioEosSent && attempts < 50 && !cancelled.get()) {
-            val inputIndex = audioEncoder.dequeueInputBuffer(5_000L)
+          while (!audioEosSent && attempts < 100 && !cancelled.get()) {
+            val inputIndex = audioEncoder.dequeueInputBuffer(10_000L)
             if (inputIndex >= 0) {
               val audioPtsUs = (fedAudioFrames.toLong() * 1_000_000L) / audioSampleRate
               audioEncoder.queueInputBuffer(inputIndex, 0, 0, audioPtsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
               audioEosSent = true
+              Log.i(tag, "Audio encoder EOS buffer queued at audioPtsUs=$audioPtsUs")
             } else {
               attempts++
               Thread.sleep(5)
@@ -631,14 +627,24 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
       }
 
-      drainDone.await(45, TimeUnit.SECONDS)
+      // 9. Await complete drain of both video and audio encoders
+      val drainSuccess = drainDone.await(60, TimeUnit.SECONDS)
       drainExecutor.shutdown()
+      if (!drainSuccess) {
+        Log.w(tag, "Drain thread timed out waiting for EOS on encoders")
+      }
 
       failure.get()?.let { throw it }
 
       if (cancelled.get()) {
         outputFile.delete()
         return@withContext null
+      }
+
+      // 10. Safe MediaMuxer stop & release guaranteeing complete MOOV box generation
+      val muxerFinalized = localCoordinator.stopAndRelease()
+      if (!muxerFinalized && !localCoordinator.isStarted) {
+        throw IllegalStateException("MediaMuxer failed to finalize MP4 file header.")
       }
 
       Log.i(tag, "Hardware Export Finished: ${outputFile.absolutePath} (${outputFile.length()} bytes, ${metrics.encodedFrames.get()} frames)")
@@ -664,7 +670,9 @@ class AsyncFramePipelineEngine(private val context: Context) {
       runCatching { encoderInputSurface?.release() }
       runCatching { videoEncoder?.stop() }; runCatching { videoEncoder?.release() }
       runCatching { audioEncoder?.stop() }; runCatching { audioEncoder?.release() }
-      if (muxerCoordinator?.isStarted == true) runCatching { muxer?.stop() }
+      if (muxerCoordinator?.isStarted == true && muxerCoordinator?.isStopped == false) {
+        runCatching { muxer?.stop() }
+      }
       runCatching { muxer?.release() }
       glThread.quitSafely()
       decoderThread.quitSafely()
