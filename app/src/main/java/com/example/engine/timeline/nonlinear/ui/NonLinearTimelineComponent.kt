@@ -42,6 +42,7 @@ import com.example.engine.timeline.nonlinear.math.MagneticSnappingEngine
 import com.example.engine.timeline.nonlinear.math.TimelineTimeMath
 import com.example.engine.timeline.nonlinear.models.*
 import com.example.engine.timeline.nonlinear.reducer.TimelineReducer
+import com.example.ui.components.timeline.VideoFilmstripView
 import kotlin.math.roundToLong
 
 /**
@@ -50,6 +51,7 @@ import kotlin.math.roundToLong
  * - Synchronized Coordinate System: Top Time-Ruler & multi-track rows with unified horizontal scroll & zoom.
  * - Draggable Playhead decoupled from recomposition using derivedStateOf.
  * - Gestures on clips: free drag along time & tracks, left/right trim handles with duration clamping, pinch-to-zoom.
+ * - Video thumbnail filmstrip rendered seamlessly on primary video track.
  * - Custom Canvas rendering for clip waveforms and visual borders.
  * - Magnetic snapping highlight guide lines.
  */
@@ -62,7 +64,8 @@ fun NonLinearTimelineComponent(
   onTogglePlayPause: (() -> Unit)? = null,
   onAddMedia: (() -> Unit)? = null,
   onAddAudio: (() -> Unit)? = null,
-  onAddText: (() -> Unit)? = null
+  onAddText: (() -> Unit)? = null,
+  showBottomActionBar: Boolean = false
 ) {
   val horizontalScrollState = rememberScrollState()
   var zoomLevel by remember { mutableFloatStateOf(state.zoomLevelPxPerSec) }
@@ -138,19 +141,20 @@ fun NonLinearTimelineComponent(
 
     HorizontalDivider(color = Color(0xFF282C37), thickness = 1.dp)
 
-    // 2. Tracks and Playhead needle
+    // 2. Tracks and Playhead needle - occupies expanded vertical height
     Box(
       modifier = Modifier
         .fillMaxWidth()
-        .weight(1f, fill = false)
+        .weight(1f)
     ) {
       Row(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxSize()
       ) {
         // Track Header Controls column
         Column(
           modifier = Modifier
             .width(96.dp)
+            .fillMaxHeight()
             .background(Color(0xFF16181E))
         ) {
           state.tracks.forEach { track ->
@@ -166,10 +170,13 @@ fun NonLinearTimelineComponent(
         Box(
           modifier = Modifier
             .weight(1f)
+            .fillMaxHeight()
             .horizontalScroll(horizontalScrollState)
         ) {
           Column(
-            modifier = Modifier.width(totalWidthPx.dp)
+            modifier = Modifier
+              .width(totalWidthPx.dp)
+              .fillMaxHeight()
           ) {
             state.tracks.forEach { track ->
               TrackLaneRow(
@@ -206,21 +213,23 @@ fun NonLinearTimelineComponent(
       }
     }
 
-    // 3. Bottom Timeline Action Quick Bar
-    TimelineBottomActionBar(
-      state = state,
-      onAction = onAction,
-      isPlaying = isPlaying,
-      onTogglePlayPause = onTogglePlayPause,
-      zoomLevel = zoomLevel,
-      onZoomChange = { newZoom ->
-        zoomLevel = newZoom
-        onAction(TimelineAction.SetZoomLevel(newZoom))
-      },
-      onAddMedia = onAddMedia,
-      onAddAudio = onAddAudio,
-      onAddText = onAddText
-    )
+    // 3. Optional Bottom Timeline Action Quick Bar (hidden by default to expand timeline height)
+    if (showBottomActionBar) {
+      TimelineBottomActionBar(
+        state = state,
+        onAction = onAction,
+        isPlaying = isPlaying,
+        onTogglePlayPause = onTogglePlayPause,
+        zoomLevel = zoomLevel,
+        onZoomChange = { newZoom ->
+          zoomLevel = newZoom
+          onAction(TimelineAction.SetZoomLevel(newZoom))
+        },
+        onAddMedia = onAddMedia,
+        onAddAudio = onAddAudio,
+        onAddText = onAddText
+      )
+    }
   }
 }
 
@@ -419,8 +428,9 @@ fun ClipItemView(
   val widthPx = TimelineTimeMath.usToPixels(clip.durationUs, zoomLevel).coerceAtLeast(30f)
 
   // Distinct track type colors
+  val isVideoClip = track.type == TrackType.VIDEO || clip.isVideo
   val clipColor = when (track.type) {
-    TrackType.VIDEO -> Color(0xFF2E7D32)
+    TrackType.VIDEO -> Color(0xFF0F131A)
     TrackType.AUDIO -> Color(0xFF1565C0)
     TrackType.OVERLAY -> Color(0xFF7B1FA2)
     TrackType.TEXT -> Color(0xFFE65100)
@@ -438,7 +448,7 @@ fun ClipItemView(
       .background(clipColor)
       .then(
         if (isSelected) Modifier.border(2.dp, Color(0xFF00E5FF), RoundedCornerShape(6.dp))
-        else Modifier.border(0.5.dp, Color(0x44FFFFFF), RoundedCornerShape(6.dp))
+        else Modifier.border(0.5.dp, if (isVideoClip) Color(0xFF2E384D) else Color(0x44FFFFFF), RoundedCornerShape(6.dp))
       )
       .clickable {
         onAction(TimelineAction.SelectClip(clip.id))
@@ -469,10 +479,36 @@ fun ClipItemView(
           onDragCancel = { onSnapGuide(null) }
         )
       }
+      .testTag("clip_${clip.id}")
   ) {
-    // Custom Canvas for Audio Waveform / Filmstrip representation
-    Canvas(modifier = Modifier.fillMaxSize()) {
-      if (track.type == TrackType.AUDIO && clip.waveformPoints != null) {
+    // 0. Video Thumbnail Filmstrip Layer (Continuous frame sequence across clip)
+    if (isVideoClip) {
+      val sourceStartMs = clip.sourceTrimStartUs / 1000L
+      val sourceEndMs = (clip.sourceTrimStartUs + (clip.durationUs * clip.speed).toLong()) / 1000L
+      val clipStartMs = clip.startTimeUs / 1000L
+      val clipDurationMs = clip.durationUs / 1000L
+      val currentPlayheadMs = state.playheadUs / 1000L
+
+      VideoFilmstripView(
+        clipId = clip.id,
+        uri = clip.sourceUri,
+        timelineStartMs = clipStartMs,
+        durationMs = clipDurationMs,
+        sourceStartMs = sourceStartMs,
+        sourceEndMs = sourceEndMs,
+        speed = clip.speed,
+        isReversed = false,
+        isVideo = clip.isVideo,
+        clipWidthDp = widthPx.dp,
+        clipHeightDp = 54.dp,
+        currentPlayheadMs = currentPlayheadMs,
+        modifier = Modifier.fillMaxSize()
+      )
+    }
+
+    // Custom Canvas for Audio Waveform
+    if (track.type == TrackType.AUDIO && clip.waveformPoints != null) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
         val points = clip.waveformPoints
         val step = size.width / points.size
         val midY = size.height / 2f
@@ -486,8 +522,10 @@ fun ClipItemView(
             strokeWidth = 1.5f
           )
         }
-      } else {
-        // Decorative filmstrip notches
+      }
+    } else if (!isVideoClip) {
+      // Decorative filmstrip notches for non-video tracks
+      Canvas(modifier = Modifier.fillMaxSize()) {
         val notchSpacing = 20.dp.toPx()
         var nx = 4.dp.toPx()
         while (nx < size.width - 4.dp.toPx()) {
@@ -498,17 +536,22 @@ fun ClipItemView(
       }
     }
 
-    // Clip Label
-    Text(
-      text = clip.name,
-      color = Color.White,
-      fontSize = 11.sp,
-      fontWeight = FontWeight.Medium,
-      maxLines = 1,
+    // Clip Label Badge with readable contrasting pill
+    Box(
       modifier = Modifier
-        .padding(horizontal = 8.dp, vertical = 4.dp)
+        .padding(horizontal = 6.dp, vertical = 3.dp)
         .align(Alignment.TopStart)
-    )
+        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+        .padding(horizontal = 4.dp, vertical = 1.5.dp)
+    ) {
+      Text(
+        text = clip.name,
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1
+      )
+    }
 
     // Left Edge Trim Handle (Head)
     if (isSelected && !track.isLocked) {
