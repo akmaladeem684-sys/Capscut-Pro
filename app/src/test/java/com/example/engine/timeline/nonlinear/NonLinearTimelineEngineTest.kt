@@ -252,4 +252,139 @@ class NonLinearTimelineEngineTest {
     assertNull(cache.getCachedFrame("clip1", 1_000_000L))
     cache.clear()
   }
+
+  // ==========================================
+  // FULL INTEGRATION & ADAPTER VERIFICATION
+  // ==========================================
+
+  @Test
+  fun testNonLinearTimelineAdapter_toTimelineState() {
+    val videoClip = com.example.domain.model.VideoClip(
+      id = "v1",
+      name = "Main Clip",
+      uri = "content://media/1",
+      timelineStartMs = 1000L,
+      durationMs = 4000L,
+      sourceStartMs = 500L,
+      sourceEndMs = 4500L,
+      speed = 1.0f,
+      volume = 0.9f
+    )
+    val overlayClip = com.example.domain.model.VideoClip(
+      id = "ov1",
+      name = "Picture in Picture",
+      uri = "content://media/2",
+      timelineStartMs = 2000L,
+      durationMs = 2000L,
+      sourceStartMs = 0L,
+      sourceEndMs = 2000L
+    )
+    val audioClip = com.example.domain.model.AudioClip(
+      id = "a1",
+      title = "Background Track",
+      uri = "content://audio/1",
+      timelineStartMs = 0L,
+      durationMs = 6000L,
+      sourceStartMs = 0L,
+      sourceEndMs = 6000L,
+      volume = 0.8f
+    )
+    val textClip = com.example.domain.model.TextClip(
+      id = "txt1",
+      text = "Title Text",
+      timelineStartMs = 1500L,
+      durationMs = 3000L
+    )
+
+    val domainTimeline = com.example.domain.model.Timeline(
+      videoClips = listOf(videoClip),
+      overlayClips = listOf(overlayClip),
+      audioClips = listOf(audioClip),
+      textClips = listOf(textClip)
+    )
+
+    val state = com.example.engine.timeline.nonlinear.adapter.NonLinearTimelineAdapter.toTimelineState(
+      timeline = domainTimeline,
+      playheadMs = 2500L,
+      selectedElement = com.example.engine.SelectedTrackElement.Video("v1"),
+      zoomLevelPxPerSec = 120f
+    )
+
+    // Verification
+    assertEquals(2_500_000L, state.playheadUs)
+    assertEquals("v1", state.selectedClipId)
+    assertEquals(120f, state.zoomLevelPxPerSec, 0.01f)
+
+    // Verify Main Video Track
+    val videoTrack = state.findTrack("track_video_main")
+    assertNotNull(videoTrack)
+    assertEquals(1, videoTrack!!.clips.size)
+    val v = videoTrack.clips[0]
+    assertEquals("v1", v.id)
+    assertEquals(1_000_000L, v.startTimeUs)
+    assertEquals(4_000_000L, v.durationUs)
+    assertEquals(500_000L, v.sourceTrimStartUs)
+    assertTrue(v.isSelected)
+
+    // Verify Overlay Track
+    val overlayTrack = state.findTrack("track_overlay")
+    assertNotNull(overlayTrack)
+    assertEquals(1, overlayTrack!!.clips.size)
+    assertEquals("ov1", overlayTrack.clips[0].id)
+    assertEquals(2_000_000L, overlayTrack.clips[0].startTimeUs)
+
+    // Verify Audio Track
+    val audioTrack = state.findTrack("track_audio")
+    assertNotNull(audioTrack)
+    assertEquals(1, audioTrack!!.clips.size)
+    assertEquals("a1", audioTrack.clips[0].id)
+    assertEquals(0L, audioTrack.clips[0].startTimeUs)
+    assertEquals(6_000_000L, audioTrack.clips[0].durationUs)
+
+    // Verify Text Track
+    val textTrack = state.findTrack("track_text")
+    assertNotNull(textTrack)
+    assertEquals(1, textTrack!!.clips.size)
+    assertEquals("txt1", textTrack.clips[0].id)
+    assertEquals(1_500_000L, textTrack.clips[0].startTimeUs)
+  }
+
+  @Test
+  fun testNonLinearTimelineAdapter_actionDispatching() {
+    val videoClip = com.example.domain.model.VideoClip(
+      id = "v1",
+      name = "Test Clip",
+      timelineStartMs = 1000L,
+      durationMs = 5000L
+    )
+    val domainTimeline = com.example.domain.model.Timeline(
+      videoClips = listOf(videoClip)
+    )
+
+    val timelineEngine = com.example.engine.TimelineEngine()
+    timelineEngine.setTimeline(domainTimeline)
+
+    var seekReportedMs: Long? = null
+    // Dispatch Seek Playhead action
+    com.example.engine.timeline.nonlinear.adapter.NonLinearTimelineAdapter.dispatchActionToTimelineEngine(
+      action = TimelineAction.SetPlayhead(3_500_000L),
+      timeline = domainTimeline,
+      timelineEngine = timelineEngine,
+      onSeekScrub = { seekReportedMs = it }
+    )
+
+    assertEquals(3500L, timelineEngine.currentPositionMs.value)
+    assertEquals(3500L, seekReportedMs)
+
+    // Dispatch Move Clip action
+    com.example.engine.timeline.nonlinear.adapter.NonLinearTimelineAdapter.dispatchActionToTimelineEngine(
+      action = TimelineAction.MoveClip("v1", "track_video_main", 2_000_000L),
+      timeline = domainTimeline,
+      timelineEngine = timelineEngine
+    )
+
+    val updatedClip = timelineEngine.timeline.value.videoClips.find { it.id == "v1" }
+    assertNotNull(updatedClip)
+    assertEquals(2000L, updatedClip!!.timelineStartMs)
+  }
 }

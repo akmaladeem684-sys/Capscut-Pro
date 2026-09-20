@@ -68,6 +68,8 @@ import android.widget.FrameLayout
 import android.view.LayoutInflater
 import com.example.R
 import com.example.engine.composition.VideoEffectRenderer
+import com.example.engine.timeline.nonlinear.adapter.NonLinearTimelineAdapter
+import com.example.engine.timeline.nonlinear.ui.NonLinearTimelineComponent
 import com.example.data.presets.StockMediaCatalog
 import com.example.domain.model.*
 import com.example.engine.KeyframeInterpolator
@@ -556,169 +558,268 @@ fun EditorScreen(
                 .weight(1f)
             ) {
               var multiTrackZoom by remember { mutableFloatStateOf(1.0f) }
+              var isNonLinearTimelineMode by remember { mutableStateOf(true) }
 
-          if (draggedTransitionType != null) {
-            Surface(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-              shape = RoundedCornerShape(8.dp),
-              color = PurpleAccent.copy(alpha = 0.95f),
-              border = BorderStroke(1.dp, Color.White)
-            ) {
-              Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  Icon(Icons.Default.Transform, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                  Spacer(modifier = Modifier.width(6.dp))
+              Column(modifier = Modifier.fillMaxSize()) {
+                // Quick Timeline Mode Switcher Bar
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF14151B))
+                    .padding(horizontal = 12.dp, vertical = 3.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    FilterChip(
+                      selected = isNonLinearTimelineMode,
+                      onClick = { isNonLinearTimelineMode = true },
+                      label = { Text("⚡ Non-Linear Multi-Track", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                      colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF00E5FF).copy(alpha = 0.2f),
+                        selectedLabelColor = Color(0xFF00E5FF)
+                      ),
+                      border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isNonLinearTimelineMode,
+                        borderColor = if (isNonLinearTimelineMode) Color(0xFF00E5FF) else Color.Transparent
+                      ),
+                      modifier = Modifier.testTag("tab_nonlinear_timeline")
+                    )
+
+                    FilterChip(
+                      selected = !isNonLinearTimelineMode,
+                      onClick = { isNonLinearTimelineMode = false },
+                      label = { Text("Standard Timeline", fontSize = 11.sp) },
+                      colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF282C37),
+                        selectedLabelColor = Color.White
+                      ),
+                      modifier = Modifier.testTag("tab_standard_timeline")
+                    )
+                  }
+
                   Text(
-                    text = "Dragging \"${draggedTransitionType?.displayName}\" ➔ Tap any Cut diamond on timeline",
-                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    text = if (isNonLinearTimelineMode) "Magnetic Snapping • Free Gaps" else "Ripple Sync Lane",
+                    style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF8B949E), fontSize = 10.sp)
                   )
                 }
-                IconButton(
-                  onClick = { draggedTransitionType = null },
-                  modifier = Modifier.size(20.dp)
+
+                if (draggedTransitionType != null) {
+                  Surface(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(horizontal = 12.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = PurpleAccent.copy(alpha = 0.95f),
+                    border = BorderStroke(1.dp, Color.White)
+                  ) {
+                    Row(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Transform, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                          text = "Dragging \"${draggedTransitionType?.displayName}\" ➔ Tap any Cut diamond on timeline",
+                          style = MaterialTheme.typography.bodySmall.copy(color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        )
+                      }
+                      IconButton(
+                        onClick = { draggedTransitionType = null },
+                        modifier = Modifier.size(20.dp)
+                      ) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel Drag", tint = Color.White, modifier = Modifier.size(14.dp))
+                      }
+                    }
+                  }
+                }
+
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
                 ) {
-                  Icon(Icons.Default.Close, contentDescription = "Cancel Drag", tint = Color.White, modifier = Modifier.size(14.dp))
+                  if (isNonLinearTimelineMode) {
+                    val nlTimelineState = remember(timeline, currentPosMs, selectedElement, multiTrackZoom) {
+                      NonLinearTimelineAdapter.toTimelineState(
+                        timeline = timeline,
+                        playheadMs = currentPosMs,
+                        selectedElement = selectedElement,
+                        zoomLevelPxPerSec = (multiTrackZoom * 100f).coerceIn(20f, 600f)
+                      )
+                    }
+
+                    NonLinearTimelineComponent(
+                      state = nlTimelineState,
+                      isPlaying = isPlaying,
+                      onTogglePlayPause = { viewModel.timelineEngine.togglePlayPause() },
+                      onAction = { action ->
+                        NonLinearTimelineAdapter.dispatchActionToTimelineEngine(
+                          action = action,
+                          timeline = timeline,
+                          timelineEngine = viewModel.timelineEngine,
+                          playbackEngine = viewModel.playbackEngine,
+                          onSeekScrub = { viewModel.onScrubProgress(it) }
+                        )
+                      },
+                      onAddMedia = {
+                        try {
+                          timelineMediaPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                          )
+                        } catch (e: Exception) {
+                          viewModel.setActiveToolbarTab(EditorToolbarTab.MEDIA)
+                        }
+                      },
+                      onAddAudio = {
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.AUDIO)
+                      },
+                      onAddText = {
+                        activeTextSubTool = TextSubTool.TEXT_TEMPLATES
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.TEXT)
+                      },
+                      modifier = Modifier.fillMaxSize()
+                    )
+                  } else {
+                    // STUDIO MULTI-TRACK TIMELINE: Full multi-track video, audio, text, sticker, and effect tracks
+                    MultiTrackTimeline(
+                      timeline = timeline,
+                      currentPosMs = currentPosMs,
+                      isPlaying = isPlaying,
+                      onTogglePlayPause = { viewModel.timelineEngine.togglePlayPause() },
+                      zoom = multiTrackZoom,
+                      selectedElement = selectedElement,
+                      selectedClipIds = selectedClipIds,
+                      isMultiSelectMode = isMultiSelectMode,
+                      snapIndicatorMs = snapIndicatorMs,
+                      onSeek = {
+                        viewModel.onScrubProgress(it)
+                      },
+                      onScrubStart = { viewModel.onScrubStart() },
+                      onScrubStop = { viewModel.onScrubStop() },
+                      onSelectElement = { viewModel.timelineEngine.selectElement(it) },
+                      onToggleClipSelection = { viewModel.timelineEngine.toggleSelectClip(it) },
+                      onZoomChange = { multiTrackZoom = it },
+                      onReorderVideoClips = { from, to -> viewModel.reorderVideoClips(from, to) },
+                      onOpenTrimTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.TRIM) },
+                      onOpenKeyframeTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.KEYFRAME) },
+                      onOpenTransitionsTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.TRANSITIONS) },
+                      selectedTransitionCutIndex = selectedTransitionCutIndex,
+                      onSelectTransitionCut = { cutIdx ->
+                        viewModel.timelineEngine.setSelectedTransitionCutIndex(cutIdx)
+                      },
+                      draggedTransitionType = draggedTransitionType,
+                      onDropTransition = { cutIdx, type ->
+                        viewModel.timelineEngine.setTransition(cutIdx, type)
+                        draggedTransitionType = null
+                      },
+                      onAddMedia = {
+                        try {
+                          timelineMediaPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                          )
+                        } catch (e: Exception) {
+                          viewModel.setActiveToolbarTab(EditorToolbarTab.MEDIA)
+                        }
+                      },
+                      onAddAudio = {
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.AUDIO)
+                      },
+                      onAddText = {
+                        activeTextSubTool = TextSubTool.TEXT_TEMPLATES
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.TEXT)
+                      },
+                      onAddOverlay = {
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.OVERLAY)
+                      },
+                      onAddSticker = {
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.STICKERS)
+                      },
+                      onAddEffect = {
+                        viewModel.setActiveToolbarTab(EditorToolbarTab.EFFECTS)
+                      },
+                      isTracksSyncEnabled = isTracksSyncEnabled,
+                      onToggleTracksSync = { viewModel.timelineEngine.toggleTracksSync() },
+                      onMoveToPlayhead = { viewModel.timelineEngine.moveSelectedClipToPlayhead() },
+                      onSplitAllTracks = { viewModel.timelineEngine.splitAllTracksAtPlayhead() },
+                      onSplitClip = {
+                        viewModel.timelineEngine.splitAtPlayhead()
+                      },
+                      onTrimLeftToPlayhead = {
+                        viewModel.timelineEngine.trimClipLeftToPlayhead()
+                      },
+                      onTrimRightToPlayhead = {
+                        viewModel.timelineEngine.trimClipRightToPlayhead()
+                      },
+                      onDeleteClip = { viewModel.timelineEngine.deleteSelected() },
+                      onRippleDelete = { viewModel.timelineEngine.rippleDelete() },
+                      onNormalDelete = { viewModel.timelineEngine.normalDelete() },
+                      onDuplicateClip = { viewModel.timelineEngine.duplicateClips() },
+                      onCopyClip = { viewModel.timelineEngine.copySelectedClips() },
+                      onPasteClip = { viewModel.timelineEngine.pasteClipsAtPlayhead() },
+                      onToggleMultiSelect = { viewModel.timelineEngine.toggleMultiSelectMode() },
+                      onNextPeak = { viewModel.jumpToNextAudioPeak() },
+                      onPrevPeak = { viewModel.jumpToPrevAudioPeak() },
+                      onNextSilence = { viewModel.jumpToNextAudioSilence() },
+                      onPrevSilence = { viewModel.jumpToPrevAudioSilence() },
+                      onRemoveSilence = { viewModel.removeSilenceInSelectedAudioClip() },
+                      waveformStyle = waveformStyle,
+                      onToggleWaveformStyle = { viewModel.cycleWaveformStyle() },
+                      fps = timelineFps,
+                      isFrameSnapping = isFrameSnapping,
+                      onStepFrames = { delta ->
+                        viewModel.timelineEngine.stepFrames(delta)
+                        viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
+                      },
+                      onSeekToPrevCut = {
+                        viewModel.timelineEngine.seekToPreviousCut()
+                        viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
+                      },
+                      onSeekToNextCut = {
+                        viewModel.timelineEngine.seekToNextCut()
+                        viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
+                      },
+                      onFpsChange = { viewModel.timelineEngine.setTimelineFps(it) },
+                      onToggleFrameSnapping = { viewModel.timelineEngine.toggleFrameSnapping() },
+                      onMoveClip = { clipId, delta -> viewModel.moveClipByDelta(clipId, delta) },
+                      onMoveClipStart = { clipId -> viewModel.beginMoveClip(clipId) },
+                      onMoveClipEnd = { _ -> viewModel.endMoveClip() },
+                      onTrimClipLeft = { clipId, delta -> viewModel.trimClipLeftByDelta(clipId, delta) },
+                      onTrimClipLeftStart = { clipId -> viewModel.beginTrimClipLeft(clipId) },
+                      onTrimClipLeftEnd = { _ -> viewModel.endTrimClipLeft() },
+                      onTrimClipRight = { clipId, delta -> viewModel.trimClipRightByDelta(clipId, delta) },
+                      onTrimClipRightStart = { clipId -> viewModel.beginTrimClipRight(clipId) },
+                      onTrimClipRightEnd = { _ -> viewModel.endTrimClipRight() },
+                      onToggleTrackLock = { viewModel.timelineEngine.toggleTrackLock(it) },
+                      onToggleTrackHide = { viewModel.timelineEngine.toggleTrackHide(it) },
+                      onToggleTrackMute = { viewModel.timelineEngine.toggleTrackMute(it) },
+                      onToggleTrackSolo = { viewModel.timelineEngine.toggleTrackSolo(it) },
+                      onCycleTrackHeight = { viewModel.timelineEngine.cycleTrackHeight(it) },
+                      onSelectKeyframe = { viewModel.timelineEngine.selectKeyframe(it) },
+                      onMoveKeyframe = { kfId, newTime -> viewModel.timelineEngine.moveKeyframe(kfId, newTime) },
+                      onAddAudioKeyframe = { clipId, relTime, vol ->
+                        viewModel.timelineEngine.addAudioVolumeKeyframe(clipId, relTime, vol)
+                      },
+                      onUpdateAudioKeyframe = { clipId, kfId, relTime, vol ->
+                        viewModel.timelineEngine.updateAudioVolumeKeyframe(clipId, kfId, relTime, vol)
+                      },
+                      onDeleteAudioKeyframe = { clipId, kfId ->
+                        viewModel.timelineEngine.deleteAudioVolumeKeyframe(clipId, kfId)
+                      },
+                      modifier = Modifier.fillMaxSize()
+                    )
+                  }
                 }
               }
-            }
-          }
-
-          // STUDIO MULTI-TRACK TIMELINE: Full multi-track video, audio, text, sticker, and effect tracks
-          MultiTrackTimeline(
-            timeline = timeline,
-            currentPosMs = currentPosMs,
-            isPlaying = isPlaying,
-            onTogglePlayPause = { viewModel.timelineEngine.togglePlayPause() },
-            zoom = multiTrackZoom,
-            selectedElement = selectedElement,
-            selectedClipIds = selectedClipIds,
-            isMultiSelectMode = isMultiSelectMode,
-            snapIndicatorMs = snapIndicatorMs,
-            onSeek = {
-              viewModel.onScrubProgress(it)
-            },
-            onScrubStart = { viewModel.onScrubStart() },
-            onScrubStop = { viewModel.onScrubStop() },
-            onSelectElement = { viewModel.timelineEngine.selectElement(it) },
-            onToggleClipSelection = { viewModel.timelineEngine.toggleSelectClip(it) },
-            onZoomChange = { multiTrackZoom = it },
-            onReorderVideoClips = { from, to -> viewModel.reorderVideoClips(from, to) },
-            onOpenTrimTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.TRIM) },
-            onOpenKeyframeTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.KEYFRAME) },
-            onOpenTransitionsTool = { viewModel.setActiveToolbarTab(EditorToolbarTab.TRANSITIONS) },
-            selectedTransitionCutIndex = selectedTransitionCutIndex,
-            onSelectTransitionCut = { cutIdx ->
-              viewModel.timelineEngine.setSelectedTransitionCutIndex(cutIdx)
-            },
-            draggedTransitionType = draggedTransitionType,
-            onDropTransition = { cutIdx, type ->
-              viewModel.timelineEngine.setTransition(cutIdx, type)
-              draggedTransitionType = null
-            },
-            onAddMedia = {
-              try {
-                timelineMediaPickerLauncher.launch(
-                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
-                )
-              } catch (e: Exception) {
-                viewModel.setActiveToolbarTab(EditorToolbarTab.MEDIA)
-              }
-            },
-            onAddAudio = {
-              viewModel.setActiveToolbarTab(EditorToolbarTab.AUDIO)
-            },
-            onAddText = {
-              activeTextSubTool = TextSubTool.TEXT_TEMPLATES
-              viewModel.setActiveToolbarTab(EditorToolbarTab.TEXT)
-            },
-            onAddOverlay = {
-              viewModel.setActiveToolbarTab(EditorToolbarTab.OVERLAY)
-            },
-            onAddSticker = {
-              viewModel.setActiveToolbarTab(EditorToolbarTab.STICKERS)
-            },
-            onAddEffect = {
-              viewModel.setActiveToolbarTab(EditorToolbarTab.EFFECTS)
-            },
-            isTracksSyncEnabled = isTracksSyncEnabled,
-            onToggleTracksSync = { viewModel.timelineEngine.toggleTracksSync() },
-            onMoveToPlayhead = { viewModel.timelineEngine.moveSelectedClipToPlayhead() },
-            onSplitAllTracks = { viewModel.timelineEngine.splitAllTracksAtPlayhead() },
-            onSplitClip = {
-              viewModel.timelineEngine.splitAtPlayhead()
-            },
-            onTrimLeftToPlayhead = {
-              viewModel.timelineEngine.trimClipLeftToPlayhead()
-            },
-            onTrimRightToPlayhead = {
-              viewModel.timelineEngine.trimClipRightToPlayhead()
-            },
-            onDeleteClip = { viewModel.timelineEngine.deleteSelected() },
-            onRippleDelete = { viewModel.timelineEngine.rippleDelete() },
-            onNormalDelete = { viewModel.timelineEngine.normalDelete() },
-            onDuplicateClip = { viewModel.timelineEngine.duplicateClips() },
-            onCopyClip = { viewModel.timelineEngine.copySelectedClips() },
-            onPasteClip = { viewModel.timelineEngine.pasteClipsAtPlayhead() },
-            onToggleMultiSelect = { viewModel.timelineEngine.toggleMultiSelectMode() },
-            onNextPeak = { viewModel.jumpToNextAudioPeak() },
-            onPrevPeak = { viewModel.jumpToPrevAudioPeak() },
-            onNextSilence = { viewModel.jumpToNextAudioSilence() },
-            onPrevSilence = { viewModel.jumpToPrevAudioSilence() },
-            onRemoveSilence = { viewModel.removeSilenceInSelectedAudioClip() },
-            waveformStyle = waveformStyle,
-            onToggleWaveformStyle = { viewModel.cycleWaveformStyle() },
-            fps = timelineFps,
-            isFrameSnapping = isFrameSnapping,
-            onStepFrames = { delta ->
-              viewModel.timelineEngine.stepFrames(delta)
-              viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
-            },
-            onSeekToPrevCut = {
-              viewModel.timelineEngine.seekToPreviousCut()
-              viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
-            },
-            onSeekToNextCut = {
-              viewModel.timelineEngine.seekToNextCut()
-              viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
-            },
-            onFpsChange = { viewModel.timelineEngine.setTimelineFps(it) },
-            onToggleFrameSnapping = { viewModel.timelineEngine.toggleFrameSnapping() },
-            onMoveClip = { clipId, delta -> viewModel.moveClipByDelta(clipId, delta) },
-            onMoveClipStart = { clipId -> viewModel.beginMoveClip(clipId) },
-            onMoveClipEnd = { _ -> viewModel.endMoveClip() },
-            onTrimClipLeft = { clipId, delta -> viewModel.trimClipLeftByDelta(clipId, delta) },
-            onTrimClipLeftStart = { clipId -> viewModel.beginTrimClipLeft(clipId) },
-            onTrimClipLeftEnd = { _ -> viewModel.endTrimClipLeft() },
-            onTrimClipRight = { clipId, delta -> viewModel.trimClipRightByDelta(clipId, delta) },
-            onTrimClipRightStart = { clipId -> viewModel.beginTrimClipRight(clipId) },
-            onTrimClipRightEnd = { _ -> viewModel.endTrimClipRight() },
-            onToggleTrackLock = { viewModel.timelineEngine.toggleTrackLock(it) },
-            onToggleTrackHide = { viewModel.timelineEngine.toggleTrackHide(it) },
-            onToggleTrackMute = { viewModel.timelineEngine.toggleTrackMute(it) },
-            onToggleTrackSolo = { viewModel.timelineEngine.toggleTrackSolo(it) },
-            onCycleTrackHeight = { viewModel.timelineEngine.cycleTrackHeight(it) },
-            onSelectKeyframe = { viewModel.timelineEngine.selectKeyframe(it) },
-            onMoveKeyframe = { kfId, newTime -> viewModel.timelineEngine.moveKeyframe(kfId, newTime) },
-            onAddAudioKeyframe = { clipId, relTime, vol ->
-              viewModel.timelineEngine.addAudioVolumeKeyframe(clipId, relTime, vol)
-            },
-            onUpdateAudioKeyframe = { clipId, kfId, relTime, vol ->
-              viewModel.timelineEngine.updateAudioVolumeKeyframe(clipId, kfId, relTime, vol)
-            },
-            onDeleteAudioKeyframe = { clipId, kfId ->
-              viewModel.timelineEngine.deleteAudioVolumeKeyframe(clipId, kfId)
-            },
-            modifier = Modifier.fillMaxSize()
-          )
-        } // End of timeline Box
+            } // End of timeline Box
 
         // Bottom Navigation Bar is displayed at the bottom of the screen in normal editor mode
         EditorBottomToolbar(

@@ -57,7 +57,12 @@ import kotlin.math.roundToLong
 fun NonLinearTimelineComponent(
   state: TimelineState,
   onAction: (TimelineAction) -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  isPlaying: Boolean = false,
+  onTogglePlayPause: (() -> Unit)? = null,
+  onAddMedia: (() -> Unit)? = null,
+  onAddAudio: (() -> Unit)? = null,
+  onAddText: (() -> Unit)? = null
 ) {
   val horizontalScrollState = rememberScrollState()
   var zoomLevel by remember { mutableFloatStateOf(state.zoomLevelPxPerSec) }
@@ -100,17 +105,36 @@ fun NonLinearTimelineComponent(
       }
       .testTag("nonlinear_timeline_container")
   ) {
-    // 1. Top Time-Ruler
-    TimeRulerView(
-      scrollState = horizontalScrollState,
-      totalWidthPx = totalWidthPx,
-      zoomLevel = zoomLevel,
-      playheadPx = playheadPx,
-      playheadUs = state.playheadUs,
-      markers = state.markers,
-      rulerBg = rulerColor,
-      onSeek = { us -> onAction(TimelineAction.SetPlayhead(us)) }
-    )
+    // 1. Top Time-Ruler aligned with track lanes
+    Row(modifier = Modifier.fillMaxWidth()) {
+      Box(
+        modifier = Modifier
+          .width(96.dp)
+          .height(36.dp)
+          .background(Color(0xFF16181E)),
+        contentAlignment = Alignment.Center
+      ) {
+        Text(
+          text = "TRACKS",
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Bold,
+          color = Color(0xFF8B949E),
+          letterSpacing = 1.sp
+        )
+      }
+
+      TimeRulerView(
+        scrollState = horizontalScrollState,
+        totalWidthPx = totalWidthPx,
+        zoomLevel = zoomLevel,
+        playheadPx = playheadPx,
+        playheadUs = state.playheadUs,
+        markers = state.markers,
+        rulerBg = rulerColor,
+        onSeek = { us -> onAction(TimelineAction.SetPlayhead(us)) },
+        modifier = Modifier.weight(1f)
+      )
+    }
 
     HorizontalDivider(color = Color(0xFF282C37), thickness = 1.dp)
 
@@ -185,7 +209,17 @@ fun NonLinearTimelineComponent(
     // 3. Bottom Timeline Action Quick Bar
     TimelineBottomActionBar(
       state = state,
-      onAction = onAction
+      onAction = onAction,
+      isPlaying = isPlaying,
+      onTogglePlayPause = onTogglePlayPause,
+      zoomLevel = zoomLevel,
+      onZoomChange = { newZoom ->
+        zoomLevel = newZoom
+        onAction(TimelineAction.SetZoomLevel(newZoom))
+      },
+      onAddMedia = onAddMedia,
+      onAddAudio = onAddAudio,
+      onAddText = onAddText
     )
   }
 }
@@ -202,14 +236,15 @@ fun TimeRulerView(
   playheadUs: Long,
   markers: List<TimelineMarker>,
   rulerBg: Color,
-  onSeek: (Long) -> Unit
+  onSeek: (Long) -> Unit,
+  modifier: Modifier = Modifier
 ) {
   val stepUs = remember(zoomLevel) {
     TimelineTimeMath.calculateDynamicRulerStep(zoomLevel)
   }
 
   Box(
-    modifier = Modifier
+    modifier = modifier
       .fillMaxWidth()
       .height(36.dp)
       .background(rulerBg)
@@ -569,34 +604,112 @@ fun PlayheadNeedle(
 }
 
 /**
- * Bottom quick action toolbar for Split, Ripple Delete, Gap Delete, and Add Track.
+ * Bottom quick action toolbar for Play/Pause, Split, Ripple Delete, Gap Delete, Media additions, and Zoom.
  */
 @Composable
 fun TimelineBottomActionBar(
   state: TimelineState,
-  onAction: (TimelineAction) -> Unit
+  onAction: (TimelineAction) -> Unit,
+  isPlaying: Boolean = false,
+  onTogglePlayPause: (() -> Unit)? = null,
+  zoomLevel: Float = 100f,
+  onZoomChange: (Float) -> Unit = {},
+  onAddMedia: (() -> Unit)? = null,
+  onAddAudio: (() -> Unit)? = null,
+  onAddText: (() -> Unit)? = null
 ) {
   val selectedClip = state.selectedClip()
 
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .height(48.dp)
+      .height(52.dp)
       .background(Color(0xFF1A1C23))
-      .padding(horizontal = 12.dp),
+      .padding(horizontal = 8.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
-    // Timecode readout
-    Text(
-      text = TimelineTimeMath.formatTimecode(state.playheadUs),
-      color = Color(0xFF00E5FF),
-      fontSize = 13.sp,
-      fontFamily = FontFamily.Monospace,
-      fontWeight = FontWeight.Bold
-    )
+    // Left: Play/Pause and Timecode readout
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      if (onTogglePlayPause != null) {
+        IconButton(
+          onClick = onTogglePlayPause,
+          modifier = Modifier.size(34.dp).testTag("timeline_play_pause_button")
+        ) {
+          Icon(
+            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+            contentDescription = if (isPlaying) "Pause" else "Play",
+            tint = Color(0xFF00E5FF),
+            modifier = Modifier.size(22.dp)
+          )
+        }
+      }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(
+        text = TimelineTimeMath.formatTimecode(state.playheadUs),
+        color = Color(0xFF00E5FF),
+        fontSize = 12.sp,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Bold
+      )
+    }
+
+    // Center: Quick Add Media / Audio / Text buttons
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+      if (onAddMedia != null) {
+        IconButton(
+          onClick = onAddMedia,
+          modifier = Modifier.size(32.dp).testTag("timeline_add_media_button")
+        ) {
+          Icon(
+            imageVector = Icons.Default.VideoCall,
+            contentDescription = "Add Media",
+            tint = Color(0xFF81C784),
+            modifier = Modifier.size(18.dp)
+          )
+        }
+      }
+
+      if (onAddAudio != null) {
+        IconButton(
+          onClick = onAddAudio,
+          modifier = Modifier.size(32.dp).testTag("timeline_add_audio_button")
+        ) {
+          Icon(
+            imageVector = Icons.Default.Audiotrack,
+            contentDescription = "Add Audio",
+            tint = Color(0xFF64B5F6),
+            modifier = Modifier.size(18.dp)
+          )
+        }
+      }
+
+      if (onAddText != null) {
+        IconButton(
+          onClick = onAddText,
+          modifier = Modifier.size(32.dp).testTag("timeline_add_text_button")
+        ) {
+          Icon(
+            imageVector = Icons.Default.TextFields,
+            contentDescription = "Add Text",
+            tint = Color(0xFFFFB74D),
+            modifier = Modifier.size(18.dp)
+          )
+        }
+      }
+    }
+
+    // Right: Split, Ripple Delete, Gap Delete & Zoom
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
       // Split Button
       IconButton(
         onClick = {
@@ -605,12 +718,13 @@ fun TimelineBottomActionBar(
           }
         },
         enabled = selectedClip != null && selectedClip.containsTimestamp(state.playheadUs),
-        modifier = Modifier.testTag("timeline_split_button")
+        modifier = Modifier.size(32.dp).testTag("timeline_split_button")
       ) {
         Icon(
           imageVector = Icons.Default.ContentCut,
           contentDescription = "Split Clip",
-          tint = if (selectedClip != null) Color.White else Color(0xFF616161)
+          tint = if (selectedClip != null && selectedClip.containsTimestamp(state.playheadUs)) Color.White else Color(0xFF616161),
+          modifier = Modifier.size(18.dp)
         )
       }
 
@@ -622,12 +736,13 @@ fun TimelineBottomActionBar(
           }
         },
         enabled = selectedClip != null,
-        modifier = Modifier.testTag("timeline_ripple_delete_button")
+        modifier = Modifier.size(32.dp).testTag("timeline_ripple_delete_button")
       ) {
         Icon(
           imageVector = Icons.Default.DeleteSweep,
           contentDescription = "Ripple Delete",
-          tint = if (selectedClip != null) Color(0xFFFF5252) else Color(0xFF616161)
+          tint = if (selectedClip != null) Color(0xFFFF5252) else Color(0xFF616161),
+          modifier = Modifier.size(18.dp)
         )
       }
 
@@ -639,12 +754,39 @@ fun TimelineBottomActionBar(
           }
         },
         enabled = selectedClip != null,
-        modifier = Modifier.testTag("timeline_gap_delete_button")
+        modifier = Modifier.size(32.dp).testTag("timeline_gap_delete_button")
       ) {
         Icon(
           imageVector = Icons.Default.Delete,
           contentDescription = "Gap Delete",
-          tint = if (selectedClip != null) Color(0xFFFFB74D) else Color(0xFF616161)
+          tint = if (selectedClip != null) Color(0xFFFFB74D) else Color(0xFF616161),
+          modifier = Modifier.size(18.dp)
+        )
+      }
+
+      // Zoom Out
+      IconButton(
+        onClick = { onZoomChange((zoomLevel * 0.8f).coerceAtLeast(10f)) },
+        modifier = Modifier.size(28.dp).testTag("timeline_zoom_out_button")
+      ) {
+        Icon(
+          imageVector = Icons.Default.ZoomOut,
+          contentDescription = "Zoom Out",
+          tint = Color(0xFFB0B8C4),
+          modifier = Modifier.size(16.dp)
+        )
+      }
+
+      // Zoom In
+      IconButton(
+        onClick = { onZoomChange((zoomLevel * 1.25f).coerceAtMost(1000f)) },
+        modifier = Modifier.size(28.dp).testTag("timeline_zoom_in_button")
+      ) {
+        Icon(
+          imageVector = Icons.Default.ZoomIn,
+          contentDescription = "Zoom In",
+          tint = Color(0xFFB0B8C4),
+          modifier = Modifier.size(16.dp)
         )
       }
     }
