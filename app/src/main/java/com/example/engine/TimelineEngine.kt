@@ -5746,6 +5746,65 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   }
 
   /**
+   * Professional NLE Roll Edit: Adjusts the edit point between two adjacent clips on the same track.
+   */
+  fun rollEditClip(clipAId: String, clipBId: String, deltaMs: Long): Boolean = withStateLock {
+    val cur = _timeline.value
+    val clipA = cur.videoClips.firstOrNull { it.id == clipAId } ?: return@withStateLock false
+    val clipB = cur.videoClips.firstOrNull { it.id == clipBId } ?: return@withStateLock false
+    if (clipA.trackIndex != clipB.trackIndex) return@withStateLock false
+    recordHistory(TimelineActionType.TRIM_RIGHT, "Roll Edit", setOf(clipAId, clipBId))
+
+    val newDurationA = (clipA.durationMs + deltaMs).coerceAtLeast(100L)
+    val actualDelta = newDurationA - clipA.durationMs
+
+    val updatedVideoClips = cur.videoClips.map { clip ->
+      when (clip.id) {
+        clipAId -> clip.copy(durationMs = newDurationA)
+        clipBId -> clip.copy(
+          timelineStartMs = clip.timelineStartMs + actualDelta,
+          durationMs = (clip.durationMs - actualDelta).coerceAtLeast(100L)
+        )
+        else -> clip
+      }
+    }
+    _timeline.value = cur.copy(videoClips = updatedVideoClips)
+    true
+  }
+
+  /**
+   * Professional NLE Slip Edit: Shifts the source media range inside a clip without changing timeline position.
+   */
+  fun slipEditClip(clipId: String, sourceDeltaMs: Long): Boolean = withStateLock {
+    val cur = _timeline.value
+    val clip = cur.videoClips.firstOrNull { it.id == clipId } ?: return@withStateLock false
+    recordHistory(TimelineActionType.TRIM_LEFT, "Slip Edit", setOf(clipId))
+
+    val newSourceStart = (clip.sourceStartMs + sourceDeltaMs).coerceAtLeast(0L)
+    val updatedVideoClips = cur.videoClips.map { c ->
+      if (c.id == clipId) c.copy(sourceStartMs = newSourceStart) else c
+    }
+    _timeline.value = cur.copy(videoClips = updatedVideoClips)
+    true
+  }
+
+  /**
+   * Professional NLE Slide Edit: Moves a clip along the timeline while maintaining adjacent timing.
+   */
+  fun slideEditClip(clipId: String, deltaMs: Long): Boolean = withStateLock {
+    val cur = _timeline.value
+    val clip = cur.videoClips.firstOrNull { it.id == clipId } ?: return@withStateLock false
+    recordHistory(TimelineActionType.MOVE_CLIP, "Slide Edit", setOf(clipId))
+
+    val newStart = (clip.timelineStartMs + deltaMs).coerceAtLeast(0L)
+    val updatedVideoClips = cur.videoClips.map { c ->
+      if (c.id == clipId) c.copy(timelineStartMs = newStart) else c
+    }
+    _timeline.value = cur.copy(videoClips = updatedVideoClips)
+    true
+  }
+
+  /**
    * Adds a keyframe to a specific clip by ID.
    */
   fun addKeyframeToClip(clipId: String, keyframe: ClipKeyframe): Boolean = withStateLock {

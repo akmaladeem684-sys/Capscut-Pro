@@ -263,4 +263,34 @@ class TimelineEngineNLETest {
 
     assertEquals(engine.timeline.value, unified.timelineSnapshot)
   }
+
+  @Test
+  fun testAdvancedNLEEditOperations() {
+    val timeline = Timeline(
+      videoClips = listOf(
+        VideoClip(id = "v1", name = "Clip 1", uri = "uri1", timelineStartMs = 0L, durationMs = 2000L, trackIndex = 0),
+        VideoClip(id = "v2", name = "Clip 2", uri = "uri2", timelineStartMs = 2000L, durationMs = 3000L, trackIndex = 0)
+      )
+    )
+    engine.loadTimeline(timeline)
+
+    // Test Roll Edit
+    val rolled = engine.rollEditClip("v1", "v2", 500L)
+    assertTrue(rolled)
+    val curTimeline = engine.timeline.value
+    assertEquals(2500L, curTimeline.videoClips[0].durationMs)
+    assertEquals(2500L, curTimeline.videoClips[1].timelineStartMs)
+    assertEquals(2500L, curTimeline.videoClips[1].durationMs)
+
+    // Test Slip Edit
+    val slipped = engine.slipEditClip("v1", 200L)
+    assertTrue(slipped)
+    assertEquals(200L, engine.timeline.value.videoClips[0].sourceStartMs)
+
+    // Test Slide Edit
+    val slided = engine.slideEditClip("v2", 300L)
+    assertTrue(slided)
+    assertEquals(2800L, engine.timeline.value.videoClips[1].timelineStartMs)
+  }
 }
+
