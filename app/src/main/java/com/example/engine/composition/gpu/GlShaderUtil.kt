@@ -78,6 +78,7 @@ object GlShaderUtil {
       texId = createTexture(GLES20.GL_TEXTURE_2D)
     }
     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
+    GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
     try {
       GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
     } catch (e: Exception) {

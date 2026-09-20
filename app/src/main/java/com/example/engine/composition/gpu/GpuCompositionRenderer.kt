@@ -231,8 +231,8 @@ class GpuCompositionRenderer(private val context: Context) {
           isVisible = true,
           zOrder = 450,
           opacity = 1.0f,
-          vScale = 1.0f,
-          vOffset = 0.0f,
+          vScale = -1.0f,
+          vOffset = 1.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = fxMatrix
@@ -266,8 +266,8 @@ class GpuCompositionRenderer(private val context: Context) {
           isVisible = true,
           zOrder = calculatedZ,
           opacity = sticker.opacity.coerceIn(0f, 1f),
-          vScale = 1.0f,
-          vOffset = 0.0f,
+          vScale = -1.0f,
+          vOffset = 1.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = stkMatrix
@@ -296,8 +296,8 @@ class GpuCompositionRenderer(private val context: Context) {
           isVisible = true,
           zOrder = calculatedZ,
           opacity = 1.0f,
-          vScale = 1.0f,
-          vOffset = 0.0f,
+          vScale = -1.0f,
+          vOffset = 1.0f,
           blendMode = NativeBlendMode.PREMULTIPLIED,
           useCustomMatrix = true,
           transformMatrix = txtMatrix
@@ -560,6 +560,10 @@ class GpuCompositionRenderer(private val context: Context) {
       System.arraycopy(customTexMatrix, 0, texMatrix, 0, 16)
     } else {
       Matrix.setIdentityM(texMatrix, 0)
+      if (!isOes) {
+        Matrix.translateM(texMatrix, 0, 0f, 1f, 0f)
+        Matrix.scaleM(texMatrix, 0, 1f, -1f, 1f)
+      }
     }
 
     if (frame.activeTransition != null) {
@@ -621,6 +625,10 @@ class GpuCompositionRenderer(private val context: Context) {
 
     Matrix.setIdentityM(mvpMatrix, 0)
     Matrix.setIdentityM(texMatrix, 0)
+    if (!isOes) {
+      Matrix.translateM(texMatrix, 0, 0f, 1f, 0f)
+      Matrix.scaleM(texMatrix, 0, 1f, -1f, 1f)
+    }
 
     val overlayAdj = VideoAdjustments(
       brightness = overlay.brightness,

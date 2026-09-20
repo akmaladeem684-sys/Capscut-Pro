@@ -996,7 +996,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   // --- Export Operation ---
 
   fun startExport(config: ExportConfig) {
-    viewModelScope.launch(Dispatchers.IO) {
+    timelineEngine.pause()
+    navigateTo(AppScreen.EXPORT)
+    viewModelScope.launch(Dispatchers.Default) {
+      runCatching {
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
+      }
       val timelineSnapshot = timelineEngine.timeline.value
       val outputFile = File(
         getApplication<Application>().cacheDir,

@@ -86,31 +86,41 @@ fun ExportScreen(
   Scaffold(
     modifier = modifier
       .fillMaxSize()
-      .background(StudioDarkBg),
-    containerColor = StudioDarkBg,
+      .background(Color(0xFFF8FAFC)),
+    containerColor = Color(0xFFF8FAFC),
     topBar = {
       TopAppBar(
         title = {
-          Text(
-            if (isTemplateCreatorMode) "Export Template (Publish)" else "Export Project",
-            color = TextPrimary,
-            fontWeight = FontWeight.Bold
-          )
+          Column {
+            Text(
+              text = if (exportState is ExportState.Rendering) "Export Progress" else if (exportState is ExportState.Success) "Export Complete" else "Export Video",
+              color = Color(0xFF0F172A),
+              fontWeight = FontWeight.Bold,
+              fontSize = 18.sp
+            )
+            Text(
+              text = if (isTemplateCreatorMode) "Template Creator Mode" else "Zero-Copy GPU Surface Pipeline",
+              color = Color(0xFF64748B),
+              fontSize = 12.sp
+            )
+          }
         },
         navigationIcon = {
           IconButton(onClick = { viewModel.navigateTo(AppScreen.EDITOR) }) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFF0F172A))
           }
         },
         actions = {
-          IconButton(
-            onClick = { showConfigDialog = true },
-            modifier = Modifier.testTag("open_export_dialog_btn")
-          ) {
-            Icon(Icons.Default.Tune, contentDescription = "Configure Export", tint = CyanAccent)
+          if (exportState is ExportState.Idle) {
+            IconButton(
+              onClick = { showConfigDialog = true },
+              modifier = Modifier.testTag("open_export_dialog_btn")
+            ) {
+              Icon(Icons.Default.Tune, contentDescription = "Configure Export", tint = Color(0xFF2563EB))
+            }
           }
         },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = StudioDarkBg)
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
     }
   ) { padding ->
@@ -118,26 +128,28 @@ fun ExportScreen(
       modifier = Modifier
         .fillMaxSize()
         .padding(padding)
-        .padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(16.dp)
+        .padding(20.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.SpaceBetween
     ) {
       when (val state = exportState) {
         is ExportState.Idle -> {
-          // Export Configuration Options
+          // Export Configuration Options in Light White Theme
           Card(
             modifier = Modifier
               .fillMaxWidth()
               .weight(1f, fill = false),
-            colors = CardDefaults.cardColors(containerColor = StudioSurface),
-            border = CardDefaults.outlinedCardBorder().copy(brush = Brush.linearGradient(listOf(StudioBorder, StudioBorder.copy(alpha = 0.4f))))
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            shape = RoundedCornerShape(16.dp)
           ) {
             Column(
               modifier = Modifier
-                .padding(16.dp)
+                .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
-              verticalArrangement = Arrangement.spacedBy(14.dp)
+              verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-              // Engine banner with Dialog shortcut
+              // Engine banner
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -145,19 +157,19 @@ fun ExportScreen(
               ) {
                 Surface(
                   shape = RoundedCornerShape(8.dp),
-                  color = SkyBlueContainer
+                  color = Color(0xFFEFF6FF)
                 ) {
                   Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
-                    Icon(Icons.Default.Speed, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(Icons.Default.Speed, contentDescription = null, tint = Color(0xFF2563EB), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                      text = "Hardware Video Engine",
+                      text = "Hardware Accelerated Pipeline",
                       style = MaterialTheme.typography.labelMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = CyanAccentDark
+                        color = Color(0xFF1E40AF)
                       )
                     )
                   }
@@ -167,9 +179,9 @@ fun ExportScreen(
                   onClick = { showConfigDialog = true },
                   contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                  Icon(Icons.Default.VideoSettings, contentDescription = null, modifier = Modifier.size(16.dp), tint = CyanAccent)
+                  Icon(Icons.Default.VideoSettings, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF2563EB))
                   Spacer(modifier = Modifier.width(4.dp))
-                  Text("Advanced Dialog", style = MaterialTheme.typography.labelMedium.copy(color = CyanAccent, fontWeight = FontWeight.Bold))
+                  Text("Advanced Dialog", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF2563EB), fontWeight = FontWeight.Bold))
                 }
               }
 
@@ -180,16 +192,16 @@ fun ExportScreen(
                   horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically
                 ) {
-                  Text("Resolution", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
+                  Text("Resolution", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF475569), fontWeight = FontWeight.Bold))
                   if (selectedResolution == Resolution.RES_4K || selectedResolution == Resolution.RES_2K) {
                     Surface(
                       shape = RoundedCornerShape(4.dp),
-                      color = GoldAccent
+                      color = Color(0xFFFEF3C7)
                     ) {
                       Text(
                         text = "ULTRA HD",
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                        style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF92400E), fontWeight = FontWeight.Bold, fontSize = 9.sp)
                       )
                     }
                   }
@@ -201,7 +213,12 @@ fun ExportScreen(
                       selected = selectedResolution == res,
                       onClick = { selectedResolution = res },
                       label = { Text(res.label) },
-                      colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CyanAccent, selectedLabelColor = Color.Black)
+                      colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF2563EB),
+                        selectedLabelColor = Color.White,
+                        containerColor = Color(0xFFF1F5F9),
+                        labelColor = Color(0xFF334155)
+                      )
                     )
                   }
                 }
@@ -209,7 +226,7 @@ fun ExportScreen(
 
               // Codec Selection
               Column {
-                Text("Video Codec", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
+                Text("Video Codec", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF475569), fontWeight = FontWeight.Bold))
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                   CodecProfile.values().forEach { codec ->
@@ -217,11 +234,11 @@ fun ExportScreen(
                     Surface(
                       onClick = { selectedCodec = codec },
                       shape = RoundedCornerShape(8.dp),
-                      color = if (isSelected) GreenAccent.copy(alpha = 0.2f) else StudioSurfaceVariant,
-                      border = BorderStroke(1.dp, if (isSelected) GreenAccent else StudioBorder),
+                      color = if (isSelected) Color(0xFFEFF6FF) else Color(0xFFF8FAFC),
+                      border = BorderStroke(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFFE2E8F0)),
                       modifier = Modifier
                         .weight(1f)
-                        .height(36.dp)
+                        .height(38.dp)
                     ) {
                       Box(contentAlignment = Alignment.Center) {
                         Text(
@@ -232,7 +249,7 @@ fun ExportScreen(
                           },
                           style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) GreenAccent else TextPrimary
+                            color = if (isSelected) Color(0xFF2563EB) else Color(0xFF334155)
                           )
                         )
                       }
@@ -243,7 +260,7 @@ fun ExportScreen(
 
               // Frame Rate
               Column {
-                Text("Frame Rate", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
+                Text("Frame Rate", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF475569), fontWeight = FontWeight.Bold))
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                   items(FrameRate.values()) { fps ->
@@ -251,7 +268,12 @@ fun ExportScreen(
                       selected = selectedFps == fps,
                       onClick = { selectedFps = fps },
                       label = { Text("${fps.fps} FPS") },
-                      colors = FilterChipDefaults.filterChipColors(selectedContainerColor = PurpleAccent, selectedLabelColor = Color.White)
+                      colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF7C3AED),
+                        selectedLabelColor = Color.White,
+                        containerColor = Color(0xFFF1F5F9),
+                        labelColor = Color(0xFF334155)
+                      )
                     )
                   }
                 }
@@ -259,7 +281,7 @@ fun ExportScreen(
 
               // Quality
               Column {
-                Text("Export Quality / Bitrate", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
+                Text("Export Quality / Bitrate", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF475569), fontWeight = FontWeight.Bold))
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                   items(ExportQuality.values()) { q ->
@@ -267,19 +289,23 @@ fun ExportScreen(
                       selected = selectedQuality == q,
                       onClick = { selectedQuality = q },
                       label = { Text(q.label) },
-                      colors = FilterChipDefaults.filterChipColors(selectedContainerColor = StudioSurfaceVariant, selectedLabelColor = CyanAccent)
+                      colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF2563EB),
+                        selectedLabelColor = Color.White,
+                        containerColor = Color(0xFFF1F5F9),
+                        labelColor = Color(0xFF334155)
+                      )
                     )
                   }
                 }
 
-                // Custom Bitrate Controls when Custom Quality selected
                 if (selectedQuality == ExportQuality.CUSTOM) {
                   Spacer(modifier = Modifier.height(10.dp))
                   Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
-                    color = StudioSurfaceVariant,
-                    border = BorderStroke(1.dp, StudioBorder)
+                    color = Color(0xFFF8FAFC),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                   ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                       Row(
@@ -288,11 +314,11 @@ fun ExportScreen(
                       ) {
                         Text(
                           text = "Custom Bitrate",
-                          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, color = TextSecondary)
+                          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF64748B))
                         )
                         Text(
                           text = "${customBitrateKbps / 1000} Mbps (${customBitrateKbps} Kbps)",
-                          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = CyanAccentDark)
+                          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = Color(0xFF2563EB))
                         )
                       }
                       Slider(
@@ -301,9 +327,9 @@ fun ExportScreen(
                         valueRange = 1000f..50000f,
                         steps = 97,
                         colors = SliderDefaults.colors(
-                          thumbColor = CyanAccent,
-                          activeTrackColor = CyanAccent,
-                          inactiveTrackColor = StudioBorder
+                          thumbColor = Color(0xFF2563EB),
+                          activeTrackColor = Color(0xFF2563EB),
+                          inactiveTrackColor = Color(0xFFCBD5E1)
                         )
                       )
                     }
@@ -311,7 +337,7 @@ fun ExportScreen(
                 }
               }
 
-              HorizontalDivider(color = StudioBorder)
+              HorizontalDivider(color = Color(0xFFE2E8F0))
 
               // Summary
               Row(
@@ -320,12 +346,12 @@ fun ExportScreen(
                 verticalAlignment = Alignment.CenterVertically
               ) {
                 Column {
-                  Text("Estimated File Size", style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
-                  Text(estimatedMb, style = MaterialTheme.typography.titleLarge.copy(color = CyanAccent, fontWeight = FontWeight.Bold))
+                  Text("Estimated File Size", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF64748B)))
+                  Text(estimatedMb, style = MaterialTheme.typography.titleLarge.copy(color = Color(0xFF2563EB), fontWeight = FontWeight.Bold))
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                  Text("Total Duration", style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
-                  Text(formatDurationShort(timeline.totalDurationMs), style = MaterialTheme.typography.titleMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold))
+                  Text("Total Duration", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF64748B)))
+                  Text(formatDurationShort(timeline.totalDurationMs), style = MaterialTheme.typography.titleMedium.copy(color = Color(0xFF0F172A), fontWeight = FontWeight.Bold))
                 }
               }
             }
@@ -333,417 +359,420 @@ fun ExportScreen(
 
           Spacer(modifier = Modifier.weight(1f))
 
-          PrimaryPillButton(
-            text = "Start Render & Export",
-            icon = Icons.Default.FileUpload,
+          Button(
             onClick = { viewModel.startExport(config) },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB), contentColor = Color.White),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
               .fillMaxWidth()
+              .height(52.dp)
               .testTag("start_export_button")
-          )
+          ) {
+            Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Start Render & Export", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+          }
         }
 
         is ExportState.Rendering -> {
-          // Live High-Performance Rendering Progress Screen
-          Box(
+          // Dedicated Light/White Export Progress Page
+          Column(
             modifier = Modifier
               .fillMaxWidth()
               .weight(1f),
-            contentAlignment = Alignment.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
           ) {
-            Card(
-              modifier = Modifier.fillMaxWidth(0.92f),
-              colors = CardDefaults.cardColors(containerColor = StudioSurface),
-              border = BorderStroke(1.dp, StudioBorder),
-              shape = RoundedCornerShape(20.dp)
+            // Center Large Circular Progress Indicator
+            Box(
+              modifier = Modifier.size(230.dp),
+              contentAlignment = Alignment.Center
             ) {
-              Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-              ) {
-                // Engine & Resolution Badges
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
-                ) {
-                  Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = SkyBlueContainer
-                  ) {
-                    Text(
-                      text = state.renderEngine,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                      style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = CyanAccentDark,
-                        fontSize = 10.sp
-                      )
-                    )
-                  }
+              // Outer Track & Fill
+              CircularProgressIndicator(
+                progress = { state.progressPercent.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxSize(),
+                color = if (state.isPaused) Color(0xFFD97706) else Color(0xFF2563EB),
+                strokeWidth = 16.dp,
+                trackColor = Color(0xFFE2E8F0)
+              )
 
-                  Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (state.resolution == Resolution.RES_4K || state.resolution == Resolution.RES_2K) GoldAccent.copy(alpha = 0.2f) else StudioSurfaceVariant,
-                    border = BorderStroke(1.dp, if (state.resolution == Resolution.RES_4K || state.resolution == Resolution.RES_2K) GoldAccent else StudioBorder)
-                  ) {
-                    Text(
-                      text = state.resolution.label,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                      style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = if (state.resolution == Resolution.RES_4K || state.resolution == Resolution.RES_2K) GoldAccent else TextPrimary,
-                        fontSize = 10.sp
-                      )
-                    )
-                  }
-                }
-
-                Box(
-                  modifier = Modifier
-                    .size(130.dp)
-                    .clip(CircleShape)
-                    .background(StudioSurfaceVariant),
-                  contentAlignment = Alignment.Center
-                ) {
-                  CircularProgressIndicator(
-                    progress = { state.progressPercent },
-                    modifier = Modifier.fillMaxSize(),
-                    color = if (state.isPaused) GoldAccent else CyanAccent,
-                    strokeWidth = 9.dp,
-                    trackColor = StudioBorder
-                  )
-                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                      text = "${(state.progressPercent * 100).toInt()}%",
-                      style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
-                    )
-                    if (state.fps > 0f && !state.isPaused) {
-                      Text(
-                        text = "${state.fps.toInt()} FPS",
-                        style = MaterialTheme.typography.labelSmall.copy(color = CyanAccent, fontWeight = FontWeight.Bold)
-                      )
-                    } else if (state.isPaused) {
-                      Text(
-                        text = "PAUSED",
-                        style = MaterialTheme.typography.labelSmall.copy(color = GoldAccent, fontWeight = FontWeight.Bold)
-                      )
-                    }
-                  }
-                }
-
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                  text = state.status,
-                  style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary),
-                  maxLines = 2
+                  text = "${(state.progressPercent * 100).toInt()}%",
+                  style = MaterialTheme.typography.displayMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0F172A),
+                    fontSize = 54.sp
+                  )
                 )
-
-                // Stats Chips
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                  Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = StudioSurfaceVariant
-                  ) {
-                    Column(
-                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                      horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                      Text("Frames", style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary, fontSize = 10.sp))
-                      Text("${state.currentFrame}/${state.totalFrames}", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = TextPrimary))
-                    }
-                  }
-
-                  Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = StudioSurfaceVariant
-                  ) {
-                    Column(
-                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                      horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                      Text("Estimated Time", style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary, fontSize = 10.sp))
-                      val etaText = if (state.isPaused) "Paused" else if (state.estimatedRemainingSec > 0) "${state.estimatedRemainingSec}s" else "Finishing..."
-                      Text(etaText, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = GoldAccent))
-                    }
-                  }
-                }
-
                 Spacer(modifier = Modifier.height(4.dp))
-
-                // Control Actions: Pause/Resume and Cancel
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                  OutlinedButton(
-                    onClick = {
-                      if (state.isPaused) {
-                        viewModel.videoExporter.resumeExport()
-                      } else {
-                        viewModel.videoExporter.pauseExport()
-                      }
-                    },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                    border = BorderStroke(1.dp, StudioBorder),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.weight(1f)
+                if (state.fps > 0f && !state.isPaused) {
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFEFF6FF)
                   ) {
-                    Icon(
-                      imageVector = if (state.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                      contentDescription = null,
-                      modifier = Modifier.size(16.dp)
+                    Text(
+                      text = "${state.fps.toInt()} FPS",
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                      style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF2563EB), fontWeight = FontWeight.Bold)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (state.isPaused) "Resume" else "Pause", fontWeight = FontWeight.SemiBold)
                   }
-
-                  Button(
-                    onClick = { viewModel.videoExporter.cancelExport() },
-                    colors = ButtonDefaults.buttonColors(containerColor = RedAccent.copy(alpha = 0.15f), contentColor = RedAccent),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.weight(1f)
+                } else if (state.isPaused) {
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFEF3C7)
                   ) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Cancel", fontWeight = FontWeight.SemiBold)
+                    Text(
+                      text = "PAUSED",
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                      style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFFD97706), fontWeight = FontWeight.Bold)
+                    )
                   }
                 }
+              }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Real-Time Status Text
+            Text(
+              text = if (state.status.isNotBlank()) state.status else "Rendering & Encoding Video...",
+              style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF0F172A)
+              ),
+              maxLines = 2
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Details Card
+            Card(
+              modifier = Modifier.fillMaxWidth(0.9f),
+              colors = CardDefaults.cardColors(containerColor = Color.White),
+              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+              shape = RoundedCornerShape(14.dp)
+            ) {
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Column(horizontalAlignment = Alignment.Start) {
+                  Text("Frames", style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF64748B), fontSize = 11.sp))
+                  Text("${state.currentFrame} / ${state.totalFrames}", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)))
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  Text("Resolution", style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF64748B), fontSize = 11.sp))
+                  Text(state.resolution.label, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF2563EB)))
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                  Text("Remaining", style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF64748B), fontSize = 11.sp))
+                  val etaText = if (state.isPaused) "Paused" else if (state.estimatedRemainingSec > 0) "${state.estimatedRemainingSec}s" else "Finalizing..."
+                  Text(etaText, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFFD97706)))
+                }
+              }
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Action Buttons
+            Row(
+              modifier = Modifier.fillMaxWidth(0.9f),
+              horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+              OutlinedButton(
+                onClick = {
+                  if (state.isPaused) {
+                    viewModel.videoExporter.resumeExport()
+                  } else {
+                    viewModel.videoExporter.pauseExport()
+                  }
+                },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF0F172A)),
+                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                  .weight(1f)
+                  .height(48.dp)
+              ) {
+                Icon(
+                  imageVector = if (state.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                  contentDescription = null,
+                  modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (state.isPaused) "Resume" else "Pause", fontWeight = FontWeight.Bold)
+              }
+
+              Button(
+                onClick = { viewModel.videoExporter.cancelExport() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFEE2E2), contentColor = Color(0xFFDC2626)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                  .weight(1f)
+                  .height(48.dp)
+              ) {
+                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Cancel", fontWeight = FontWeight.Bold)
               }
             }
           }
         }
 
         is ExportState.Success -> {
-          // Export Succeeded Screen
-          Box(
+          // Export Succeeded Screen in Light White Theme
+          Column(
             modifier = Modifier
               .fillMaxWidth()
               .weight(1f),
-            contentAlignment = Alignment.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
           ) {
-            Column(
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.spacedBy(16.dp),
-              modifier = Modifier.padding(16.dp)
+            Box(
+              modifier = Modifier.size(200.dp),
+              contentAlignment = Alignment.Center
             ) {
+              CircularProgressIndicator(
+                progress = { 1.0f },
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFF16A34A),
+                strokeWidth = 14.dp,
+                trackColor = Color(0xFFDCFCE7)
+              )
               Box(
                 modifier = Modifier
-                  .size(80.dp)
+                  .size(110.dp)
                   .clip(CircleShape)
-                  .background(GreenAccent),
+                  .background(Color(0xFF16A34A)),
                 contentAlignment = Alignment.Center
               ) {
-                Icon(Icons.Default.Check, contentDescription = "Success", tint = Color.Black, modifier = Modifier.size(44.dp))
+                Icon(Icons.Default.Check, contentDescription = "Success", tint = Color.White, modifier = Modifier.size(64.dp))
               }
+            }
 
-              Text(
-                text = "Export Complete!",
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
-              )
+            Spacer(modifier = Modifier.height(24.dp))
 
-              // Gallery Auto-Save Confirmation Banner
-              Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = StudioSurfaceVariant,
-                border = BorderStroke(1.dp, GreenAccent)
+            Text(
+              text = "Export Complete!",
+              style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Gallery Auto-Save Confirmation Banner
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color(0xFFF0FDF4),
+              border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+              modifier = Modifier.fillMaxWidth(0.92f)
+            ) {
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
               ) {
-                Row(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                  Icon(
-                    Icons.Default.PhotoLibrary,
-                    contentDescription = null,
-                    tint = GreenAccent,
-                    modifier = Modifier.size(28.dp)
+                Icon(
+                  Icons.Default.PhotoLibrary,
+                  contentDescription = null,
+                  tint = Color(0xFF16A34A),
+                  modifier = Modifier.size(28.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = "Saved to Device Gallery",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                   )
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                      text = "Auto-Saved to Device Gallery",
-                      style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
-                    )
-                    Text(
-                      text = "Movies/VideoStudio/${state.file.name}",
-                      style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary),
-                      maxLines = 1
-                    )
-                  }
-                  Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenAccent, modifier = Modifier.size(20.dp))
+                  Text(
+                    text = "Movies/VideoStudio/${state.file.name}",
+                    style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF475569)),
+                    maxLines = 1
+                  )
                 }
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(22.dp))
+              }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+              text = "Size: ${String.format("%.1f MB", state.fileSizeBytes / (1024f * 1024f))}",
+              style = MaterialTheme.typography.labelLarge.copy(color = Color(0xFF2563EB), fontWeight = FontWeight.Bold)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Action Buttons & Export Options
+            Column(
+              modifier = Modifier.fillMaxWidth(0.92f),
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+              horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+              Button(
+                onClick = {
+                  com.example.engine.media.GalleryMediaSaver.saveVideoToGallery(
+                    context = context,
+                    sourceFile = state.file,
+                    title = state.file.nameWithoutExtension
+                  )
+                  Toast.makeText(context, "Saved to Device Gallery (Movies/VideoStudio)!", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("export_save_device_button")
+              ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("1. Save to Device Gallery", fontWeight = FontWeight.Bold)
               }
 
-              Text(
-                text = "Size: ${String.format("%.1f MB", state.fileSizeBytes / (1024f * 1024f))}",
-                style = MaterialTheme.typography.labelMedium.copy(color = CyanAccent, fontWeight = FontWeight.Bold)
-              )
-
-              // Action Buttons & Export Options
-              Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+              Button(
+                onClick = { showSaveAsTemplateDialog = true },
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = if (isTemplateCreatorMode) Color(0xFF7C3AED) else Color(0xFF2563EB),
+                  contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("export_save_template_button")
               ) {
-                // Option 1: Save to Device
+                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  if (isTemplateCreatorMode) "★ Publish Template to Firebase" else "2. Publish as Template to Firebase",
+                  fontWeight = FontWeight.Bold
+                )
+              }
+
+              Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+              ) {
                 Button(
                   onClick = {
-                    com.example.engine.media.GalleryMediaSaver.saveVideoToGallery(
-                      context = context,
-                      sourceFile = state.file,
-                      title = state.file.nameWithoutExtension
-                    )
-                    Toast.makeText(context, "Saved to Device Gallery (Movies/VideoStudio)!", Toast.LENGTH_SHORT).show()
+                    try {
+                      val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", state.file)
+                      val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "video/*"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        setPackage("com.zhiliaoapp.musically")
+                      }
+                      if (intent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(intent)
+                      } else {
+                        val chooser = Intent.createChooser(
+                          Intent(Intent.ACTION_SEND).apply {
+                            type = "video/*"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                          },
+                          "Share to TikTok"
+                        )
+                        context.startActivity(chooser)
+                      }
+                    } catch (e: Exception) {
+                      Toast.makeText(context, "TikTok share intent opened!", Toast.LENGTH_SHORT).show()
+                    }
                   },
-                  colors = ButtonDefaults.buttonColors(containerColor = GreenAccent, contentColor = Color.Black),
+                  colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFE2C55), contentColor = Color.White),
+                  shape = RoundedCornerShape(10.dp),
                   modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("export_save_device_button")
+                    .weight(1f)
+                    .testTag("export_share_tiktok_button")
                 ) {
-                  Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Text("1. Save to Device Gallery", fontWeight = FontWeight.Bold)
-                }
-
-                // Option 2: Save as Template
-                Button(
-                  onClick = { showSaveAsTemplateDialog = true },
-                  colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isTemplateCreatorMode) PurpleAccent else CyanAccent,
-                    contentColor = if (isTemplateCreatorMode) Color.White else Color.Black
-                  ),
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("export_save_template_button")
-                ) {
-                  Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Text(
-                    if (isTemplateCreatorMode) "★ Publish Template to Firebase" else "2. Publish as Template to Firebase",
-                    fontWeight = FontWeight.Bold
-                  )
-                }
-
-                // Option 3 & 4: TikTok Sharing & Direct Upload Row
-                Row(
-                  horizontalArrangement = Arrangement.spacedBy(10.dp),
-                  modifier = Modifier.fillMaxWidth()
-                ) {
-                  // Option 3: Share to TikTok
-                  Button(
-                    onClick = {
-                      try {
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", state.file)
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                          type = "video/*"
-                          putExtra(Intent.EXTRA_STREAM, uri)
-                          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                          setPackage("com.zhiliaoapp.musically")
-                        }
-                        if (intent.resolveActivity(context.packageManager) != null) {
-                          context.startActivity(intent)
-                        } else {
-                          val chooser = Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
-                              type = "video/*"
-                              putExtra(Intent.EXTRA_STREAM, uri)
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            },
-                            "Share to TikTok"
-                          )
-                          context.startActivity(chooser)
-                        }
-                      } catch (e: Exception) {
-                        Toast.makeText(context, "TikTok share intent opened!", Toast.LENGTH_SHORT).show()
-                      }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFE2C55), contentColor = Color.White),
-                    modifier = Modifier
-                      .weight(1f)
-                      .testTag("export_share_tiktok_button")
-                  ) {
-                    Text("3. Share to TikTok", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                  }
-
-                  // Option 4: Direct TikTok Upload
-                  Button(
-                    onClick = {
-                      try {
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", state.file)
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                          type = "video/*"
-                          putExtra(Intent.EXTRA_STREAM, uri)
-                          putExtra("share_to_tiktok_direct", true)
-                          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                          setPackage("com.zhiliaoapp.musically")
-                        }
-                        if (intent.resolveActivity(context.packageManager) != null) {
-                          context.startActivity(intent)
-                          Toast.makeText(context, "Launching Direct TikTok Upload...", Toast.LENGTH_SHORT).show()
-                        } else {
-                          val chooser = Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
-                              type = "video/*"
-                              putExtra(Intent.EXTRA_STREAM, uri)
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            },
-                            "Direct TikTok Upload"
-                          )
-                          context.startActivity(chooser)
-                        }
-                      } catch (e: Exception) {
-                        Toast.makeText(context, "Direct TikTok upload flow initiated!", Toast.LENGTH_SHORT).show()
-                      }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25F4EE), contentColor = Color.Black),
-                    modifier = Modifier
-                      .weight(1f)
-                      .testTag("export_direct_tiktok_upload_button")
-                  ) {
-                    Text("4. Direct TikTok Upload", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                  }
+                  Text("3. Share to TikTok", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
 
                 Button(
-                  onClick = { viewModel.navigateTo(AppScreen.EXPORTED_LIBRARY) },
-                  colors = ButtonDefaults.buttonColors(containerColor = PurpleAccent, contentColor = Color.White),
+                  onClick = {
+                    try {
+                      val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", state.file)
+                      val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "video/*"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra("share_to_tiktok_direct", true)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        setPackage("com.zhiliaoapp.musically")
+                      }
+                      if (intent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(intent)
+                        Toast.makeText(context, "Launching Direct TikTok Upload...", Toast.LENGTH_SHORT).show()
+                      } else {
+                        val chooser = Intent.createChooser(
+                          Intent(Intent.ACTION_SEND).apply {
+                            type = "video/*"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                          },
+                          "Direct TikTok Upload"
+                        )
+                        context.startActivity(chooser)
+                      }
+                    } catch (e: Exception) {
+                      Toast.makeText(context, "Direct TikTok upload flow initiated!", Toast.LENGTH_SHORT).show()
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A), contentColor = Color.White),
+                  shape = RoundedCornerShape(10.dp),
                   modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("export_library_button")
+                    .weight(1f)
+                    .testTag("export_direct_tiktok_upload_button")
                 ) {
-                  Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text("View in App Library", fontWeight = FontWeight.Bold)
+                  Text("4. Direct TikTok Upload", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
               }
 
-              TextButton(onClick = { viewModel.navigateTo(AppScreen.HOME) }) {
-                Text("Return to Home Screen", color = TextSecondary)
+              Button(
+                onClick = { viewModel.navigateTo(AppScreen.EXPORTED_LIBRARY) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9), contentColor = Color(0xFF0F172A)),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("export_library_button")
+              ) {
+                Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("View in App Library", fontWeight = FontWeight.Bold)
               }
+            }
+
+            TextButton(onClick = { viewModel.navigateTo(AppScreen.HOME) }) {
+              Text("Return to Home Screen", color = Color(0xFF64748B))
             }
           }
         }
 
         is ExportState.Error -> {
-          Box(
+          // Export Error View in Light White Theme
+          Column(
             modifier = Modifier
               .fillMaxWidth()
               .weight(1f),
-            contentAlignment = Alignment.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
           ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-              Icon(Icons.Default.Error, contentDescription = null, tint = RedAccent, modifier = Modifier.size(64.dp))
-              Text("Export Failed", style = MaterialTheme.typography.titleLarge.copy(color = RedAccent, fontWeight = FontWeight.Bold))
-              Text(state.message, color = TextSecondary)
-              PrimaryPillButton(
-                text = "Try Again",
-                onClick = { viewModel.startExport(config) }
-              )
+            Icon(Icons.Default.Error, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(64.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Export Failed", style = MaterialTheme.typography.titleLarge.copy(color = Color(0xFFDC2626), fontWeight = FontWeight.Bold))
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(state.message, color = Color(0xFF64748B), modifier = Modifier.padding(horizontal = 24.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+              onClick = { viewModel.startExport(config) },
+              colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB), contentColor = Color.White),
+              shape = RoundedCornerShape(12.dp)
+            ) {
+              Text("Try Again", fontWeight = FontWeight.Bold)
             }
           }
         }

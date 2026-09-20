@@ -90,44 +90,62 @@ fun HomeScreen(
   Scaffold(
     modifier = modifier
       .fillMaxSize()
-      .background(StudioDarkBg),
-    containerColor = StudioDarkBg,
+      .background(Color(0xFFF6F9FE)), // 60% white/light base with 30% blue tint and 10% soft green warmth
+    containerColor = Color(0xFFF6F9FE),
     topBar = {
       if (activeHomeTab == HomeTab.PROJECTS) {
-        StudioHeader(
-          title = "AH Video Studio",
-          subtitle = "Professional Mobile Editing Suite",
-          showProBadge = true,
-          onSearchClick = {},
-          onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) }
-        )
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp)
+        ) {
+          StudioHeader(
+            title = "AH Video Studio",
+            subtitle = "Professional Mobile Editing Suite",
+            showProBadge = true,
+            onSearchClick = {},
+            onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) }
+          )
+        }
       }
     },
     bottomBar = {
-      HomeBottomNavigationBar(
-        activeTab = activeHomeTab,
-        onTabSelected = { activeHomeTab = it }
-      )
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(bottom = 12.dp)
+      ) {
+        HomeBottomNavigationBar(
+          activeTab = activeHomeTab,
+          onTabSelected = { activeHomeTab = it }
+        )
+      }
     }
   ) { padding ->
+    val contentPadding = PaddingValues(
+      top = padding.calculateTopPadding() + 18.dp,
+      bottom = padding.calculateBottomPadding(),
+      start = padding.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+      end = padding.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+    )
     when (activeHomeTab) {
       HomeTab.TEMPLATES -> {
         HomeTemplatesTabView(
           viewModel = viewModel,
-          modifier = Modifier.padding(padding)
+          modifier = Modifier.padding(contentPadding)
         )
       }
       HomeTab.MY_ACCOUNT -> {
         HomeAccountTabView(
           viewModel = viewModel,
-          modifier = Modifier.padding(padding)
+          modifier = Modifier.padding(contentPadding)
         )
       }
       HomeTab.PROJECTS -> {
         LazyColumn(
           modifier = Modifier
             .fillMaxSize()
-            .padding(padding)
+            .padding(contentPadding)
             .padding(horizontal = 16.dp),
           verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
