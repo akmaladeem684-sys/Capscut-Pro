@@ -101,7 +101,17 @@ data class AudioEffectsSettings(
   val highGainDb: Float = 0.0f,
   val normalizeVolume: Boolean = false,
   val compressorThresholdDb: Float = 0.0f
-)
+) {
+  fun hasActiveEffects(): Boolean =
+    noiseReductionDb > 0.0f ||
+    voiceEffect != VoiceEffect.NONE ||
+    pitchShiftSemitones != 0.0f ||
+    lowGainDb != 0.0f ||
+    midGainDb != 0.0f ||
+    highGainDb != 0.0f ||
+    normalizeVolume ||
+    compressorThresholdDb != 0.0f
+}
 
 data class ClipKeyframe(
   val id: String = UUID.randomUUID().toString(),

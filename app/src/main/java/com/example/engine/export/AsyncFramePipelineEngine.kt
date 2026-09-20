@@ -191,6 +191,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
     var audioEncoder: MediaCodec? = null
     var encoderInputSurface: Surface? = null
     var muxer: MediaMuxer? = null
+    var muxerCoordinator: MuxerCoordinator? = null
 
     val isMuxStarted = AtomicBoolean(false)
     val videoTrack = AtomicInteger(-1)
@@ -296,10 +297,13 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
       }
 
-      // 5. Initialize MediaMuxer
+      // 5. Initialize MediaMuxer & MuxerCoordinator
       outputFile.parentFile?.mkdirs()
       if (outputFile.exists()) outputFile.delete()
-      muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      val localMuxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      muxer = localMuxer
+      val localCoordinator = MuxerCoordinator(localMuxer, hasAudio)
+      muxerCoordinator = localCoordinator
 
       videoEncoder.start()
 
@@ -311,58 +315,18 @@ class AsyncFramePipelineEngine(private val context: Context) {
           val vInfo = MediaCodec.BufferInfo()
           val aInfo = MediaCodec.BufferInfo()
 
-          fun checkAndStartMuxer() {
-            val vT = videoTrack.get()
-            val aT = audioTrack.get()
-            val ready = vT >= 0 && (!hasAudio || aT >= 0)
-            if (ready && !isMuxStarted.get()) {
-              synchronized(muxer!!) {
-                if (!isMuxStarted.get()) {
-                  muxer!!.start()
-                  isMuxStarted.set(true)
-                  Log.i(tag, "MediaMuxer started successfully (vTrack=$vT, aTrack=$aT)")
-
-                  // Flush all pending queued samples
-                  while (true) {
-                    val sample = pendingSamples.poll() ?: break
-                    val trackIdx = if (sample.isAudio) aT else vT
-                    val buf = ByteBuffer.wrap(sample.data)
-                    val sInfo = MediaCodec.BufferInfo().apply {
-                      set(sample.offset, sample.size, sample.presentationTimeUs, sample.flags)
-                    }
-                    muxer!!.writeSampleData(trackIdx, buf, sInfo)
-                  }
-                }
-              }
-            }
-          }
-
           while (!cancelled.get() && (!videoEos.get() || (hasAudio && !audioEos.get()))) {
             // Drain Video
             if (!videoEos.get()) {
               val vIndex = videoEncoder.dequeueOutputBuffer(vInfo, 2_000L)
               when {
                 vIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                  videoTrack.set(muxer!!.addTrack(videoEncoder.outputFormat))
-                  checkAndStartMuxer()
+                  localCoordinator.setVideoFormat(videoEncoder.outputFormat)
                 }
                 vIndex >= 0 -> {
                   val out = videoEncoder.getOutputBuffer(vIndex)
-                  if (out != null && vInfo.size > 0 && (vInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                    val pts = vInfo.presentationTimeUs.coerceAtLeast(0L)
-                    if (isMuxStarted.get()) {
-                      synchronized(muxer!!) {
-                        muxer!!.writeSampleData(videoTrack.get(), out, vInfo)
-                      }
-                    } else {
-                      val bytes = ByteArray(vInfo.size)
-                      out.position(vInfo.offset)
-                      out.get(bytes)
-                      pendingSamples.offer(
-                        PendingMuxerSample(false, bytes, 0, vInfo.size, pts, vInfo.flags)
-                      )
-                      checkAndStartMuxer()
-                    }
+                  if (out != null && vInfo.size > 0) {
+                    localCoordinator.writeVideoSample(out, vInfo)
                     metrics.encodedFrames.incrementAndGet()
                   }
                   val isEos = (vInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
@@ -377,26 +341,12 @@ class AsyncFramePipelineEngine(private val context: Context) {
               val aIndex = audioEncoder.dequeueOutputBuffer(aInfo, 2_000L)
               when {
                 aIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                  audioTrack.set(muxer!!.addTrack(audioEncoder.outputFormat))
-                  checkAndStartMuxer()
+                  localCoordinator.setAudioFormat(audioEncoder.outputFormat)
                 }
                 aIndex >= 0 -> {
                   val out = audioEncoder.getOutputBuffer(aIndex)
-                  if (out != null && aInfo.size > 0 && (aInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                    val pts = aInfo.presentationTimeUs.coerceAtLeast(0L)
-                    if (isMuxStarted.get()) {
-                      synchronized(muxer!!) {
-                        muxer!!.writeSampleData(audioTrack.get(), out, aInfo)
-                      }
-                    } else {
-                      val bytes = ByteArray(aInfo.size)
-                      out.position(aInfo.offset)
-                      out.get(bytes)
-                      pendingSamples.offer(
-                        PendingMuxerSample(true, bytes, 0, aInfo.size, pts, aInfo.flags)
-                      )
-                      checkAndStartMuxer()
-                    }
+                  if (out != null && aInfo.size > 0) {
+                    localCoordinator.writeAudioSample(out, aInfo)
                   }
                   val isEos = (aInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                   audioEncoder.releaseOutputBuffer(aIndex, false)
@@ -531,14 +481,14 @@ class AsyncFramePipelineEngine(private val context: Context) {
                   val inputBuffer = audioEncoder.getInputBuffer(inputIndex)
                   if (inputBuffer != null) {
                     inputBuffer.clear()
-                    val byteBuf = ByteBuffer.allocate(framesToFeed * audioChannels * 2).order(ByteOrder.LITTLE_ENDIAN)
+                    inputBuffer.order(ByteOrder.nativeOrder())
+                    val samplesToFeed = framesToFeed * audioChannels
                     val startIdx = fedAudioFrames * audioChannels
-                    val endIdx = (fedAudioFrames + framesToFeed) * audioChannels
-                    for (k in startIdx until endIdx) {
-                      if (k < masterPcm.size) byteBuf.putShort(masterPcm[k]) else byteBuf.putShort(0)
+                    for (k in 0 until samplesToFeed) {
+                      val idx = startIdx + k
+                      val sample = if (idx < masterPcm.size) masterPcm[idx] else 0.toShort()
+                      inputBuffer.putShort(sample)
                     }
-                    byteBuf.flip()
-                    inputBuffer.put(byteBuf)
                     val audioPtsUs = (fedAudioFrames.toLong() * 1_000_000L) / audioSampleRate
                     audioEncoder.queueInputBuffer(inputIndex, 0, framesToFeed * audioChannels * 2, audioPtsUs, 0)
                     fedAudioFrames += framesToFeed
@@ -568,6 +518,34 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
 
         if (hasAudio && audioEncoder != null) {
+          // Flush any remaining audio frames before sending EOS
+          var flushAttempts = 0
+          while (fedAudioFrames < totalAudioFrames && !cancelled.get() && flushAttempts < 100) {
+            val framesToFeed = min(1024, totalAudioFrames - fedAudioFrames)
+            if (framesToFeed <= 0) break
+            val inputIndex = audioEncoder.dequeueInputBuffer(10_000L)
+            if (inputIndex >= 0) {
+              val inputBuffer = audioEncoder.getInputBuffer(inputIndex)
+              if (inputBuffer != null) {
+                inputBuffer.clear()
+                inputBuffer.order(ByteOrder.nativeOrder())
+                val samplesToFeed = framesToFeed * audioChannels
+                val startIdx = fedAudioFrames * audioChannels
+                for (k in 0 until samplesToFeed) {
+                  val idx = startIdx + k
+                  val sample = if (idx < masterPcm.size) masterPcm[idx] else 0.toShort()
+                  inputBuffer.putShort(sample)
+                }
+                val audioPtsUs = (fedAudioFrames.toLong() * 1_000_000L) / audioSampleRate
+                audioEncoder.queueInputBuffer(inputIndex, 0, framesToFeed * audioChannels * 2, audioPtsUs, 0)
+                fedAudioFrames += framesToFeed
+              }
+            } else {
+              flushAttempts++
+              Thread.sleep(5)
+            }
+          }
+
           var audioEosSent = false
           var attempts = 0
           while (!audioEosSent && attempts < 50 && !cancelled.get()) {
@@ -617,7 +595,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
       runCatching { encoderInputSurface?.release() }
       runCatching { videoEncoder?.stop() }; runCatching { videoEncoder?.release() }
       runCatching { audioEncoder?.stop() }; runCatching { audioEncoder?.release() }
-      if (isMuxStarted.get()) runCatching { muxer?.stop() }
+      if (muxerCoordinator?.isStarted == true) runCatching { muxer?.stop() }
       runCatching { muxer?.release() }
       glThread.quitSafely()
       decoderThread.quitSafely()

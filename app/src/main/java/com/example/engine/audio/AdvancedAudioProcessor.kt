@@ -11,6 +11,26 @@ import kotlin.math.*
 object AdvancedAudioProcessor {
 
   /**
+   * Processes a 44.1kHz / 48kHz float PCM buffer (-1.0f .. 1.0f) returning a transformed float buffer.
+   */
+  fun processFloatBuffer(
+    pcm: FloatArray,
+    sampleRate: Int = 44100,
+    channels: Int = 2,
+    effects: AudioEffectsSettings
+  ): FloatArray {
+    if (pcm.isEmpty()) return pcm
+    val shortArray = ShortArray(pcm.size) { i ->
+      (pcm[i].coerceIn(-1.0f, 1.0f) * 32767.0f).toInt().toShort()
+    }
+    val processedShorts = processPcmBuffer(shortArray, sampleRate, channels, effects)
+    val result = FloatArray(processedShorts.size) { i ->
+      processedShorts[i] / 32768.0f
+    }
+    return result
+  }
+
+  /**
    * Processes a 44.1kHz 16-bit stereo PCM buffer in-place or returning a transformed buffer.
    */
   fun processPcmBuffer(

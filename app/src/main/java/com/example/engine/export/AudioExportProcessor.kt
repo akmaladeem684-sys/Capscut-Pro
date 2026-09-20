@@ -37,7 +37,8 @@ data class AudioTrackDescriptor(
   val fadeOutMs: Long,
   val isMuted: Boolean,
   val isReversed: Boolean = false,
-  val keyframes: List<com.example.domain.model.ClipKeyframe> = emptyList()
+  val keyframes: List<com.example.domain.model.ClipKeyframe> = emptyList(),
+  val audioEffects: com.example.domain.model.AudioEffectsSettings = com.example.domain.model.AudioEffectsSettings()
 )
 
 class AudioExportProcessor(private val context: Context) {
@@ -102,7 +103,8 @@ class AudioExportProcessor(private val context: Context) {
               fadeOutMs = 0L,
               isMuted = clip.isMuted,
               isReversed = clip.isReversed,
-              keyframes = clip.keyframes
+              keyframes = clip.keyframes,
+              audioEffects = clip.audioEffects
             )
           )
         }
@@ -128,7 +130,8 @@ class AudioExportProcessor(private val context: Context) {
               fadeOutMs = 0L,
               isMuted = clip.isMuted,
               isReversed = clip.isReversed,
-              keyframes = clip.keyframes
+              keyframes = clip.keyframes,
+              audioEffects = clip.audioEffects
             )
           )
         }
@@ -153,7 +156,9 @@ class AudioExportProcessor(private val context: Context) {
               fadeInMs = clip.fadeInMs.coerceAtLeast(0L),
               fadeOutMs = clip.fadeOutMs.coerceAtLeast(0L),
               isMuted = clip.isMuted,
-              keyframes = clip.keyframes
+              isReversed = clip.isReversed,
+              keyframes = clip.keyframes,
+              audioEffects = clip.audioEffects
             )
           )
         }
@@ -185,10 +190,19 @@ class AudioExportProcessor(private val context: Context) {
     masterRight: FloatArray,
     totalTimelineFrames: Int
   ) {
-    val srcSamples = decoded.samples
+    var srcSamples = decoded.samples
     val srcSampleRate = decoded.sampleRate
     val srcChannels = decoded.channels
     if (srcSamples.isEmpty() || srcSampleRate <= 0) return
+
+    if (track.audioEffects.hasActiveEffects()) {
+      srcSamples = com.example.engine.audio.AdvancedAudioProcessor.processPcmBuffer(
+        pcm = srcSamples,
+        sampleRate = srcSampleRate,
+        channels = srcChannels,
+        effects = track.audioEffects
+      )
+    }
 
     val srcTotalFrames = srcSamples.size / srcChannels
     val timelineStartFrame = ((track.timelineStartMs * sampleRate) / 1000L).toInt()
@@ -214,9 +228,18 @@ class AudioExportProcessor(private val context: Context) {
       // Calculate time position within the clip in milliseconds
       val timeInClipMs = (f.toDouble() / sampleRate) * 1000.0
 
-      // Calculate source time based on speed and trim
-      val sourceTimeSec = sourceStartSec + ((timeInClipMs / 1000.0) * speed)
-      if (sourceTimeSec > sourceEndSec) break // Reached trimmed end
+      // Calculate source time based on speed, trim, and reversal
+      val sourceTimeSec = if (track.isReversed) {
+        sourceEndSec - ((timeInClipMs / 1000.0) * speed)
+      } else {
+        sourceStartSec + ((timeInClipMs / 1000.0) * speed)
+      }
+
+      if (sourceTimeSec < sourceStartSec || sourceTimeSec > sourceEndSec) {
+        if (!track.isReversed && sourceTimeSec > sourceEndSec) break
+        if (track.isReversed && sourceTimeSec < sourceStartSec) break
+        continue
+      }
 
       // Sub-sample source frame calculation
       val srcFramePosition = sourceTimeSec * srcSampleRate
@@ -238,10 +261,10 @@ class AudioExportProcessor(private val context: Context) {
         rawLeft = interp
         rawRight = interp
       } else {
-        val s0L = srcSamples[f0 * 2].toFloat()
-        val s1L = srcSamples[f1 * 2].toFloat()
-        val s0R = srcSamples[f0 * 2 + 1].toFloat()
-        val s1R = srcSamples[f1 * 2 + 1].toFloat()
+        val s0L = srcSamples[f0 * srcChannels].toFloat()
+        val s1L = srcSamples[f1 * srcChannels].toFloat()
+        val s0R = srcSamples[f0 * srcChannels + 1].toFloat()
+        val s1R = srcSamples[f1 * srcChannels + 1].toFloat()
         rawLeft = (1f - alpha) * s0L + alpha * s1L
         rawRight = (1f - alpha) * s0R + alpha * s1R
       }
