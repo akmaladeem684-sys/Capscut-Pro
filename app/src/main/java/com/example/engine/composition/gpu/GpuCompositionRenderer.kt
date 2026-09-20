@@ -13,6 +13,7 @@ import com.example.engine.composition.ComposedOverlay
 import com.example.engine.composition.ComposedSticker
 import com.example.engine.composition.ComposedText
 import com.example.engine.composition.StickerLayerRenderer
+import com.example.engine.composition.VideoEffectRenderer
 import com.example.engine.text.TextLayerRenderer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -65,7 +66,7 @@ class GpuCompositionRenderer(private val context: Context) {
   private val fboB = GlFramebuffer()
 
   // Cached Text & Sticker textures with frame-access tracking
-  private data class CachedTexture(
+  internal data class CachedTexture(
     val texId: Int,
     val width: Int,
     val height: Int,
@@ -76,6 +77,7 @@ class GpuCompositionRenderer(private val context: Context) {
   private val textTextureCache = mutableMapOf<String, CachedTexture>()
   private val stickerTextureCache = mutableMapOf<String, CachedTexture>()
   private val imageTextureCache = mutableMapOf<String, CachedTexture>()
+  private val proceduralEffectCache = mutableMapOf<String, CachedTexture>()
 
   private var currentFrameCounter = 0L
 
@@ -212,6 +214,30 @@ class GpuCompositionRenderer(private val context: Context) {
           )
           nativeLayers.add(overlayLayer)
         }
+      }
+    }
+
+    // 2.5. Process Procedural Visual Effects Overlay (Canvas drawing, Particles, Wings, Confetti, Sparks, Grids)
+    if (frame.activeEffects.isNotEmpty()) {
+      val fxCached = getOrCreateProceduralEffectTexture(frame, viewportWidth, viewportHeight)
+      if (fxCached != null && fxCached.texId > 0) {
+        fxCached.lastFrameUsed = currentFrameCounter
+        val fxMatrix = FloatArray(16)
+        Matrix.setIdentityM(fxMatrix, 0)
+        val fxLayer = NativeLayer(
+          id = 99998888L,
+          textureId = fxCached.texId,
+          type = NativeLayerType.VIDEO,
+          isVisible = true,
+          zOrder = 450,
+          opacity = 1.0f,
+          vScale = -1.0f,
+          vOffset = 1.0f,
+          blendMode = NativeBlendMode.PREMULTIPLIED,
+          useCustomMatrix = true,
+          transformMatrix = fxMatrix
+        )
+        nativeLayers.add(fxLayer)
       }
     }
 
@@ -528,6 +554,14 @@ class GpuCompositionRenderer(private val context: Context) {
       )
     }
 
+    if (frame.activeEffects.isNotEmpty()) {
+      val motion = VideoEffectRenderer.calculateMotionTransform(frame.activeEffects.map { it.clip }, frame.timelinePosMs)
+      Matrix.scaleM(mvpMatrix, 0, motion.scaleX, motion.scaleY, 1f)
+      Matrix.rotateM(mvpMatrix, 0, -motion.rotation, 0f, 0f, 1f)
+      Matrix.translateM(mvpMatrix, 0, motion.translationX * 2f, -motion.translationY * 2f, 0f)
+      finalOpacity *= motion.alpha
+    }
+
     if (customTexMatrix != null) {
       System.arraycopy(customTexMatrix, 0, texMatrix, 0, 16)
     } else {
@@ -731,6 +765,47 @@ class GpuCompositionRenderer(private val context: Context) {
     return texId
   }
 
+  internal fun getOrCreateProceduralEffectTexture(
+    frame: ComposedFrame,
+    viewportWidth: Int,
+    viewportHeight: Int
+  ): CachedTexture? {
+    if (frame.activeEffects.isEmpty() || viewportWidth <= 0 || viewportHeight <= 0) return null
+
+    val timeStep = (frame.timelinePosMs / 33L).toInt()
+    var hash = timeStep xor viewportWidth xor (viewportHeight shl 16)
+    for (eff in frame.activeEffects) {
+      hash = hash xor eff.clip.id.hashCode() xor eff.effectType.hashCode() xor (eff.intensity * 1000f).toInt()
+    }
+
+    val key = "procedural_overlay_fx"
+    val cached = proceduralEffectCache[key]
+    if (cached != null && cached.hash == hash && cached.width == viewportWidth && cached.height == viewportHeight) {
+      cached.lastFrameUsed = currentFrameCounter
+      return cached
+    }
+
+    val bitmap = Bitmap.createBitmap(viewportWidth, viewportHeight, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    VideoEffectRenderer.renderEffectsOnCanvas(
+      canvas = canvas,
+      activeEffects = frame.activeEffects.map { it.clip },
+      currentPosMs = frame.timelinePosMs,
+      width = viewportWidth,
+      height = viewportHeight
+    )
+
+    val oldTexId = cached?.texId ?: 0
+    val texId = GlShaderUtil.uploadBitmapToTexture(bitmap, oldTexId)
+    bitmap.recycle()
+
+    if (texId == 0) return null
+    val entry = CachedTexture(texId, viewportWidth, viewportHeight, hash, currentFrameCounter)
+    proceduralEffectCache[key] = entry
+    return entry
+  }
+
   private fun cleanStaleTextureCaches() {
     val textToDel = textTextureCache.filter { currentFrameCounter - it.value.lastFrameUsed > MAX_UNTOUCHED_CACHE_FRAMES }
     for ((id, tex) in textToDel) {
@@ -746,6 +821,14 @@ class GpuCompositionRenderer(private val context: Context) {
         GLES20.glDeleteTextures(1, intArrayOf(tex.texId), 0)
       }
       stickerTextureCache.remove(id)
+    }
+
+    val fxToDel = proceduralEffectCache.filter { currentFrameCounter - it.value.lastFrameUsed > MAX_UNTOUCHED_CACHE_FRAMES }
+    for ((id, tex) in fxToDel) {
+      if (tex.texId > 0) {
+        GLES20.glDeleteTextures(1, intArrayOf(tex.texId), 0)
+      }
+      proceduralEffectCache.remove(id)
     }
   }
 
@@ -903,6 +986,7 @@ class GpuCompositionRenderer(private val context: Context) {
     textTextureCache.clear()
     stickerTextureCache.clear()
     imageTextureCache.clear()
+    proceduralEffectCache.clear()
     fboOverlayMap.clear()
     NativeRenderBridge.onContextLost()
   }
@@ -921,6 +1005,7 @@ class GpuCompositionRenderer(private val context: Context) {
     for (t in textTextureCache.values) texturesToDelete.add(t.texId)
     for (s in stickerTextureCache.values) texturesToDelete.add(s.texId)
     for (i in imageTextureCache.values) texturesToDelete.add(i.texId)
+    for (fx in proceduralEffectCache.values) texturesToDelete.add(fx.texId)
 
     if (texturesToDelete.isNotEmpty()) {
       GLES20.glDeleteTextures(texturesToDelete.size, texturesToDelete.toIntArray(), 0)
@@ -928,6 +1013,7 @@ class GpuCompositionRenderer(private val context: Context) {
     textTextureCache.clear()
     stickerTextureCache.clear()
     imageTextureCache.clear()
+    proceduralEffectCache.clear()
 
     if (program2D != 0) {
       GLES20.glDeleteProgram(program2D)
@@ -969,32 +1055,70 @@ class GpuCompositionRenderer(private val context: Context) {
     val uTexelSizeHandle = GLES20.glGetUniformLocation(programEffect, "uTexelSize")
 
     val glEffectType = when (effectType) {
-      EffectType.BLUR -> GpuShaders.EFFECT_BLUR
-      EffectType.GLOW -> GpuShaders.EFFECT_GLOW
-      EffectType.MOTION_BLUR -> GpuShaders.EFFECT_MOTION_BLUR
-      EffectType.SHAKE -> GpuShaders.EFFECT_SHAKE
-      EffectType.ZOOM -> GpuShaders.EFFECT_ZOOM
-      EffectType.SPIN -> GpuShaders.EFFECT_SPIN
-      EffectType.FLASH -> GpuShaders.EFFECT_FLASH
-      EffectType.GLITCH -> GpuShaders.EFFECT_GLITCH
-      EffectType.RGB_SPLIT -> GpuShaders.EFFECT_RGB_SPLIT
-      EffectType.DISTORTION, EffectType.WAVE, EffectType.RIPPLE,
-      EffectType.VFX_GLITCH_4, EffectType.VFX_GLITCH_5, EffectType.VFX_GLITCH_15,
-      EffectType.VFX_VIRAL_8 -> GpuShaders.EFFECT_DISTORTION
-      EffectType.LENS_FLARE, EffectType.VFX_LIGHT_2 -> GpuShaders.EFFECT_LENS_FLARE
-      EffectType.LIGHT_LEAK, EffectType.VFX_LIGHT_1, EffectType.VFX_LIGHT_3,
-      EffectType.VFX_LIGHT_5, EffectType.VFX_VIRAL_24 -> GpuShaders.EFFECT_LIGHT_LEAK
-      EffectType.VFX_VIRAL_5, EffectType.VFX_VIRAL_29 -> GpuShaders.EFFECT_RGB_SPLIT
-      EffectType.VFX_VIRAL_6, EffectType.VFX_VIRAL_15, EffectType.VFX_GLITCH_14 -> GpuShaders.EFFECT_SHAKE
-      EffectType.VFX_VIRAL_11, EffectType.VFX_VIRAL_36 -> GpuShaders.EFFECT_FLASH
-      EffectType.VFX_VIRAL_14, EffectType.VFX_BLUR_2, EffectType.VFX_BLUR_5 -> GpuShaders.EFFECT_MOTION_BLUR
-      EffectType.VFX_VIRAL_16, EffectType.VFX_VIRAL_17, EffectType.VFX_VIRAL_35 -> GpuShaders.EFFECT_ZOOM
-      EffectType.VFX_VIRAL_21, EffectType.VFX_VIRAL_22, EffectType.VFX_LIGHT_7,
-      EffectType.VFX_LIGHT_14, EffectType.VFX_LIGHT_19 -> GpuShaders.EFFECT_GLOW
+      // Blur & Soft Focus
+      EffectType.BLUR, EffectType.SOFT_FOCUS, EffectType.SHARPEN,
       EffectType.VFX_BLUR_1, EffectType.VFX_BLUR_3, EffectType.VFX_BLUR_8,
-      EffectType.VFX_BLUR_9, EffectType.VFX_BLUR_11, EffectType.VFX_BLUR_12,
-      EffectType.VFX_BLUR_13, EffectType.VFX_BLUR_15 -> GpuShaders.EFFECT_BLUR
-      else -> GpuShaders.EFFECT_BLUR
+      EffectType.VFX_BLUR_9, EffectType.VFX_BLUR_10, EffectType.VFX_BLUR_11,
+      EffectType.VFX_BLUR_12, EffectType.VFX_BLUR_13, EffectType.VFX_BLUR_15 -> GpuShaders.EFFECT_BLUR
+
+      // Motion Blur
+      EffectType.MOTION_BLUR, EffectType.VFX_VIRAL_1, EffectType.VFX_VIRAL_14,
+      EffectType.VFX_BLUR_2, EffectType.VFX_BLUR_4, EffectType.VFX_BLUR_5,
+      EffectType.VFX_BLUR_6, EffectType.VFX_BLUR_7, EffectType.VFX_BLUR_14 -> GpuShaders.EFFECT_MOTION_BLUR
+
+      // Glow, Aura, Halo
+      EffectType.GLOW, EffectType.HALO_GLOW, EffectType.BODY_AURA, EffectType.FIRE_AURA,
+      EffectType.LIGHTNING_BODY, EffectType.MUSCLE_GLOW, EffectType.DARK_SHADOW_AURA,
+      EffectType.VFX_LIGHT_4, EffectType.VFX_LIGHT_7, EffectType.VFX_LIGHT_14,
+      EffectType.VFX_LIGHT_18, EffectType.VFX_LIGHT_19, EffectType.VFX_VIRAL_21,
+      EffectType.VFX_VIRAL_22 -> GpuShaders.EFFECT_GLOW
+
+      // Shake & Camera Shake
+      EffectType.SHAKE, EffectType.CAMERA_MOVEMENT, EffectType.PARTY_CONFUSED,
+      EffectType.VFX_VIRAL_6, EffectType.VFX_VIRAL_15, EffectType.VFX_GLITCH_14,
+      EffectType.VFX_GLITCH_16, EffectType.VFX_GLITCH_19 -> GpuShaders.EFFECT_SHAKE
+
+      // Zoom & Pulse
+      EffectType.ZOOM, EffectType.SKATER_ZOOM, EffectType.VERTIGO_DOLLY, EffectType.WARP_SPEED,
+      EffectType.VFX_VIRAL_12, EffectType.VFX_VIRAL_16, EffectType.VFX_VIRAL_17,
+      EffectType.VFX_VIRAL_35, EffectType.VFX_3D_9 -> GpuShaders.EFFECT_ZOOM
+
+      // Spin
+      EffectType.SPIN, EffectType.VFX_VIRAL_20, EffectType.VFX_3D_8, EffectType.VFX_3D_15 -> GpuShaders.EFFECT_SPIN
+
+      // Flash & Strobe
+      EffectType.FLASH, EffectType.STROBE, EffectType.VFX_VIRAL_11, EffectType.VFX_VIRAL_36,
+      EffectType.VFX_LIGHT_16, EffectType.VFX_VIRAL_23 -> GpuShaders.EFFECT_FLASH
+
+      // Glitch, CRT, VHS
+      EffectType.GLITCH, EffectType.CRT_TV, EffectType.VHS_VINTAGE, EffectType.AI_GLITCH_REALITY,
+      EffectType.VFX_GLITCH_1, EffectType.VFX_GLITCH_2, EffectType.VFX_GLITCH_3,
+      EffectType.VFX_GLITCH_6, EffectType.VFX_GLITCH_7, EffectType.VFX_GLITCH_8,
+      EffectType.VFX_GLITCH_9, EffectType.VFX_GLITCH_10, EffectType.VFX_GLITCH_11,
+      EffectType.VFX_GLITCH_13, EffectType.VFX_GLITCH_17, EffectType.VFX_GLITCH_18,
+      EffectType.VFX_GLITCH_20, EffectType.VFX_RETRO_1, EffectType.VFX_RETRO_10,
+      EffectType.VFX_VIRAL_4, EffectType.VFX_VIRAL_30, EffectType.VFX_VIRAL_31 -> GpuShaders.EFFECT_GLITCH
+
+      // RGB Split
+      EffectType.RGB_SPLIT, EffectType.VFX_VIRAL_5, EffectType.VFX_VIRAL_29,
+      EffectType.VFX_GLITCH_12 -> GpuShaders.EFFECT_RGB_SPLIT
+
+      // Distortion, Wave, Ripple, Fisheye
+      EffectType.DISTORTION, EffectType.WAVE, EffectType.RIPPLE, EffectType.FISHEYE,
+      EffectType.ACID_TRIP, EffectType.FUNNY_ALIEN_WARP, EffectType.VFX_GLITCH_4,
+      EffectType.VFX_GLITCH_5, EffectType.VFX_GLITCH_15, EffectType.VFX_VIRAL_8,
+      EffectType.VFX_VIRAL_9, EffectType.VFX_3D_2 -> GpuShaders.EFFECT_DISTORTION
+
+      // Lens Flare
+      EffectType.LENS_FLARE, EffectType.SOLAR_FLARE, EffectType.VFX_LIGHT_2 -> GpuShaders.EFFECT_LENS_FLARE
+
+      // Light Leak, Golden Hour, Bokeh, Prism
+      EffectType.LIGHT_LEAK, EffectType.GOLDEN_HOUR, EffectType.BOKEH, EffectType.PARTY_PRISM,
+      EffectType.VFX_LIGHT_1, EffectType.VFX_LIGHT_3, EffectType.VFX_LIGHT_5,
+      EffectType.VFX_LIGHT_10, EffectType.VFX_LIGHT_17, EffectType.VFX_RETRO_7,
+      EffectType.VFX_VIRAL_24 -> GpuShaders.EFFECT_LIGHT_LEAK
+
+      else -> GpuShaders.EFFECT_GLOW
     }
 
     if (uEffectTypeHandle >= 0) GLES20.glUniform1i(uEffectTypeHandle, glEffectType)
