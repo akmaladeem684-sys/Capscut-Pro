@@ -152,7 +152,7 @@ class Media3EffectPipelineTest {
   fun testMedia3EffectPipeline_buildClipEffects() {
     val clip = VideoClip(
       name = "Clip1",
-      filter = FilterSettings(type = FilterType.BLACK_WHITE, intensity = 1.0f)
+      filter = FilterSettings(type = FilterType.BLACK_AND_WHITE, intensity = 1.0f)
     )
     val timeline = Timeline()
 

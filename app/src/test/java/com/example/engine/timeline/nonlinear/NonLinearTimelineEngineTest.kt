@@ -362,7 +362,7 @@ class NonLinearTimelineEngineTest {
     )
 
     val timelineEngine = com.example.engine.TimelineEngine()
-    timelineEngine.setTimeline(domainTimeline)
+    timelineEngine.loadTimeline(domainTimeline)
 
     var seekReportedMs: Long? = null
     // Dispatch Seek Playhead action
