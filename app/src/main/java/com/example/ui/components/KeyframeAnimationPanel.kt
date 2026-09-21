@@ -151,6 +151,10 @@ fun KeyframeAnimationPanel(
             is SelectedTrackElement.Overlay -> "PIP Overlay Clip"
             is SelectedTrackElement.Audio -> "Audio Track"
             is SelectedTrackElement.Effect -> "Visual Effect Clip"
+            is SelectedTrackElement.Text -> {
+              val clip = timeline.textClips.find { it.id == currentElem.clipId }
+              "Text: ${clip?.text ?: "Title"}"
+            }
             is SelectedTrackElement.Sticker -> {
               val clip = timeline.stickerClips.find { it.id == currentElem.clipId }
               if (clip?.elementId != null) "Element: ${clip.emojiOrAsset.ifBlank { clip.elementCategory ?: "Shape" }}"
@@ -438,12 +442,69 @@ fun KeyframeAnimationPanel(
           val clip = timeline.stickerClips.find { it.id == currentElem.clipId }
           (currentPosMs - (clip?.timelineStartMs ?: 0L)).coerceIn(0L, clip?.durationMs ?: 1000L)
         }
+        is SelectedTrackElement.Text -> {
+          val clip = timeline.textClips.find { it.id == currentElem.clipId }
+          (currentPosMs - (clip?.timelineStartMs ?: 0L)).coerceIn(0L, clip?.durationMs ?: 1000L)
+        }
+        is SelectedTrackElement.Audio -> {
+          val clip = timeline.audioClips.find { it.id == currentElem.clipId }
+          (currentPosMs - (clip?.timelineStartMs ?: 0L)).coerceIn(0L, clip?.durationMs ?: 1000L)
+        }
+        is SelectedTrackElement.Effect -> {
+          val clip = timeline.effectClips.find { it.id == currentElem.clipId }
+          (currentPosMs - (clip?.timelineStartMs ?: 0L)).coerceIn(0L, clip?.durationMs ?: 1000L)
+        }
         else -> 0L
       }
 
       val defaultKf = when (currentElem) {
         is SelectedTrackElement.Sticker -> {
           val clip = timeline.stickerClips.find { it.id == currentElem.clipId }
+          if (clip != null) {
+            val interp = com.example.engine.KeyframeInterpolator.interpolate(clip, currentRelTime)
+            ClipKeyframe(
+              timeMs = currentRelTime,
+              posX = interp.posX,
+              posY = interp.posY,
+              scaleX = interp.scaleX,
+              scaleY = interp.scaleY,
+              rotation = interp.rotation,
+              opacity = interp.opacity
+            )
+          } else ClipKeyframe(timeMs = currentRelTime)
+        }
+        is SelectedTrackElement.Text -> {
+          val clip = timeline.textClips.find { it.id == currentElem.clipId }
+          if (clip != null) {
+            val interp = com.example.engine.KeyframeInterpolator.interpolate(clip, currentRelTime)
+            ClipKeyframe(
+              timeMs = currentRelTime,
+              posX = interp.posX,
+              posY = interp.posY,
+              scaleX = interp.scaleX,
+              scaleY = interp.scaleY,
+              rotation = interp.rotation,
+              opacity = interp.opacity
+            )
+          } else ClipKeyframe(timeMs = currentRelTime)
+        }
+        is SelectedTrackElement.Video -> {
+          val clip = timeline.videoClips.find { it.id == currentElem.clipId }
+          if (clip != null) {
+            val interp = com.example.engine.KeyframeInterpolator.interpolate(clip, currentRelTime)
+            ClipKeyframe(
+              timeMs = currentRelTime,
+              posX = interp.posX,
+              posY = interp.posY,
+              scaleX = interp.scaleX,
+              scaleY = interp.scaleY,
+              rotation = interp.rotation,
+              opacity = interp.opacity
+            )
+          } else ClipKeyframe(timeMs = currentRelTime)
+        }
+        is SelectedTrackElement.Overlay -> {
+          val clip = timeline.overlayClips.find { it.id == currentElem.clipId }
           if (clip != null) {
             val interp = com.example.engine.KeyframeInterpolator.interpolate(clip, currentRelTime)
             ClipKeyframe(

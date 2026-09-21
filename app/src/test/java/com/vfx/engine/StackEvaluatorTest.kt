@@ -1,17 +1,24 @@
 package com.vfx.engine
 
 import com.vfx.engine.core.Microseconds
+import com.vfx.engine.core.effect.EffectCategory
+import com.vfx.engine.core.effect.EffectDefinition
 import com.vfx.engine.core.effect.EffectInstance
-import com.vfx.engine.core.keyframe.Keyframe
-import com.vfx.engine.core.registry.EffectRegistry
 import com.vfx.engine.core.stack.EffectStack
 import com.vfx.engine.core.stack.StackEvaluator
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StackEvaluatorTest {
+
+    private fun createDef(id: String, name: String = id): EffectDefinition {
+        return EffectDefinition(
+            id = id,
+            name = name,
+            category = EffectCategory.COLOR
+        )
+    }
 
     @Test
     fun `empty stack evaluates to empty snapshots`() {
@@ -22,12 +29,11 @@ class StackEvaluatorTest {
 
     @Test
     fun `disabled effect instances are excluded from evaluation`() {
-        val registry = EffectRegistry()
-        val stack = EffectStack(registry)
+        val stack = EffectStack()
 
-        val e1 = EffectInstance("vfx.color.brightness", "inst1")
+        val e1 = EffectInstance(createDef("vfx.color.brightness"))
         e1.enabled = true
-        val e2 = EffectInstance("vfx.blur.kawase", "inst2")
+        val e2 = EffectInstance(createDef("vfx.blur.kawase"))
         e2.enabled = false
 
         stack.addInstance(e1)
@@ -35,15 +41,15 @@ class StackEvaluatorTest {
 
         val snapshots = StackEvaluator.evaluateStackAtTime(stack, Microseconds(100_000L))
         assertEquals(1, snapshots.size)
-        assertEquals("vfx.color.brightness", snapshots[0].effectId)
+        assertEquals("vfx.color.brightness", snapshots[0].first.id)
     }
 
     @Test
     fun `stack evaluation preserves authoring order`() {
         val stack = EffectStack()
-        val e1 = EffectInstance("vfx.color.contrast", "inst1")
-        val e2 = EffectInstance("vfx.light.bloom", "inst2")
-        val e3 = EffectInstance("vfx.light.vignette", "inst3")
+        val e1 = EffectInstance(createDef("vfx.color.contrast"))
+        val e2 = EffectInstance(createDef("vfx.light.bloom"))
+        val e3 = EffectInstance(createDef("vfx.light.vignette"))
 
         stack.addInstance(e1)
         stack.addInstance(e2)
@@ -51,8 +57,9 @@ class StackEvaluatorTest {
 
         val snapshots = StackEvaluator.evaluateStackAtTime(stack, Microseconds(500_000L))
         assertEquals(3, snapshots.size)
-        assertEquals("vfx.color.contrast", snapshots[0].effectId)
-        assertEquals("vfx.light.bloom", snapshots[1].effectId)
-        assertEquals("vfx.light.vignette", snapshots[2].effectId)
+        assertEquals("vfx.color.contrast", snapshots[0].first.id)
+        assertEquals("vfx.light.bloom", snapshots[1].first.id)
+        assertEquals("vfx.light.vignette", snapshots[2].first.id)
     }
 }
+

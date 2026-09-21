@@ -4065,6 +4065,10 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         val clip = _timeline.value.stickerClips.find { it.id == selected.clipId }
         clip?.let { it.id to it.keyframes }
       }
+      is SelectedTrackElement.Text -> {
+        val clip = _timeline.value.textClips.find { it.id == selected.clipId }
+        clip?.let { it.id to it.keyframes }
+      }
       else -> null
     }
   }
@@ -4090,6 +4094,10 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
       }
       is SelectedTrackElement.Sticker -> {
         val c = _timeline.value.stickerClips.find { it.id == selected.clipId } ?: return null
+        c.timelineStartMs to c.keyframes
+      }
+      is SelectedTrackElement.Text -> {
+        val c = _timeline.value.textClips.find { it.id == selected.clipId } ?: return null
         c.timelineStartMs to c.keyframes
       }
       else -> return null
@@ -4224,6 +4232,30 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         _timeline.value = _timeline.value.copy(stickerClips = list)
         newlyAddedId?.let { selectKeyframe(it) }
       }
+      is SelectedTrackElement.Text -> {
+        recordHistory()
+        var newlyAddedId: String? = null
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val relTime = (_currentPositionMs.value - clip.timelineStartMs).coerceIn(0L, clip.durationMs)
+            val existing = clip.keyframes.filterNot { kotlin.math.abs(it.timeMs - relTime) < 50L }
+            val interp = KeyframeInterpolator.interpolate(clip, relTime)
+            val newKf = customKeyframe?.copy(timeMs = relTime) ?: ClipKeyframe(
+              timeMs = relTime,
+              posX = interp.posX,
+              posY = interp.posY,
+              scaleX = interp.scaleX,
+              scaleY = interp.scaleY,
+              rotation = interp.rotation,
+              opacity = interp.opacity
+            )
+            newlyAddedId = newKf.id
+            clip.copy(keyframes = (existing + newKf).sortedBy { it.timeMs })
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
+        newlyAddedId?.let { selectKeyframe(it) }
+      }
       else -> {}
     }
   }
@@ -4304,6 +4336,20 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
       }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val updated = if (selectedIds.isNotEmpty()) {
+              clip.keyframes.filterNot { it.id in selectedIds }
+            } else {
+              val relTime = _currentPositionMs.value - clip.timelineStartMs
+              clip.keyframes.filterNot { kotlin.math.abs(it.timeMs - relTime) < 200L }
+            }
+            clip.copy(keyframes = updated)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
+      }
       else -> {}
     }
     clearKeyframeSelection()
@@ -4381,6 +4427,18 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
       }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val clampedTime = newTimeMs.coerceIn(0L, clip.durationMs)
+            val updated = clip.keyframes.map { kf ->
+              if (kf.id == keyframeId) kf.copy(timeMs = clampedTime) else kf
+            }.sortedBy { it.timeMs }
+            clip.copy(keyframes = updated)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
+      }
       else -> {}
     }
   }
@@ -4456,6 +4514,19 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
       }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val updated = clip.keyframes.map { kf ->
+              if (kf.id in selectedIds) {
+                kf.copy(timeMs = (kf.timeMs + deltaMs).coerceIn(0L, clip.durationMs))
+              } else kf
+            }.sortedBy { it.timeMs }
+            clip.copy(keyframes = updated)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
+      }
       else -> {}
     }
   }
@@ -4517,6 +4588,17 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
           } else clip
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
+      }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val updated = clip.keyframes.map { kf ->
+              if (kf.id == keyframeId) transform(kf) else kf
+            }
+            clip.copy(keyframes = updated)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
       }
       else -> {}
     }
@@ -4735,6 +4817,12 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
       }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) clip.copy(keyframes = emptyList()) else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
+      }
       else -> {}
     }
     clearKeyframeSelection()
@@ -4839,6 +4927,34 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
           } else clip
         }
         _timeline.value = _timeline.value.copy(stickerClips = list)
+      }
+      is SelectedTrackElement.Text -> {
+        val list = _timeline.value.textClips.map { clip ->
+          if (clip.id == selected.clipId) {
+            val kfStart = ClipKeyframe(
+              timeMs = 0L,
+              scaleX = scaleStart,
+              scaleY = scaleStart,
+              posX = posXStart,
+              posY = posYStart,
+              rotation = rotationStart,
+              opacity = opacityStart,
+              interpolation = interpolation
+            )
+            val kfEnd = ClipKeyframe(
+              timeMs = clip.durationMs,
+              scaleX = scaleEnd,
+              scaleY = scaleEnd,
+              posX = posXEnd,
+              posY = posYEnd,
+              rotation = rotationEnd,
+              opacity = opacityEnd,
+              interpolation = interpolation
+            )
+            clip.copy(keyframes = listOf(kfStart, kfEnd))
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = list)
       }
       else -> {}
     }
@@ -5928,6 +6044,16 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
           } else clip
         }
         _timeline.value = _timeline.value.copy(effectClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Text -> {
+        val updated = _timeline.value.textClips.map { clip ->
+          if (clip.id == clipId) {
+            val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
+            clip.copy(keyframes = kfs)
+          } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = updated)
         return true
       }
       else -> return false

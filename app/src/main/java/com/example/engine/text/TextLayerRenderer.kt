@@ -42,6 +42,16 @@ data class EvaluatedTextState(
   val words: List<WordTiming> = emptyList()
 )
 
+data class RenderedTextBounds(
+  val widthPx: Float,
+  val heightPx: Float,
+  val centerXPx: Float,
+  val centerYPx: Float,
+  val rotation: Float,
+  val scale: Float,
+  val opacity: Float
+)
+
 object TextLayerRenderer {
 
   fun evaluateAnimation(clip: TextClip, currentPosMs: Long): EvaluatedTextState {
@@ -746,5 +756,126 @@ object TextLayerRenderer {
     val canvas = Canvas(bitmap)
     draw(canvas, clip, currentPosMs, width, height, context)
     return bitmap
+  }
+
+  fun measureTextBounds(
+    clip: TextClip,
+    currentPosMs: Long,
+    width: Int,
+    height: Int,
+    context: Context
+  ): RenderedTextBounds {
+    if (width <= 0 || height <= 0) {
+      return RenderedTextBounds(
+        widthPx = 120f,
+        heightPx = 48f,
+        centerXPx = width / 2f,
+        centerYPx = height / 2f,
+        rotation = clip.rotation,
+        scale = clip.scale,
+        opacity = clip.opacity
+      )
+    }
+
+    val state = evaluateAnimation(clip, currentPosMs)
+    var rawText = if (clip.isAllCaps) state.visibleText.uppercase() else state.visibleText
+    if (rawText.isEmpty()) rawText = " "
+
+    val containsUrdu = rawText.any {
+      it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' ||
+          it in '\u08A0'..'\u08FF' || it in '\uFB50'..'\uFDFF' || it in '\uFE70'..'\uFEFF'
+    }
+
+    val containsHindi = rawText.any {
+      it in '\u0900'..'\u097F' || it in '\uA8E0'..'\uA8FF'
+    }
+
+    val containsChinese = rawText.any {
+      it in '\u4E00'..'\u9FFF' || it in '\u3400'..'\u4DBF' ||
+          it in '\u3000'..'\u303F' || it in '\uF900'..'\uFAFF'
+    }
+
+    if (containsHindi || containsUrdu) {
+      rawText = Normalizer.normalize(rawText, Normalizer.Form.NFC)
+    }
+
+    val scaleFactor = width.toFloat() / 360f
+    val baseFontSize = clip.fontSizeSp * scaleFactor * state.scale
+
+    val typeface = FontManager.loadTypeface(
+      context = context,
+      fontFamily = clip.fontFamily,
+      customFontPath = clip.customFontPath,
+      fontWeight = if (clip.subtitleStyle.equals("Bold", true)) 900 else clip.fontWeight,
+      isItalic = clip.isItalic
+    )
+
+    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+      this.typeface = typeface
+      this.textSize = baseFontSize
+      this.letterSpacing = if (containsUrdu) 0f else clip.letterSpacing / 10f
+      this.isUnderlineText = clip.isUnderline
+    }
+
+    val layoutAlignment = when (clip.alignment.lowercase()) {
+      "left" -> if (containsUrdu) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+      "right" -> if (containsUrdu) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
+      else -> Layout.Alignment.ALIGN_CENTER
+    }
+
+    val effectiveLineSpacing = when {
+      containsUrdu -> maxOf(clip.lineSpacing, 1.35f)
+      containsHindi -> maxOf(clip.lineSpacing, 1.25f)
+      else -> clip.lineSpacing
+    }
+
+    val lines = rawText.split("\n")
+    var maxLineWidth = 0f
+    lines.forEach { line ->
+      val w = paint.measureText(line)
+      if (w > maxLineWidth) maxLineWidth = w
+    }
+    val layoutWidth = max(maxLineWidth.toInt() + 16, 32)
+
+    val textDir = if (containsUrdu) TextDirectionHeuristics.ANYRTL_LTR else TextDirectionHeuristics.FIRSTSTRONG_LTR
+    val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      val builder = StaticLayout.Builder.obtain(rawText, 0, rawText.length, paint, layoutWidth)
+        .setAlignment(layoutAlignment)
+        .setTextDirection(textDir)
+        .setLineSpacing(0f, effectiveLineSpacing)
+        .setIncludePad(true)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && containsChinese) {
+        builder.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
+      }
+      builder.build()
+    } else {
+      @Suppress("DEPRECATION")
+      StaticLayout(rawText, paint, layoutWidth, layoutAlignment, effectiveLineSpacing, 0f, true)
+    }
+
+    val totalTextWidth = layout.width.toFloat()
+    val totalTextHeight = layout.height.toFloat()
+
+    val (boundWidth, boundHeight) = if (clip.hasBackground || clip.subtitleStyle.equals("Bold", true)) {
+      val padX = clip.bgPadding * scaleFactor
+      val padY = (clip.bgPadding * 0.7f) * scaleFactor
+      Pair(totalTextWidth + 2 * padX, totalTextHeight + 2 * padY)
+    } else {
+      val strokeExtra = if (clip.strokeWidth > 0f) clip.strokeWidth * scaleFactor * 2f else 0f
+      Pair(totalTextWidth + strokeExtra, totalTextHeight + strokeExtra)
+    }
+
+    val centerXPx = (width / 2f) + (state.posX * width / 2f)
+    val centerYPx = (height / 2f) + (state.posY * height / 2f)
+
+    return RenderedTextBounds(
+      widthPx = boundWidth.coerceAtLeast(36f * scaleFactor),
+      heightPx = boundHeight.coerceAtLeast(24f * scaleFactor),
+      centerXPx = centerXPx,
+      centerYPx = centerYPx,
+      rotation = state.rotation,
+      scale = state.scale,
+      opacity = state.opacity
+    )
   }
 }

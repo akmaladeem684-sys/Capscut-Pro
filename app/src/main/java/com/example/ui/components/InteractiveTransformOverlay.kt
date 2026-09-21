@@ -95,7 +95,6 @@ suspend fun PointerInputScope.detectElementTouchGestures(
   val rad = Math.toRadians(rotationDegrees.toDouble())
   val cosVal = cos(rad).toFloat()
   val sinVal = sin(rad).toFloat()
-  val safeScale = if (scale > 0.01f) scale else 1.0f
 
   var lastTapTime = 0L
 
@@ -131,8 +130,8 @@ suspend fun PointerInputScope.detectElementTouchGestures(
         if (isDrag && (localDelta.x != 0f || localDelta.y != 0f)) {
           change.consume()
           // Convert from rotated local space back to parent screen space
-          val screenDx = (localDelta.x * cosVal - localDelta.y * sinVal) * safeScale
-          val screenDy = (localDelta.x * sinVal + localDelta.y * cosVal) * safeScale
+          val screenDx = (localDelta.x * cosVal - localDelta.y * sinVal)
+          val screenDy = (localDelta.x * sinVal + localDelta.y * cosVal)
 
           val deltaNormX = (screenDx * 2f) / parentWidthPx
           val deltaNormY = (screenDy * 2f) / parentHeightPx
@@ -157,11 +156,11 @@ suspend fun PointerInputScope.detectElementTouchGestures(
           val scaleFactor = currentDist / prevDist
           val rotDelta = currentAngle - prevAngle
 
-          val significantZoom = abs(scaleFactor - 1f) > 0.005f
-          val significantRot = abs(rotDelta) > 0.4f
+          val significantZoom = abs(scaleFactor - 1f) > 0.003f
+          val significantRot = abs(rotDelta) > 1.0f
 
           if (significantZoom || significantRot) {
-            onTwoFingerTransform(scaleFactor, rotDelta)
+            onTwoFingerTransform(scaleFactor, if (significantRot) rotDelta else 0f)
           }
         }
         prevDist = currentDist
@@ -635,25 +634,50 @@ fun InteractiveTransformOverlay(
 
       val currentTextClip by rememberUpdatedState(textClip)
 
-      val centerXPx = (parentWidthPx / 2f) + (textClip.posX * parentWidthPx / 2f)
-      val centerYPx = (parentHeightPx / 2f) + (textClip.posY * parentHeightPx / 2f)
+      // Calculate authoritative rendered bounds using TextLayerRenderer
+      val textBounds = remember(
+        textClip.text,
+        textClip.fontFamily,
+        textClip.customFontPath,
+        textClip.fontSizeSp,
+        textClip.fontWeight,
+        textClip.isItalic,
+        textClip.isUnderline,
+        textClip.isAllCaps,
+        textClip.letterSpacing,
+        textClip.lineSpacing,
+        textClip.alignment,
+        textClip.scale,
+        textClip.rotation,
+        textClip.posX,
+        textClip.posY,
+        textClip.hasBackground,
+        textClip.bgPadding,
+        textClip.strokeWidth,
+        textClip.animationType,
+        textClip.animDurationMs,
+        textClip.timelineStartMs,
+        currentPosMs,
+        parentWidthPx,
+        parentHeightPx
+      ) {
+        TextLayerRenderer.measureTextBounds(
+          clip = textClip,
+          currentPosMs = currentPosMs,
+          width = parentWidthPx.toInt(),
+          height = parentHeightPx.toInt(),
+          context = context
+        )
+      }
 
-      // Estimate base bounds for handles with padding
-      val lines = textClip.text.lines()
-      val maxLineLen = lines.maxOfOrNull { it.length }?.coerceAtLeast(2) ?: 2
-      val lineCount = lines.size.coerceAtLeast(1)
-
-      val baseWidthDp = maxOf(100.dp, (maxLineLen * textClip.fontSizeSp * 0.60f + 32f).dp)
-      val baseHeightDp = maxOf(48.dp, (lineCount * textClip.fontSizeSp * 1.5f + 24f).dp)
-
-      val baseWidthPx = with(density) { baseWidthDp.toPx() }
-      val baseHeightPx = with(density) { baseHeightDp.toPx() }
-
-      val currentWidthPx = baseWidthPx * textClip.scale
-      val currentHeightPx = baseHeightPx * textClip.scale
+      val currentWidthPx = textBounds.widthPx
+      val currentHeightPx = textBounds.heightPx
 
       val currentWidthDp = with(density) { currentWidthPx.toDp() }
       val currentHeightDp = with(density) { currentHeightPx.toDp() }
+
+      val centerXPx = textBounds.centerXPx
+      val centerYPx = textBounds.centerYPx
 
       val centerXDp = with(density) { centerXPx.toDp() }
       val centerYDp = with(density) { centerYPx.toDp() }
@@ -666,10 +690,10 @@ fun InteractiveTransformOverlay(
             y = centerYDp - (currentHeightDp / 2f)
           )
           .size(currentWidthDp, currentHeightDp)
-          .rotate(textClip.rotation)
-          .pointerInput(textClip.id, textClip.rotation, textClip.scale, textClip.isLocked) {
+          .rotate(textBounds.rotation)
+          .pointerInput(textClip.id, textBounds.rotation, textClip.scale, textClip.isLocked) {
             detectElementTouchGestures(
-              rotationDegrees = textClip.rotation,
+              rotationDegrees = textBounds.rotation,
               scale = textClip.scale,
               parentWidthPx = parentWidthPx,
               parentHeightPx = parentHeightPx,
@@ -685,8 +709,8 @@ fun InteractiveTransformOverlay(
               },
               onTwoFingerTransform = if (textClip.isLocked) null else { scaleFactor, rotDelta ->
                 val clip = currentTextClip
-                val newScale = (clip.scale * scaleFactor).coerceIn(0.15f, 8.0f)
-                val newRot = (clip.rotation + rotDelta) % 360f
+                val newScale = (clip.scale * scaleFactor).coerceIn(0.15f, 10.0f)
+                val newRot = if (rotDelta != 0f) (clip.rotation + rotDelta) % 360f else clip.rotation
                 currentOnUpdateText(clip.copy(scale = newScale, rotation = newRot))
               },
               onTap = {
@@ -705,12 +729,13 @@ fun InteractiveTransformOverlay(
       // When text is selected: display Four-Corner Controls around selected text
       if (isSelected && !textClip.isLocked) {
         TextFourCornerControlsBox(
+          parentWidthPx = parentWidthPx,
+          parentHeightPx = parentHeightPx,
           centerXPx = centerXPx,
           centerYPx = centerYPx,
-          baseWidthPx = baseWidthPx,
-          baseHeightPx = baseHeightPx,
-          scale = textClip.scale,
-          rotation = textClip.rotation,
+          widthPx = currentWidthPx,
+          heightPx = currentHeightPx,
+          rotation = textBounds.rotation,
           onEdit = {
             currentOnSelectElement(SelectedTrackElement.Text(currentTextClip.id))
             currentOnEditText?.invoke(currentTextClip)
@@ -723,12 +748,12 @@ fun InteractiveTransformOverlay(
           },
           onResizeDrag = { deltaScale ->
             val clip = currentTextClip
-            val newScale = (clip.scale * deltaScale).coerceIn(0.15f, 8.0f)
+            val newScale = (clip.scale * deltaScale).coerceIn(0.15f, 10.0f)
             currentOnUpdateText(clip.copy(scale = newScale))
           },
           onTransformHandleDrag = { deltaScale, deltaRotation ->
             val clip = currentTextClip
-            val newScale = (clip.scale * deltaScale).coerceIn(0.15f, 8.0f)
+            val newScale = (clip.scale * deltaScale).coerceIn(0.15f, 10.0f)
             val newRot = (clip.rotation + deltaRotation) % 360f
             currentOnUpdateText(clip.copy(scale = newScale, rotation = newRot))
           }
@@ -743,16 +768,18 @@ fun InteractiveTransformOverlay(
  * - Top-left corner — Edit/Pen 🖊️: Reopens the Text Editing Panel.
  * - Top-right corner — Delete ✕: Removes the selected text immediately.
  * - Bottom-left corner — Resize: Drag to scale smaller/larger while maintaining position.
- * - Bottom-right corner — Copy ❐: Tapping creates one duplicate with preserved properties.
- * - White rectangular bounding border around the text.
+ * - Bottom-right corner — Copy ❐: Tapping creates one duplicate with preserved properties. Drag scales & rotates.
+ * - Crisp rectangular bounding border tightly matching rendered text.
+ * - Handles are intelligently constrained to visible preview viewport when text reaches edges.
  */
 @Composable
 private fun TextFourCornerControlsBox(
+  parentWidthPx: Float,
+  parentHeightPx: Float,
   centerXPx: Float,
   centerYPx: Float,
-  baseWidthPx: Float,
-  baseHeightPx: Float,
-  scale: Float,
+  widthPx: Float,
+  heightPx: Float,
   rotation: Float,
   onEdit: () -> Unit,
   onDelete: () -> Unit,
@@ -762,22 +789,26 @@ private fun TextFourCornerControlsBox(
 ) {
   val density = LocalDensity.current
 
-  val currentWidthPx = baseWidthPx * scale
-  val currentHeightPx = baseHeightPx * scale
-
-  val currentWidthDp = with(density) { currentWidthPx.toDp() }
-  val currentHeightDp = with(density) { currentHeightPx.toDp() }
+  val currentWidthDp = with(density) { widthPx.toDp() }
+  val currentHeightDp = with(density) { heightPx.toDp() }
 
   val centerXDp = with(density) { centerXPx.toDp() }
   val centerYDp = with(density) { centerYPx.toDp() }
 
   val handleSizeDp = 32.dp
   val halfHandleDp = handleSizeDp / 2f
+  val halfHandlePx = with(density) { halfHandleDp.toPx() }
+  val marginPx = with(density) { 6.dp.toPx() }
+
+  val minX = halfHandlePx + marginPx
+  val maxX = (parentWidthPx - halfHandlePx - marginPx).coerceAtLeast(minX)
+  val minY = halfHandlePx + marginPx
+  val maxY = (parentHeightPx - halfHandlePx - marginPx).coerceAtLeast(minY)
 
   Box(
     modifier = Modifier.fillMaxSize()
   ) {
-    // 1. White Crisp Bounding Border Box
+    // 1. White Crisp Bounding Border Box (exact rendered text bounds)
     Box(
       modifier = Modifier
         .offset(
@@ -789,30 +820,43 @@ private fun TextFourCornerControlsBox(
         .border(
           width = 1.5.dp,
           color = Color.White,
-          shape = RoundedCornerShape(4.dp)
+          shape = RoundedCornerShape(2.dp)
         )
     )
 
     // Corner Positions relative to center with rotation applied
     val rad = Math.toRadians(rotation.toDouble())
-    val halfW = currentWidthPx / 2f
-    val halfH = currentHeightPx / 2f
+    val halfW = widthPx / 2f
+    val halfH = heightPx / 2f
 
     // Top-Left Corner (Edit / Pen 🖊️)
-    val tlX = centerXPx + ((-halfW) * cos(rad) - (-halfH) * sin(rad)).toFloat()
-    val tlY = centerYPx + ((-halfW) * sin(rad) + (-halfH) * cos(rad)).toFloat()
+    val rawTlX = centerXPx + ((-halfW) * cos(rad) - (-halfH) * sin(rad)).toFloat()
+    val rawTlY = centerYPx + ((-halfW) * sin(rad) + (-halfH) * cos(rad)).toFloat()
 
     // Top-Right Corner (Delete ✕)
-    val trX = centerXPx + (halfW * cos(rad) - (-halfH) * sin(rad)).toFloat()
-    val trY = centerYPx + (halfW * sin(rad) + (-halfH) * cos(rad)).toFloat()
+    val rawTrX = centerXPx + (halfW * cos(rad) - (-halfH) * sin(rad)).toFloat()
+    val rawTrY = centerYPx + (halfW * sin(rad) + (-halfH) * cos(rad)).toFloat()
 
     // Bottom-Left Corner (Resize)
-    val blX = centerXPx + ((-halfW) * cos(rad) - (halfH) * sin(rad)).toFloat()
-    val blY = centerYPx + ((-halfW) * sin(rad) + (halfH) * cos(rad)).toFloat()
+    val rawBlX = centerXPx + ((-halfW) * cos(rad) - (halfH) * sin(rad)).toFloat()
+    val rawBlY = centerYPx + ((-halfW) * sin(rad) + (halfH) * cos(rad)).toFloat()
 
-    // Bottom-Right Corner (Copy / Duplicate ❐)
-    val brX = centerXPx + (halfW * cos(rad) - (halfH) * sin(rad)).toFloat()
-    val brY = centerYPx + (halfW * sin(rad) + (halfH) * cos(rad)).toFloat()
+    // Bottom-Right Corner (Copy / Duplicate ❐ & Rotate/Scale)
+    val rawBrX = centerXPx + (halfW * cos(rad) - (halfH) * sin(rad)).toFloat()
+    val rawBrY = centerYPx + (halfW * sin(rad) + (halfH) * cos(rad)).toFloat()
+
+    // Clamp handle rendering coordinates to visible viewport so buttons are never clipped
+    val tlX = rawTlX.coerceIn(minX, maxX)
+    val tlY = rawTlY.coerceIn(minY, maxY)
+
+    val trX = rawTrX.coerceIn(minX, maxX)
+    val trY = rawTrY.coerceIn(minY, maxY)
+
+    val blX = rawBlX.coerceIn(minX, maxX)
+    val blY = rawBlY.coerceIn(minY, maxY)
+
+    val brX = rawBrX.coerceIn(minX, maxX)
+    val brY = rawBrY.coerceIn(minY, maxY)
 
     // Convert corners to DP
     val tlXDp = with(density) { tlX.toDp() }
@@ -887,8 +931,8 @@ private fun TextFourCornerControlsBox(
         .pointerInput(Unit) {
           detectDragGestures(
             onDragStart = { offset ->
-              blTouchXPx = blX + offset.x
-              blTouchYPx = blY + offset.y
+              blTouchXPx = rawBlX + offset.x
+              blTouchYPx = rawBlY + offset.y
               val dx = blTouchXPx - centerXPx
               val dy = blTouchYPx - centerYPx
               blTouchDist = hypot(dx, dy).coerceAtLeast(10f)
@@ -939,8 +983,8 @@ private fun TextFourCornerControlsBox(
         .pointerInput(Unit) {
           detectDragGestures(
             onDragStart = { offset ->
-              brTouchXPx = brX + offset.x
-              brTouchYPx = brY + offset.y
+              brTouchXPx = rawBrX + offset.x
+              brTouchYPx = rawBrY + offset.y
               val dx = brTouchXPx - centerXPx
               val dy = brTouchYPx - centerYPx
               brTouchDist = hypot(dx, dy).coerceAtLeast(10f)

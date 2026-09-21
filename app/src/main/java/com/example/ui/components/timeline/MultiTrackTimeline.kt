@@ -820,6 +820,10 @@ fun MultiTrackTimeline(
                               isSelected = isSelected,
                               isMultiSelected = isMulti,
                               isLocked = false,
+                              keyframes = clip.keyframes,
+                              selectedKeyframeIds = selectedKeyframeIds,
+                              onSelectKeyframe = onSelectKeyframe,
+                              onMoveKeyframe = onMoveKeyframe,
                               onSelect = {
                                 if (isMultiSelectMode) onToggleClipSelection(clip.id)
                                 else onSelectElement(SelectedTrackElement.Text(clip.id))
@@ -990,6 +994,10 @@ fun MultiTrackTimeline(
                             isSelected = isSelected,
                             isMultiSelected = isMulti,
                             isLocked = false,
+                            keyframes = clip.keyframes,
+                            selectedKeyframeIds = selectedKeyframeIds,
+                            onSelectKeyframe = onSelectKeyframe,
+                            onMoveKeyframe = onMoveKeyframe,
                             onSelect = {
                               if (isMultiSelectMode) onToggleClipSelection(clip.id)
                               else onSelectElement(SelectedTrackElement.Effect(clip.id))
