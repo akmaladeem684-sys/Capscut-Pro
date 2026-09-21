@@ -51,12 +51,20 @@ class KeyframeTrack<T>(
     val elapsed = (time.value - k0.time.value).toFloat()
     val linearProgress = if (duration > 0f) MathUtils.clamp(elapsed / duration, 0f, 1f) else 1f
 
-    val easedProgress = when (k0.easing) {
-      EasingPreset.LINEAR -> linearProgress
-      EasingPreset.EASE_IN -> linearProgress * linearProgress
-      EasingPreset.EASE_OUT -> 1f - (1f - linearProgress) * (1f - linearProgress)
-      EasingPreset.EASE_IN_OUT -> MathUtils.smoothstep(0f, 1f, linearProgress)
-      EasingPreset.BOUNCE -> MathUtils.smoothstep(0f, 1f, linearProgress)
+    val easedProgress = if (k0.controlPoint1 != null && k0.controlPoint2 != null) {
+      com.vfx.engine.core.curve.CubicBezierEvaluator.evaluate(
+        k0.controlPoint1.first, k0.controlPoint1.second,
+        k0.controlPoint2.first, k0.controlPoint2.second,
+        linearProgress
+      )
+    } else {
+      when (k0.easing) {
+        EasingPreset.LINEAR -> linearProgress
+        EasingPreset.EASE_IN -> linearProgress * linearProgress
+        EasingPreset.EASE_OUT -> 1f - (1f - linearProgress) * (1f - linearProgress)
+        EasingPreset.EASE_IN_OUT -> MathUtils.smoothstep(0f, 1f, linearProgress)
+        EasingPreset.BOUNCE -> MathUtils.smoothstep(0f, 1f, linearProgress)
+      }
     }
 
     return interpolator(k0.value, k1.value, easedProgress)

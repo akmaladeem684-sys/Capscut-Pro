@@ -2,7 +2,6 @@ package com.vfx.engine.effects
 
 import com.vfx.engine.core.effect.EffectCategory
 import com.vfx.engine.core.effect.EffectDefinition
-import com.vfx.engine.core.effect.RenderRequirements
 import com.vfx.engine.core.params.ParamConstraints
 import com.vfx.engine.core.params.ParamMap
 import com.vfx.engine.core.params.ParameterDescriptor
@@ -22,8 +21,10 @@ class ColorCorrectionEffect : SinglePassEffect(
     )
   )
 ) {
+  private val delegate = ColorAdjustmentEffect()
+
   override fun render(inputFbo: FramebufferObject, outputFbo: FramebufferObject, params: ParamMap) {
-    // Single pass color transformation
+    delegate.render(inputFbo, outputFbo, params)
   }
 }
 
@@ -37,8 +38,10 @@ class KawaseBlurEffect : SinglePassEffect(
     )
   )
 ) {
+  private val delegate = DualKawaseBlurEffect()
+
   override fun render(inputFbo: FramebufferObject, outputFbo: FramebufferObject, params: ParamMap) {
-    // Mobile dual-kawase blur pass
+    delegate.render(inputFbo, outputFbo, params)
   }
 }
 
@@ -68,5 +71,11 @@ object BuiltinEffects {
 
     val bloomDef = BloomEffect().definition
     EffectRegistry.register(bloomDef) { BloomEffect() }
+
+    val dualBlurDef = DualKawaseBlurEffect().definition
+    EffectRegistry.register(dualBlurDef) { DualKawaseBlurEffect() }
+
+    val colorAdjDef = ColorAdjustmentEffect().definition
+    EffectRegistry.register(colorAdjDef) { ColorAdjustmentEffect() }
   }
 }

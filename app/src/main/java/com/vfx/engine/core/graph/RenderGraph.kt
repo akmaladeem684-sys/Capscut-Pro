@@ -21,6 +21,12 @@ data class RenderGraph(
   val resources: List<PassResource> = emptyList()
 )
 
+data class ResourceLifetime(
+  val resourceId: String,
+  val startPassIndex: Int,
+  val endPassIndex: Int
+)
+
 object RenderGraphCompiler {
   /**
    * Compiles DAG using topological sort and removes unused intermediate passes.
@@ -64,13 +70,29 @@ object RenderGraphCompiler {
 
 object ResourceAliasing {
   /**
-   * Reuses texture allocations for virtual passes that do not overlap in lifetime.
+   * Computes exact resource lifetime intervals (start index produced, last index consumed)
+   * to immediately release scratch FBOs back to the pool as soon as their last reader completes.
    */
-  fun computeAliasedAllocations(passes: List<RenderPass>): Map<String, String> {
-    val aliasedMap = mutableMapOf<String, String>()
-    passes.forEachIndexed { idx, pass ->
-      aliasedMap[pass.outputResourceId] = "vram_slot_${idx % 2}"
+  fun computeResourceLifetimes(passes: List<RenderPass>): Map<String, ResourceLifetime> {
+    val startMap = mutableMapOf<String, Int>()
+    val endMap = mutableMapOf<String, Int>()
+
+    passes.forEachIndexed { index, pass ->
+      if (!startMap.containsKey(pass.outputResourceId)) {
+        startMap[pass.outputResourceId] = index
+      }
+      endMap[pass.outputResourceId] = index
+
+      for (inputId in pass.inputResourceIds) {
+        endMap[inputId] = maxOf(endMap[inputId] ?: index, index)
+      }
     }
-    return aliasedMap
+
+    val lifetimes = mutableMapOf<String, ResourceLifetime>()
+    for ((resId, startIndex) in startMap) {
+      val endIndex = endMap[resId] ?: startIndex
+      lifetimes[resId] = ResourceLifetime(resId, startIndex, endIndex)
+    }
+    return lifetimes
   }
 }

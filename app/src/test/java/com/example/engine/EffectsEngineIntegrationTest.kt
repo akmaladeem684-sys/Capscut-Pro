@@ -1,19 +1,20 @@
 package com.example.engine
 
 import com.example.engine.composition.coordinates.CoordinateNormalizationService
-import com.example.engine.composition.coordinates.NormalizedCoordinates
 import com.example.engine.composition.coordinates.toMedia3OverlaySettings
 import com.vfx.engine.core.EngineConfig
 import com.vfx.engine.core.Microseconds
 import com.vfx.engine.core.color.ColorEngine
 import com.vfx.engine.core.color.ToneMapper
 import com.vfx.engine.core.color.ToneMapperType
+import com.vfx.engine.core.curve.CubicBezierEvaluator
 import com.vfx.engine.core.effect.EffectCategory
 import com.vfx.engine.core.effect.EffectInstance
 import com.vfx.engine.core.graph.PassResource
 import com.vfx.engine.core.graph.RenderGraph
 import com.vfx.engine.core.graph.RenderGraphCompiler
 import com.vfx.engine.core.graph.RenderPass
+import com.vfx.engine.core.graph.ResourceAliasing
 import com.vfx.engine.core.keyframe.EasingPreset
 import com.vfx.engine.core.keyframe.Keyframe
 import com.vfx.engine.core.keyframe.KeyframeTrack
@@ -26,6 +27,7 @@ import com.vfx.engine.core.stack.EffectStack
 import com.vfx.engine.core.stack.StackEvaluator
 import com.vfx.engine.effects.BuiltinEffects
 import com.vfx.engine.media.media3.Media3TransformerBridge
+import com.vfx.engine.media.media3.VfxGlEffect
 import com.vfx.engine.pipeline.EffectsEngine
 import com.vfx.engine.pipeline.RenderRequest
 import org.junit.Assert.assertEquals
@@ -56,6 +58,42 @@ class EffectsEngineIntegrationTest {
 
     val instance = EffectRegistry.createInstance("vfx_kawase_blur")
     assertNotNull("Effect instance should be created", instance)
+  }
+
+  @Test
+  fun testCubicBezierEvaluator() {
+    // Standard ease-in-out handles P1=(0.42, 0.0), P2=(0.58, 1.0)
+    val startValue = CubicBezierEvaluator.evaluate(0.42f, 0.0f, 0.58f, 1.0f, 0.0f)
+    val midValue = CubicBezierEvaluator.evaluate(0.42f, 0.0f, 0.58f, 1.0f, 0.5f)
+    val endValue = CubicBezierEvaluator.evaluate(0.42f, 0.0f, 0.58f, 1.0f, 1.0f)
+
+    assertEquals(0.0f, startValue, 0.001f)
+    assertEquals(0.5f, midValue, 0.01f)
+    assertEquals(1.0f, endValue, 0.001f)
+  }
+
+  @Test
+  fun testKeyframeWithCubicBezier() {
+    val k0 = Keyframe(
+      time = Microseconds.fromMillis(0),
+      value = 0.0f,
+      controlPoint1 = Pair(0.42f, 0.0f),
+      controlPoint2 = Pair(0.58f, 1.0f)
+    )
+    val k1 = Keyframe(
+      time = Microseconds.fromMillis(1000),
+      value = 100.0f
+    )
+
+    val track = KeyframeTrack(
+      paramName = "exposure",
+      keyframes = listOf(k0, k1),
+      interpolator = { a, b, t -> a + (b - a) * t }
+    )
+
+    val valAtMid = track.evaluateAt(Microseconds.fromMillis(500))
+    assertNotNull(valAtMid)
+    assertEquals(50.0f, valAtMid!!, 1.0f)
   }
 
   @Test
@@ -93,7 +131,7 @@ class EffectsEngineIntegrationTest {
   }
 
   @Test
-  fun testRenderGraphCompilationAndCulling() {
+  fun testRenderGraphCompilationAndLifetimes() {
     val pass1 = RenderPass("pass1", "effect_1", listOf("res_input"), "res_mid")
     val pass2 = RenderPass("pass2", "effect_2", listOf("res_mid"), "res_final")
     val unusedPass = RenderPass("pass_unused", "effect_3", listOf("res_input"), "res_unused")
@@ -112,6 +150,11 @@ class EffectsEngineIntegrationTest {
     assertEquals(2, compiledPasses.size)
     assertEquals("pass1", compiledPasses[0].id)
     assertEquals("pass2", compiledPasses[1].id)
+
+    val lifetimes = ResourceAliasing.computeResourceLifetimes(compiledPasses)
+    assertNotNull(lifetimes["res_mid"])
+    assertEquals(0, lifetimes["res_mid"]?.startPassIndex)
+    assertEquals(1, lifetimes["res_mid"]?.endPassIndex)
   }
 
   @Test
@@ -167,9 +210,10 @@ class EffectsEngineIntegrationTest {
 
   @Test
   fun testMedia3EffectAdapterBridge() {
-    val instance = EffectInstance("inst_glow", "vfx_bloom")
+    val instance = EffectInstance("inst_glow", "vfx_dual_kawase_blur")
     val glEffect = Media3TransformerBridge.adaptEffectToMedia3(instance)
     assertNotNull(glEffect)
+    assertTrue(glEffect is VfxGlEffect)
   }
 
   @Test
