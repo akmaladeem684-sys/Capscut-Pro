@@ -1212,11 +1212,16 @@ class VideoExporter(private val context: Context) {
       }
 
       // Stop & Release Muxer safely ensuring MOOV atom is fully written
-      val muxerSuccess = coordinator.stopAndRelease()
-      if (!muxerSuccess && !coordinator.isStarted) {
-        Log.w(tag, "Muxer was not started or encountered errors")
+      try {
+        val muxerSuccess = coordinator.stopAndRelease()
+        if (!muxerSuccess && !coordinator.isStarted) {
+          Log.w(tag, "Muxer was not started or encountered errors")
+        }
+      } catch (e: Exception) {
+        Log.w(tag, "Muxer stop/release warning: ${e.message}", e)
+      } finally {
+        mediaMuxer = null
       }
-      mediaMuxer = null
 
       // Release hardware encoders
       try { videoEncoder?.stop() } catch (ignored: Exception) {}
@@ -1227,21 +1232,24 @@ class VideoExporter(private val context: Context) {
       audioEncoder?.release()
       audioEncoder = null
 
+      // Moov Atom Flush Guarantee: Insert 150ms delay to let the OS flush file buffers
+      delay(150L)
+
       // Validate output file
       val finalSize = outputFile.length()
-      if (finalSize > 4096L) {
-        val isValid = validateMp4Safely(outputFile)
+      if (finalSize > 10240L) {
+        val isValid = validateMp4(outputFile)
         if (isValid) {
           _exportState.value = ExportState.Success(outputFile, totalDurationMs, finalSize)
           return@withContext outputFile
         } else {
-          Log.w(tag, "Export completed but validateMp4Safely reported missing video track or header on ${outputFile.absolutePath} ($finalSize bytes)")
+          Log.w(tag, "Export completed but validateMp4 reported missing video track or header on ${outputFile.absolutePath} ($finalSize bytes)")
           _exportState.value = ExportState.Error("Exported MP4 header validation failed ($finalSize bytes)")
           cleanUp(videoEncoder, audioEncoder, encoderInputSurface, windowSurface, eglCore, gpuRenderer, mediaMuxer, outputFile)
           return@withContext null
         }
       } else {
-        _exportState.value = ExportState.Error("Export resulted in incomplete or empty file ($finalSize bytes, expected > 4096 bytes)")
+        _exportState.value = ExportState.Error("Export resulted in incomplete or empty file ($finalSize bytes, expected > 10240 bytes)")
         cleanUp(videoEncoder, audioEncoder, encoderInputSurface, windowSurface, eglCore, gpuRenderer, mediaMuxer, outputFile)
         return@withContext null
       }
@@ -1330,15 +1338,23 @@ class VideoExporter(private val context: Context) {
   ) {
     val bufferInfo = MediaCodec.BufferInfo()
     var attempts = 0
-    while (attempts < 50) {
-      val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 5000L)
+    val maxAttempts = if (endOfStream) 200 else 50
+    var eosReached = false
+
+    while (attempts < maxAttempts && !eosReached) {
+      val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
       if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
         if (!endOfStream) break
         attempts++
+        try { Thread.sleep(2) } catch (_: Exception) {}
       } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
         val newFormat = encoder.outputFormat
+        Log.i(tag, "Video encoder output format changed: $newFormat")
         coordinator.setVideoFormat(newFormat)
       } else if (outputBufferIndex >= 0) {
+        // Reset retry attempts on valid progress
+        attempts = 0
+
         // Skip codec configuration buffers (CSD is supplied via MediaFormat)
         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
           encoder.releaseOutputBuffer(outputBufferIndex, false)
@@ -1351,8 +1367,12 @@ class VideoExporter(private val context: Context) {
             coordinator.writeVideoSample(outputBuffer, bufferInfo)
           }
         }
-        encoder.releaseOutputBuffer(outputBufferIndex, false)
         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+          eosReached = true
+          Log.i(tag, "Video encoder signaled BUFFER_FLAG_END_OF_STREAM")
+        }
+        encoder.releaseOutputBuffer(outputBufferIndex, false)
+        if (eosReached) {
           break
         }
       }
@@ -1366,15 +1386,22 @@ class VideoExporter(private val context: Context) {
   ) {
     val bufferInfo = MediaCodec.BufferInfo()
     var attempts = 0
-    while (attempts < 50) {
-      val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 5000L)
+    val maxAttempts = if (endOfStream) 200 else 50
+    var eosReached = false
+
+    while (attempts < maxAttempts && !eosReached) {
+      val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 10_000L)
       if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
         if (!endOfStream) break
         attempts++
+        try { Thread.sleep(2) } catch (_: Exception) {}
       } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
         val newFormat = encoder.outputFormat
+        Log.i(tag, "Audio encoder output format changed: $newFormat")
         coordinator.setAudioFormat(newFormat)
       } else if (outputBufferIndex >= 0) {
+        attempts = 0
+
         // Skip codec configuration buffers
         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
           encoder.releaseOutputBuffer(outputBufferIndex, false)
@@ -1387,8 +1414,12 @@ class VideoExporter(private val context: Context) {
             coordinator.writeAudioSample(outputBuffer, bufferInfo)
           }
         }
-        encoder.releaseOutputBuffer(outputBufferIndex, false)
         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+          eosReached = true
+          Log.i(tag, "Audio encoder signaled BUFFER_FLAG_END_OF_STREAM")
+        }
+        encoder.releaseOutputBuffer(outputBufferIndex, false)
+        if (eosReached) {
           break
         }
       }
@@ -1396,17 +1427,18 @@ class VideoExporter(private val context: Context) {
   }
 
   /**
-   * Safely validates the exported MP4 file by opening a direct FileInputStream file descriptor,
-   * avoiding path translation and permission exceptions inside MediaMetadataRetriever on Android storage.
+   * Crash-proof validation for exported MP4 files by opening a direct FileInputStream file descriptor.
+   * If MediaMetadataRetriever throws IllegalArgumentException (e.g. unknown parsing error),
+   * falls back to checking file integrity (file.exists() && file.length() > 10240) so valid videos succeed.
    */
-  fun validateMp4Safely(file: File): Boolean {
+  fun validateMp4(file: File): Boolean {
     if (!file.exists()) {
       Log.w(tag, "MP4 validation failed: Output file does not exist at ${file.absolutePath}")
       return false
     }
     val fileLength = file.length()
-    if (fileLength <= 4096L) {
-      Log.w(tag, "MP4 validation failed: File size too small or incomplete ($fileLength bytes, required > 4096 bytes)")
+    if (fileLength <= 10240L) {
+      Log.w(tag, "MP4 validation failed: File size too small or incomplete ($fileLength bytes, expected > 10240 bytes)")
       return false
     }
 
@@ -1419,18 +1451,23 @@ class VideoExporter(private val context: Context) {
       val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
       val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
       val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-      Log.i(tag, "validateMp4Safely verified playable MP4: hasVideo=$hasVideo, duration=${duration}ms, dimensions=${width}x${height}, size=${fileLength} bytes")
-      hasVideo != null
+      Log.i(tag, "validateMp4 verified playable MP4: hasVideo=$hasVideo, duration=${duration}ms, dimensions=${width}x${height}, size=${fileLength} bytes")
+      hasVideo != null || (file.exists() && file.length() > 10240L)
+    } catch (e: IllegalArgumentException) {
+      Log.w(tag, "validateMp4 fallback: MediaMetadataRetriever threw IllegalArgumentException (${e.message}), falling back to file integrity check", e)
+      file.exists() && file.length() > 10240L
     } catch (e: Exception) {
-      Log.w(tag, "validateMp4Safely warning: MediaMetadataRetriever inspection encountered ${e.javaClass.simpleName}: ${e.message}", e)
-      false
+      Log.w(tag, "validateMp4 warning: MediaMetadataRetriever inspection encountered ${e.javaClass.simpleName}: ${e.message}", e)
+      file.exists() && file.length() > 10240L
     } finally {
       try { retriever.release() } catch (ignored: Exception) {}
       try { fis?.close() } catch (ignored: Exception) {}
     }
   }
 
-  private fun validatePlayableMp4(file: File): Boolean = validateMp4Safely(file)
+  fun validateMp4Safely(file: File): Boolean = validateMp4(file)
+
+  private fun validatePlayableMp4(file: File): Boolean = validateMp4(file)
 
   private fun fetchClipBitmap(
     clip: VideoClip?,

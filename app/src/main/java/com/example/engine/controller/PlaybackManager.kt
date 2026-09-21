@@ -35,7 +35,7 @@ class PlaybackManager(
       .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
   ).setLoadControl(
     DefaultLoadControl.Builder()
-      .setBufferDurationsMs(1000, 5000, 200, 500)
+      .setBufferDurationsMs(500, 5000, 250, 500)
       .build()
   ).setSeekParameters(SeekParameters.CLOSEST_SYNC).build().apply {
     playWhenReady = false

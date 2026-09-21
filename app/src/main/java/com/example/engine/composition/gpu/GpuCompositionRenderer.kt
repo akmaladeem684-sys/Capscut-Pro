@@ -450,6 +450,7 @@ class GpuCompositionRenderer(private val context: Context) {
 
     // 7. Apply Active Visual Effects (Multi-pass ping-ponging)
     if (hasPostProcess) {
+      GLES20.glDisable(GLES20.GL_BLEND)
       val offscreenTex = if (isNativeLoaded) NativeRenderBridge.endOffscreen() else fboA.getTextureId()
       if (offscreenTex > 0) {
         fboB.setup(viewportWidth, viewportHeight)
@@ -464,6 +465,7 @@ class GpuCompositionRenderer(private val context: Context) {
           if (isLast) {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+            GLES20.glDisable(GLES20.GL_BLEND)
             applyEffect(
               effectType = effect.effectType,
               intensity = effect.intensity,
@@ -476,6 +478,7 @@ class GpuCompositionRenderer(private val context: Context) {
             currentOutputFbo.bind()
             GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            GLES20.glDisable(GLES20.GL_BLEND)
             applyEffect(
               effectType = effect.effectType,
               intensity = effect.intensity,
@@ -500,7 +503,6 @@ class GpuCompositionRenderer(private val context: Context) {
   ) {
     if (layers.isEmpty() || program2D == 0) return
     GLES20.glUseProgram(program2D)
-    GLES20.glEnable(GLES20.GL_BLEND)
 
     val uMVPMatrixHandle = GLES20.glGetUniformLocation(program2D, "uMVPMatrix")
     val uTexMatrixHandle = GLES20.glGetUniformLocation(program2D, "uTexMatrix")
@@ -540,13 +542,24 @@ class GpuCompositionRenderer(private val context: Context) {
 
     val sortedLayers = layers.filter { it.isVisible && it.textureId > 0 }.sortedBy { it.zOrder }
 
-    for (layer in sortedLayers) {
-      when (layer.blendMode) {
-        NativeBlendMode.ADDITIVE -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)
-        NativeBlendMode.MULTIPLY -> GLES20.glBlendFunc(GLES20.GL_DST_COLOR, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-        NativeBlendMode.SCREEN -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_COLOR)
-        NativeBlendMode.PREMULTIPLIED -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-        else -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+    for ((idx, layer) in sortedLayers.withIndex()) {
+      if (idx == 0 && (layer.type == NativeLayerType.BASE_VIDEO || layer.type == NativeLayerType.VIDEO)) {
+        GLES20.glDisable(GLES20.GL_BLEND)
+      } else {
+        GLES20.glEnable(GLES20.GL_BLEND)
+        when (layer.blendMode) {
+          NativeBlendMode.ADDITIVE -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)
+          NativeBlendMode.MULTIPLY -> GLES20.glBlendFunc(GLES20.GL_DST_COLOR, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+          NativeBlendMode.SCREEN -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_COLOR)
+          NativeBlendMode.PREMULTIPLIED -> GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+          else -> {
+            if (layer.type == NativeLayerType.TEXT || layer.type == NativeLayerType.IMAGE_STICKER) {
+              GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            } else {
+              GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            }
+          }
+        }
       }
 
       val mMatrix = FloatArray(16)

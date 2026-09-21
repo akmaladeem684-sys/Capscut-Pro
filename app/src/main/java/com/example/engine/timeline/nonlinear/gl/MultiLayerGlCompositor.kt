@@ -195,12 +195,15 @@ class MultiLayerGlCompositor(
     layers: List<RenderLayer>,
     textureSources: Map<String, LayerTextureSource>
   ) {
-    GLES30.glEnable(GLES30.GL_BLEND)
-    GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
-
     // Render in sorted zIndex order (background first, overlays/text on top)
-    for (layer in layers) {
+    for ((index, layer) in layers.withIndex()) {
       val source = textureSources[layer.clipId] ?: continue
+      if (index == 0) {
+        GLES30.glDisable(GLES30.GL_BLEND)
+      } else {
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+      }
       drawLayer(layer, source)
     }
 

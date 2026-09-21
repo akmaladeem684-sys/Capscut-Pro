@@ -6,6 +6,8 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
 import com.example.domain.model.AspectRatio
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class RealMediaMetadata(
   val durationMs: Long,
@@ -21,6 +23,14 @@ data class RealMediaMetadata(
 
 object MediaMetadataHelper {
   private const val TAG = "MediaMetadataHelper"
+
+  /**
+   * Reads actual media metadata on Dispatchers.IO to prevent any Main Thread stalls.
+   */
+  suspend fun extractMetadataAsync(context: Context, uriString: String, defaultImageDurationMs: Long = 3000L): RealMediaMetadata =
+    withContext(Dispatchers.IO) {
+      extractMetadata(context, uriString, defaultImageDurationMs)
+    }
 
   /**
    * Reads actual media metadata using MediaMetadataRetriever and BitmapFactory.

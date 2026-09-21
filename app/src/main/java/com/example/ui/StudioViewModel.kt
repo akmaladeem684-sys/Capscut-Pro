@@ -366,48 +366,54 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   ) {
     viewModelScope.launch {
       val appContext = getApplication<Application>().applicationContext
-      val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
-      var runningStart = 0L
-      var detectedAspect: AspectRatio = AspectRatio.RATIO_16_9
-      var detectedResolution: Resolution = Resolution.RES_1080P
-      var detectedFps: FrameRate = FrameRate.FPS_30
-
-      val clips = persistentUris.mapIndexed { index, uri ->
-        val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
-        val duration = meta.durationMs
-        val clip = VideoClip(
-          uri = uri,
-          name = if (meta.isVideo) "Video ${index + 1}" else "Photo ${index + 1}",
-          timelineStartMs = runningStart,
-          durationMs = duration,
-          sourceStartMs = 0L,
-          sourceEndMs = duration,
-          isVideo = meta.isVideo,
-          width = meta.width,
-          height = meta.height,
-          naturalRotation = meta.rotationDegrees,
-          frameRate = meta.frameRate,
-          mimeType = meta.mimeType,
-          hasAudio = meta.hasAudio
-        )
-        if (index == 0) {
-          detectedAspect = meta.detectedAspectRatio
-          detectedFps = when {
-            meta.frameRate >= 50f -> FrameRate.FPS_60
-            meta.frameRate in 23.5f..26.5f -> FrameRate.FPS_24
-            meta.frameRate in 24.5f..26.0f -> FrameRate.FPS_25
-            else -> FrameRate.FPS_30
-          }
-          detectedResolution = when (detectedAspect) {
-            AspectRatio.RATIO_9_16 -> if (meta.width >= 1440 || meta.height >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
-            AspectRatio.RATIO_1_1 -> if (meta.width >= 2000 || meta.height >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
-            AspectRatio.RATIO_16_9 -> if (meta.width >= 3840 || meta.height >= 2160) Resolution.RES_4K else if (meta.width >= 2560) Resolution.RES_2K else Resolution.RES_1080P
-            else -> Resolution.RES_1080P
-          }
+      val clips = withContext(Dispatchers.IO) {
+        val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
+        var runningStart = 0L
+        persistentUris.mapIndexed { index, uri ->
+          val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
+          val duration = meta.durationMs
+          val clip = VideoClip(
+            uri = uri,
+            name = if (meta.isVideo) "Video ${index + 1}" else "Photo ${index + 1}",
+            timelineStartMs = runningStart,
+            durationMs = duration,
+            sourceStartMs = 0L,
+            sourceEndMs = duration,
+            isVideo = meta.isVideo,
+            width = meta.width,
+            height = meta.height,
+            naturalRotation = meta.rotationDegrees,
+            frameRate = meta.frameRate,
+            mimeType = meta.mimeType,
+            hasAudio = meta.hasAudio
+          )
+          runningStart += duration
+          clip
         }
-        runningStart += duration
-        clip
       }
+
+      val firstClip = clips.firstOrNull()
+      val detectedAspect = if (firstClip != null) {
+        AspectRatio.fromDimensions(firstClip.width, firstClip.height)
+      } else AspectRatio.RATIO_16_9
+
+      val detectedFps = if (firstClip != null) {
+        when {
+          firstClip.frameRate >= 50f -> FrameRate.FPS_60
+          firstClip.frameRate in 23.5f..26.5f -> FrameRate.FPS_24
+          firstClip.frameRate in 24.5f..26.0f -> FrameRate.FPS_25
+          else -> FrameRate.FPS_30
+        }
+      } else FrameRate.FPS_30
+
+      val detectedResolution = if (firstClip != null) {
+        when (detectedAspect) {
+          AspectRatio.RATIO_9_16 -> if (firstClip.width >= 1440 || firstClip.height >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
+          AspectRatio.RATIO_1_1 -> if (firstClip.width >= 2000 || firstClip.height >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
+          AspectRatio.RATIO_16_9 -> if (firstClip.width >= 3840 || firstClip.height >= 2160) Resolution.RES_4K else if (firstClip.width >= 2560) Resolution.RES_2K else Resolution.RES_1080P
+          else -> Resolution.RES_1080P
+        }
+      } else Resolution.RES_1080P
 
       createNewProject(
         name = name,
@@ -430,28 +436,30 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     } else {
       viewModelScope.launch {
         val appContext = getApplication<Application>().applicationContext
-        val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
-        var runningStart = 0L
-        val clips = persistentUris.mapIndexed { index, uri ->
-          val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
-          val duration = meta.durationMs
-          val clip = VideoClip(
-            uri = uri,
-            name = if (meta.isVideo) "Video ${index + 1}" else "Photo ${index + 1}",
-            timelineStartMs = runningStart,
-            durationMs = duration,
-            sourceStartMs = 0L,
-            sourceEndMs = duration,
-            isVideo = meta.isVideo,
-            width = meta.width,
-            height = meta.height,
-            naturalRotation = meta.rotationDegrees,
-            frameRate = meta.frameRate,
-            mimeType = meta.mimeType,
-            hasAudio = meta.hasAudio
-          )
-          runningStart += duration
-          clip
+        val clips = withContext(Dispatchers.IO) {
+          val persistentUris = MediaPersistenceManager.persistMediaList(appContext, uris)
+          var runningStart = 0L
+          persistentUris.mapIndexed { index, uri ->
+            val meta = com.example.engine.media.MediaMetadataHelper.extractMetadata(appContext, uri)
+            val duration = meta.durationMs
+            val clip = VideoClip(
+              uri = uri,
+              name = if (meta.isVideo) "Video ${index + 1}" else "Photo ${index + 1}",
+              timelineStartMs = runningStart,
+              durationMs = duration,
+              sourceStartMs = 0L,
+              sourceEndMs = duration,
+              isVideo = meta.isVideo,
+              width = meta.width,
+              height = meta.height,
+              naturalRotation = meta.rotationDegrees,
+              frameRate = meta.frameRate,
+              mimeType = meta.mimeType,
+              hasAudio = meta.hasAudio
+            )
+            runningStart += duration
+            clip
+          }
         }
         createNewProject(
           name = name,

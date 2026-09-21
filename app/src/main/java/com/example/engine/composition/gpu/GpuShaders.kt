@@ -422,7 +422,7 @@ object GpuShaders {
         sum += texture2D(uTexture, clamp(uv + vec2(-rad * 1.5, rad * 1.5), 0.0, 1.0)) * 0.05;
         sum += texture2D(uTexture, clamp(uv + vec2(0.0, rad), 0.0, 1.0)) * 0.12;
         sum += texture2D(uTexture, clamp(uv + vec2(rad * 1.5, rad * 1.5), 0.0, 1.0)) * 0.05;
-        gl_FragColor = sum;
+        gl_FragColor = vec4(clamp(sum.rgb, 0.0, 1.0), sum.a);
         return;
       }
       
@@ -439,7 +439,7 @@ object GpuShaders {
         bloom += max(texture2D(uTexture, clamp(uv + vec2(-rad * 1.5, 0.0), 0.0, 1.0)) - 0.45, vec4(0.0)) * 0.125;
         bloom += max(texture2D(uTexture, clamp(uv + vec2(rad * 1.5, 0.0), 0.0, 1.0)) - 0.45, vec4(0.0)) * 0.125;
         vec3 glowColor = bloom.rgb * vec3(1.2, 1.1, 1.3) * (intensity * 2.8);
-        gl_FragColor = vec4(baseColor.rgb + glowColor, baseColor.a);
+        gl_FragColor = vec4(clamp(baseColor.rgb + glowColor, 0.0, 1.0), baseColor.a);
         return;
       }
       
@@ -450,7 +450,8 @@ object GpuShaders {
           vec2 offset = dir * (float(i) / 4.0);
           sum += texture2D(uTexture, clamp(uv + offset, 0.0, 1.0));
         }
-        gl_FragColor = sum / 9.0;
+        vec4 res = sum / 9.0;
+        gl_FragColor = vec4(clamp(res.rgb, 0.0, 1.0), res.a);
         return;
       }
       
@@ -459,14 +460,16 @@ object GpuShaders {
           sin(uTime * 42.0) * 0.6 + sin(uTime * 85.0) * 0.4,
           cos(uTime * 50.0) * 0.6 + cos(uTime * 95.0) * 0.4
         ) * (intensity * 0.04);
-        gl_FragColor = texture2D(uTexture, clamp(uv + shakeOffset, 0.0, 1.0));
+        vec4 col = texture2D(uTexture, clamp(uv + shakeOffset, 0.0, 1.0));
+        gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
         return;
       }
       
       if (uEffectType == $EFFECT_ZOOM) {
         float zoom = 1.0 + (sin(uTime * 7.0) * 0.5 + 0.5) * (intensity * 0.35);
         vec2 centered = (uv - 0.5) / zoom + 0.5;
-        gl_FragColor = texture2D(uTexture, clamp(centered, 0.0, 1.0));
+        vec4 col = texture2D(uTexture, clamp(centered, 0.0, 1.0));
+        gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
         return;
       }
       
@@ -476,7 +479,8 @@ object GpuShaders {
         float c = cos(angle);
         vec2 centered = uv - 0.5;
         vec2 rotated = vec2(c * centered.x - s * centered.y, s * centered.x + c * centered.y) + 0.5;
-        gl_FragColor = texture2D(uTexture, clamp(rotated, 0.0, 1.0));
+        vec4 col = texture2D(uTexture, clamp(rotated, 0.0, 1.0));
+        gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
         return;
       }
       
@@ -484,7 +488,7 @@ object GpuShaders {
         float flashPhase = fract(uTime * 3.0);
         float flashStrength = pow(1.0 - flashPhase, 3.0) * intensity;
         vec4 col = texture2D(uTexture, uv);
-        gl_FragColor = vec4(mix(col.rgb, vec3(1.0), flashStrength), col.a);
+        gl_FragColor = vec4(clamp(mix(col.rgb, vec3(1.0), flashStrength), 0.0, 1.0), col.a);
         return;
       }
       
@@ -502,7 +506,7 @@ object GpuShaders {
         float g = texture2D(uTexture, uvG).g;
         float b = texture2D(uTexture, uvB).b;
         float a = texture2D(uTexture, uvG).a;
-        gl_FragColor = vec4(r, g, b, a);
+        gl_FragColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), a);
         return;
       }
       
@@ -512,7 +516,7 @@ object GpuShaders {
         float g = texture2D(uTexture, uv).g;
         float b = texture2D(uTexture, clamp(uv - offset, 0.0, 1.0)).b;
         float a = texture2D(uTexture, uv).a;
-        gl_FragColor = vec4(r, g, b, a);
+        gl_FragColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), a);
         return;
       }
       
@@ -521,7 +525,8 @@ object GpuShaders {
           sin(uv.y * 28.0 + uTime * 6.0),
           cos(uv.x * 28.0 + uTime * 6.0)
         ) * (0.028 * intensity);
-        gl_FragColor = texture2D(uTexture, clamp(uv + wave, 0.0, 1.0));
+        vec4 col = texture2D(uTexture, clamp(uv + wave, 0.0, 1.0));
+        gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
         return;
       }
       
@@ -534,7 +539,7 @@ object GpuShaders {
                        pow(max(0.0, 1.0 - abs(uv.x - flareCenter.x) * 1.6), 1.5);
         float halo = smoothstep(0.32, 0.36, dist) * smoothstep(0.40, 0.36, dist) * 0.7;
         vec3 flareCol = (vec3(1.0, 0.88, 0.55) * (star + streak * 1.6) + vec3(0.45, 0.75, 1.0) * halo) * (intensity * 1.4);
-        gl_FragColor = vec4(base.rgb + flareCol, base.a);
+        gl_FragColor = vec4(clamp(base.rgb + flareCol, 0.0, 1.0), base.a);
         return;
       }
       
@@ -545,12 +550,13 @@ object GpuShaders {
         vec3 leakColor1 = vec3(1.0, 0.62, 0.25) * leak1 * 1.3;
         vec3 leakColor2 = vec3(1.0, 0.25, 0.55) * leak2 * 1.0;
         vec3 totalLeak = (leakColor1 + leakColor2) * intensity;
-        gl_FragColor = vec4(base.rgb + totalLeak, base.a);
+        gl_FragColor = vec4(clamp(base.rgb + totalLeak, 0.0, 1.0), base.a);
         return;
       }
       
       // Default
-      gl_FragColor = texture2D(uTexture, uv);
+      vec4 def = texture2D(uTexture, uv);
+      gl_FragColor = vec4(clamp(def.rgb, 0.0, 1.0), def.a);
     }
   """
 }

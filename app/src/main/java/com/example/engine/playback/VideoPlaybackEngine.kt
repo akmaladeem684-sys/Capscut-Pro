@@ -127,7 +127,7 @@ class VideoPlaybackEngine(
       if (p == null) {
         p = try {
           ExoPlayer.Builder(context.applicationContext, DefaultRenderersFactory(context.applicationContext).setEnableDecoderFallback(true))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(1000, 5000, 200, 500).build())
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 5000, 250, 500).build())
             .setSeekParameters(SeekParameters.CLOSEST_SYNC).build().apply { repeatMode = Player.REPEAT_MODE_OFF }
         } catch (e: Exception) {
           Log.w(TAG, "Overlay player creation failed", e); continue
