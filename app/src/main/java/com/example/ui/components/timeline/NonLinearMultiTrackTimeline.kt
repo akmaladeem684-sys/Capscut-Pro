@@ -250,6 +250,7 @@ fun NonLinearTimelineView(
   onClipClick: (clipId: String) -> Unit,
   onSetCoverClick: () -> Unit,
   modifier: Modifier = Modifier,
+  onPausePlayback: (() -> Unit)? = null,
   onSplitClip: ((clipId: String) -> Unit)? = null,
   onDeleteClip: ((clipId: String) -> Unit)? = null
 ) {
@@ -260,6 +261,7 @@ fun NonLinearTimelineView(
 
   var isUserScrubbing by remember { mutableStateOf(false) }
   val currentOnSeek by rememberUpdatedState(onSeek)
+  val currentOnPause by rememberUpdatedState(onPausePlayback)
 
   // Zoom & Metric configuration
   val basePixelsPerSecond = 55f * timelineState.zoomFactor
@@ -394,9 +396,22 @@ fun NonLinearTimelineView(
         modifier = Modifier
           .fillMaxSize()
           .horizontalScroll(horizontalScrollState)
-          .pointerInput(safeTotalDurationMs, pixelsPerMs) {
+          .pointerInput(safeTotalDurationMs, pixelsPerMs, timelineState.isPlaying) {
+            detectTapGestures(
+              onPress = {
+                // If video is playing, touching anywhere on the timeline immediately pauses playback
+                if (timelineState.isPlaying) {
+                  currentOnPause?.invoke()
+                }
+              }
+            )
+          }
+          .pointerInput(safeTotalDurationMs, pixelsPerMs, timelineState.isPlaying) {
             detectDragGestures(
               onDragStart = { offset ->
+                if (timelineState.isPlaying) {
+                  currentOnPause?.invoke()
+                }
                 isUserScrubbing = true
                 val currentScroll = horizontalScrollState.value
                 val touchContentX = currentScroll + offset.x
@@ -451,8 +466,18 @@ fun NonLinearTimelineView(
                 headerAreaWidthDp = headerAreaWidthDp,
                 selectedClipId = timelineState.selectedClipId,
                 coverThumbnailUri = timelineState.coverThumbnailUri,
-                onClipClick = onClipClick,
-                onSetCoverClick = onSetCoverClick
+                onClipClick = { clipId ->
+                  if (timelineState.isPlaying) {
+                    currentOnPause?.invoke()
+                  }
+                  onClipClick(clipId)
+                },
+                onSetCoverClick = {
+                  if (timelineState.isPlaying) {
+                    currentOnPause?.invoke()
+                  }
+                  onSetCoverClick()
+                }
               )
             }
           }
