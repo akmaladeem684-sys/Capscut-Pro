@@ -771,6 +771,32 @@ fun FiltersToolPanel(
       }
 
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Toggle Filter On/Off for current clip
+        FilledTonalIconButton(
+          onClick = {
+            if (currentFilter.type != FilterType.NONE) {
+              currentFilter = FilterSettings(type = FilterType.NONE, intensity = 1.0f)
+              viewModel.timelineEngine.updateFilter(currentFilter, selectedClip?.id)
+            } else {
+              currentFilter = FilterSettings(type = FilterType.CINEMATIC, intensity = 1.0f)
+              viewModel.timelineEngine.updateFilter(currentFilter, selectedClip?.id)
+            }
+          },
+          colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = if (currentFilter.type != FilterType.NONE) PurpleAccent.copy(alpha = 0.25f) else StudioSurfaceVariant,
+            contentColor = if (currentFilter.type != FilterType.NONE) PurpleAccent else TextSecondary
+          ),
+          modifier = Modifier
+            .size(36.dp)
+            .testTag("filter_toggle_segment_button")
+        ) {
+          Icon(
+            if (currentFilter.type != FilterType.NONE) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+            contentDescription = "Toggle Filter for Segment",
+            modifier = Modifier.size(18.dp)
+          )
+        }
+
         if (currentFilter.type != FilterType.NONE) {
           TextButton(
             onClick = {
@@ -972,6 +998,39 @@ fun FiltersToolPanel(
                 }
               }
 
+              // Apply to All Clips button
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = StudioSurface,
+                border = BorderStroke(1.dp, StudioBorder),
+                modifier = Modifier
+                  .clip(RoundedCornerShape(8.dp))
+                  .clickable {
+                    viewModel.timelineEngine.applyFilterToAllClips(currentFilter)
+                  }
+                  .testTag("filter_apply_all_button")
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                  Icon(
+                    Icons.Default.DoneAll,
+                    contentDescription = "Apply to All Clips",
+                    tint = PurpleAccent,
+                    modifier = Modifier.size(14.dp)
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text(
+                    text = "Apply All",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = PurpleAccent
+                    )
+                  )
+                }
+              }
             }
           }
         }

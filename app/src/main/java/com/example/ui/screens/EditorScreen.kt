@@ -137,6 +137,11 @@ fun EditorScreen(
   val isTracksSyncEnabled by viewModel.timelineEngine.isTracksSyncEnabled.collectAsState()
   val editorTools by viewModel.editorTools.collectAsState()
 
+  LaunchedEffect(Unit) {
+    viewModel.playbackEngine.updateTimeline(viewModel.timelineEngine.timeline.value)
+    viewModel.playbackEngine.seekTo(viewModel.timelineEngine.currentPositionMs.value)
+  }
+
   val configuration = LocalConfiguration.current
   val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
   val coroutineScope = rememberCoroutineScope()
@@ -1461,11 +1466,15 @@ fun VideoPreviewSurface(
                       ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     player.setVideoTextureView(this)
+                    tag = player
                     android.util.Log.d("VideoPreviewSurface", "TextureView created and attached to ExoPlayer")
                   }
                 },
                 update = { tv ->
-                  player.setVideoTextureView(tv)
+                  if (tv.tag != player) {
+                    player.setVideoTextureView(tv)
+                    tv.tag = player
+                  }
                   val paint = if (isIdentityFilter) {
                     null
                   } else {

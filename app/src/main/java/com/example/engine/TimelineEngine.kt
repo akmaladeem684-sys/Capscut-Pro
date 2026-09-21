@@ -3085,6 +3085,73 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
     }
   }
 
+  fun applyFilterToAllClips(filter: FilterSettings) {
+    recordHistory()
+    val newVideos = _timeline.value.videoClips.map { it.copy(filter = filter) }
+    val newOverlays = _timeline.value.overlayClips.map { it.copy(filter = filter) }
+    _timeline.value = _timeline.value.copy(
+      videoClips = newVideos,
+      overlayClips = newOverlays,
+      filter = FilterSettings(type = FilterType.NONE, intensity = 1.0f)
+    )
+  }
+
+  fun toggleClipFilter(clipId: String? = null): Boolean {
+    val playheadClipId = _timeline.value.videoClips.find {
+      _currentPositionMs.value >= it.timelineStartMs && _currentPositionMs.value < it.timelineStartMs + it.durationMs
+    }?.id ?: _timeline.value.videoClips.firstOrNull()?.id
+
+    val targetId = clipId ?: when (val sel = _selectedElement.value) {
+      is SelectedTrackElement.Video -> sel.clipId
+      is SelectedTrackElement.Overlay -> sel.clipId
+      else -> null
+    } ?: playheadClipId ?: return false
+
+    recordHistory()
+    var toggled = false
+    val newVideos = _timeline.value.videoClips.map { clip ->
+      if (clip.id == targetId) {
+        toggled = true
+        val current = clip.filter
+        if (current == null || current.type == FilterType.NONE) {
+          clip.copy(filter = FilterSettings(type = FilterType.CINEMATIC, intensity = 1.0f))
+        } else {
+          clip.copy(filter = FilterSettings(type = FilterType.NONE, intensity = 1.0f))
+        }
+      } else clip
+    }
+    val newOverlays = _timeline.value.overlayClips.map { clip ->
+      if (clip.id == targetId) {
+        toggled = true
+        val current = clip.filter
+        if (current == null || current.type == FilterType.NONE) {
+          clip.copy(filter = FilterSettings(type = FilterType.CINEMATIC, intensity = 1.0f))
+        } else {
+          clip.copy(filter = FilterSettings(type = FilterType.NONE, intensity = 1.0f))
+        }
+      } else clip
+    }
+    if (toggled) {
+      _timeline.value = _timeline.value.copy(
+        videoClips = newVideos,
+        overlayClips = newOverlays
+      )
+    }
+    return toggled
+  }
+
+  fun clearAllClipFilters() {
+    recordHistory()
+    val noneFilter = FilterSettings(type = FilterType.NONE, intensity = 1.0f)
+    val newVideos = _timeline.value.videoClips.map { it.copy(filter = noneFilter) }
+    val newOverlays = _timeline.value.overlayClips.map { it.copy(filter = noneFilter) }
+    _timeline.value = _timeline.value.copy(
+      videoClips = newVideos,
+      overlayClips = newOverlays,
+      filter = noneFilter
+    )
+  }
+
 
   // --- Audio Operations ---
 

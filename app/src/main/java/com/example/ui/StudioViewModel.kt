@@ -228,7 +228,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     // Sync Timeline changes with Playback Engine, mark unsaved, and persist recovery snapshot
     viewModelScope.launch {
       timelineEngine.timeline.collectLatest { timeline ->
-        if (_currentScreen.value == AppScreen.EDITOR) playbackEngine.updateTimeline(timeline)
+        playbackEngine.updateTimeline(timeline)
         if (_activeProjectId.value.isNotBlank() && _currentScreen.value == AppScreen.EDITOR) {
           _saveState.value = _saveState.value.copy(status = ProjectSaveStatus.UNSAVED)
           // Debounce crash recovery snapshot so every keystroke or trim is immediately protected
@@ -254,7 +254,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     // Monitor playback state from TimelineEngine
     viewModelScope.launch {
       timelineEngine.isPlaying.collectLatest { isPlaying ->
-        if (_currentScreen.value != AppScreen.EDITOR) return@collectLatest
         if (isPlaying) {
           playbackEngine.play()
         } else {
@@ -266,7 +265,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     // Sync seeking from timeline UI into playback engine
     viewModelScope.launch {
       timelineEngine.currentPositionMs.collectLatest { posMs ->
-        if (_currentScreen.value == AppScreen.EDITOR && !isSyncingFromPlayback && !timelineEngine.isPlaying.value && !playbackEngine.isScrubbing) {
+        if (!isSyncingFromPlayback && !timelineEngine.isPlaying.value && !playbackEngine.isScrubbing) {
           playbackEngine.seekTo(posMs)
         }
       }
@@ -279,11 +278,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   fun navigateTo(screen: AppScreen) {
     if (screen != AppScreen.EDITOR) {
       timelineEngine.pause()
+      playbackEngine.pause()
     }
     _currentScreen.value = screen
     if (screen == AppScreen.EDITOR) {
-      // Initialize the media pipeline only when the editor is actually opened.
+      // Initialize the media pipeline immediately when the editor is opened.
       playbackEngine.updateTimeline(timelineEngine.timeline.value)
+      playbackEngine.seekTo(timelineEngine.currentPositionMs.value)
     }
   }
 
@@ -344,7 +345,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     timelineEngine.loadTimeline(initialTimeline)
     saveCurrentProject()
-    _currentScreen.value = AppScreen.EDITOR
+    navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
   }
 
@@ -505,7 +506,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
     timelineEngine.loadTimeline(loadedTimeline)
     _saveState.value = ProjectSaveState(ProjectSaveStatus.SAVED, project.lastEditedTime)
-    _currentScreen.value = AppScreen.EDITOR
+    navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
   }
 
@@ -546,7 +547,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     val generatedTimeline = template.createTimeline(mediaReplacements, textReplacements)
     timelineEngine.loadTimeline(generatedTimeline)
     saveCurrentProject()
-    _currentScreen.value = AppScreen.EDITOR
+    navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
   }
 
@@ -599,7 +600,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         timelineEngine.loadTimeline(recoveredTimeline)
       }
       _saveState.value = ProjectSaveState(ProjectSaveStatus.UNSAVED, session.timestamp)
-      _currentScreen.value = AppScreen.EDITOR
+      navigateTo(AppScreen.EDITOR)
       checkMissingMedia()
     }
   }
