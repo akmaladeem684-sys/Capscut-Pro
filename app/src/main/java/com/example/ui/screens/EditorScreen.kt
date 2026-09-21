@@ -613,45 +613,14 @@ fun EditorScreen(
                     .fillMaxWidth()
                     .weight(1f)
                 ) {
-                  val nlTimelineState = remember(timeline, currentPosMs, selectedElement, multiTrackZoom) {
-                    NonLinearTimelineAdapter.toTimelineState(
-                      timeline = timeline,
-                      playheadMs = currentPosMs,
-                      selectedElement = selectedElement,
-                      zoomLevelPxPerSec = (multiTrackZoom * 100f).coerceIn(20f, 600f)
-                    )
-                  }
+                  val masterClock = remember { com.ahstudio.editor.timeline.clock.MasterTimelineClock() }
+                  val masterEngine = remember { com.ahstudio.editor.timeline.engine.TimelineEngine(masterClock) }
+                  val masterTicker = remember { com.ahstudio.editor.timeline.playback.ChoreographerTicker() }
+                  val masterPlaybackController = remember { com.ahstudio.editor.timeline.playback.PlaybackController(masterClock, masterTicker) }
 
-                  NonLinearTimelineComponent(
-                    state = nlTimelineState,
-                    isPlaying = isPlaying,
-                    onTogglePlayPause = { viewModel.timelineEngine.togglePlayPause() },
-                    onAction = { action ->
-                      NonLinearTimelineAdapter.dispatchActionToTimelineEngine(
-                        action = action,
-                        timeline = timeline,
-                        timelineEngine = viewModel.timelineEngine,
-                        playbackEngine = viewModel.playbackEngine,
-                        onSeekScrub = { viewModel.onScrubProgress(it) }
-                      )
-                    },
-                    onAddMedia = {
-                      try {
-                        timelineMediaPickerLauncher.launch(
-                          PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
-                        )
-                      } catch (e: Exception) {
-                        viewModel.setActiveToolbarTab(EditorToolbarTab.MEDIA)
-                      }
-                    },
-                    onAddAudio = {
-                      viewModel.setActiveToolbarTab(EditorToolbarTab.AUDIO)
-                    },
-                    onAddText = {
-                      activeTextSubTool = TextSubTool.TEXT_TEMPLATES
-                      viewModel.setActiveToolbarTab(EditorToolbarTab.TEXT)
-                    },
-                    showBottomActionBar = false,
+                  com.ahstudio.editor.timeline.ui.MasterTimelineView(
+                    engine = masterEngine,
+                    playbackController = masterPlaybackController,
                     modifier = Modifier.fillMaxSize()
                   )
                 }
