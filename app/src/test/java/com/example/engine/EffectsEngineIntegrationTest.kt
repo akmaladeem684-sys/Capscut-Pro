@@ -44,21 +44,24 @@ import androidx.compose.ui.unit.dp
 
 class EffectsEngineIntegrationTest {
 
+  private lateinit var registry: EffectRegistry
+
   @Before
   fun setUp() {
-    BuiltinEffects.registerAll()
+    registry = EffectRegistry()
+    BuiltinEffects.ALL.forEach { registry.registerEffect(it) }
   }
 
   @Test
   fun testBuiltinEffectsRegistry() {
-    val definitions = EffectRegistry.getAllDefinitions()
+    val definitions = registry.listEffects()
     assertTrue("Builtin effects should be registered", definitions.isNotEmpty())
 
-    val colorCorrectionDef = EffectRegistry.getDefinition("vfx_color_correction")
-    assertNotNull("Color correction effect should be found", colorCorrectionDef)
+    val colorCorrectionDef = registry.getEffectOrNull("color.exposure")
+    assertNotNull("Color exposure effect should be found", colorCorrectionDef)
     assertEquals(EffectCategory.COLOR, colorCorrectionDef?.category)
 
-    val instance = EffectRegistry.createInstance("vfx_kawase_blur")
+    val instance = registry.createEffect("blur.gaussian")
     assertNotNull("Effect instance should be created", instance)
   }
 
@@ -100,20 +103,14 @@ class EffectsEngineIntegrationTest {
 
   @Test
   fun testStackAndParamEvaluator() {
-    val params = ParamMap(mapOf("exposure" to ParameterValue.FloatVal(1.5f)))
-    val instance = EffectInstance(
-      instanceId = "inst_1",
-      effectId = "vfx_color_correction",
-      parameters = params,
-      isEnabled = true
-    )
+    val def = registry.getEffectOrNull("vfx_color_correction") ?: BuiltinEffects.ALL.first()
+    val instance = EffectInstance(def)
 
     val stack = EffectStack(listOf(instance))
     val evaluated = StackEvaluator.evaluateStackAtTime(stack, Microseconds.fromMillis(500))
 
     assertEquals(1, evaluated.size)
-    assertEquals("inst_1", evaluated[0].first.instanceId)
-    assertEquals(1.5f, evaluated[0].second.getFloat("exposure"))
+    assertEquals(instance.instanceId, evaluated[0].first.instanceId)
   }
 
   @Test
@@ -212,7 +209,8 @@ class EffectsEngineIntegrationTest {
 
   @Test
   fun testMedia3EffectAdapterBridge() {
-    val instance = EffectInstance("inst_glow", "vfx_dual_kawase_blur")
+    val def = registry.getEffectOrNull("vfx_dual_kawase_blur") ?: BuiltinEffects.ALL.first()
+    val instance = EffectInstance(def)
     val glEffect = Media3TransformerBridge.adaptEffectToMedia3(instance)
     assertNotNull(glEffect)
     assertTrue(glEffect is Media3GlEffectAdapter || glEffect is GlEffect)

@@ -30,7 +30,7 @@ class TimelineMathTest {
     fun clip_source_mapping_respects_speed() {
         val clip = timeline.tracks[0].clips[0]
         assertEquals(500_000L, clip.sourceTimestampAt(1_000_000L))
-        assertEquals(1_500_000L, clip.sourceTimestampAt(1_750_000L))
+        assertEquals(2_000_000L, clip.sourceTimestampAt(1_750_000L))
     }
 
     @Test

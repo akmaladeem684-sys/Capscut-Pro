@@ -408,6 +408,27 @@ class AsyncFramePipelineEngine(private val context: Context) {
       // 7. Video Frame Hardware Composition Loop
       val totalAudioFrames = if (hasAudio) masterPcm.size / audioChannels else 0
       var fedAudioFrames = 0
+
+      // Pre-prime the Audio Encoder with initial samples so output format is determined immediately
+      if (hasAudio && audioEncoder != null && totalAudioFrames > 0) {
+        val primeFrames = min(2048, totalAudioFrames)
+        val primeIndex = audioEncoder.dequeueInputBuffer(10_000L)
+        if (primeIndex >= 0) {
+          val inputBuffer = audioEncoder.getInputBuffer(primeIndex)
+          if (inputBuffer != null) {
+            inputBuffer.clear()
+            inputBuffer.order(ByteOrder.nativeOrder())
+            val samplesToFeed = primeFrames * audioChannels
+            for (k in 0 until samplesToFeed) {
+              val sample = if (k < masterPcm.size) masterPcm[k] else 0.toShort()
+              inputBuffer.putShort(sample)
+            }
+            audioEncoder.queueInputBuffer(primeIndex, 0, samplesToFeed * 2, 0L, 0)
+            fedAudioFrames += primeFrames
+          }
+        }
+      }
+
       val renderCompleteLatch = CountDownLatch(1)
       val maxConcurrentDecoders = DecoderManager.MAX_RECOMMENDED_HARDWARE_DECODERS
 
@@ -549,7 +570,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
               while (fedAudioFrames < targetAudioFrames && !cancelled.get()) {
                 val framesToFeed = min(1024, targetAudioFrames - fedAudioFrames)
                 if (framesToFeed <= 0) break
-                val inputIndex = audioEncoder.dequeueInputBuffer(0L)
+                val inputIndex = audioEncoder.dequeueInputBuffer(2_000L)
                 if (inputIndex >= 0) {
                   val inputBuffer = audioEncoder.getInputBuffer(inputIndex)
                   if (inputBuffer != null) {

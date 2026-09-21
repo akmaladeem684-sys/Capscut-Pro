@@ -254,10 +254,28 @@ class MuxerCoordinator(
   }
 
   @Synchronized
+  fun forceStartIfPossible() {
+    if (isStarted || isStopped) return
+    if (videoTrackIndex >= 0) {
+      try {
+        mediaMuxer.start()
+        isStarted = true
+        Log.i(tag, "MediaMuxer started (videoTrack=$videoTrackIndex, audioTrack=$audioTrackIndex)")
+        flushPending()
+      } catch (e: Exception) {
+        Log.e(tag, "Failed to force start MediaMuxer", e)
+      }
+    }
+  }
+
+  @Synchronized
   fun stopAndRelease(): Boolean {
     if (isStopped) return true
     var success = true
     try {
+      if (!isStarted && videoTrackIndex >= 0) {
+        forceStartIfPossible()
+      }
       if (isStarted) {
         flushPending()
         try {

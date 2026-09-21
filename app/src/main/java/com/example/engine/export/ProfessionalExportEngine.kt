@@ -309,25 +309,75 @@ class ProfessionalExportEngine(private val context: Context) {
       }
       activePipeline = null
       checkCancelled()
-      if (rendered == null || !rendered.exists() || rendered.length() <= 0L) {
-        return@withContext Result.failure(IllegalStateException("Hardware render pipeline produced no output."))
+
+      var effectiveRendered: File? = rendered
+      if (effectiveRendered == null || !effectiveRendered.exists() || effectiveRendered.length() <= 0L) {
+        checkCancelled()
+        Log.w(tag, "Hardware GPU pipeline produced no output. Engaging resilient fallback composition engine...")
+        _progress.value = ProfessionalExportProgress(
+          ProfessionalExportStage.ENCODING_VIDEO,
+          0.15f,
+          message = "Rendering composition via resilient encoder..."
+        )
+        val fallbackExporter = VideoExporter(context)
+        val fallbackProgressJob = launch(Dispatchers.Default) {
+          fallbackExporter.exportState.collect { state ->
+            when (state) {
+              is ExportState.Rendering -> {
+                _progress.value = ProfessionalExportProgress(
+                  ProfessionalExportStage.ENCODING_VIDEO,
+                  0.15f + state.progressPercent * 0.80f,
+                  message = state.status
+                )
+              }
+              else -> {}
+            }
+          }
+        }
+        try {
+          effectiveRendered = fallbackExporter.exportWithHardwarePipeline(projectName, timeline, config, outputFile)
+        } catch (t: Throwable) {
+          Log.e(tag, "Resilient fallback export pipeline failed", t)
+        } finally {
+          fallbackProgressJob.cancel()
+        }
+      }
+
+      checkCancelled()
+      if (effectiveRendered == null || !effectiveRendered.exists() || effectiveRendered.length() <= 0L) {
+        return@withContext Result.failure(IllegalStateException("Export pipeline could not write output video."))
       }
 
       // Moov Atom Flush Guarantee: Insert 150ms delay to let the OS flush file buffers
       delay(150L)
       _progress.value = ProfessionalExportProgress(ProfessionalExportStage.VERIFYING, 0.96f, plan.durationMs, message = "Verifying exported video integrity...")
-      val validation = ExportValidator.validate(rendered, config, plan.durationMs, requireAudio && hasAudio, dimensions)
+      val validation = ExportValidator.validate(effectiveRendered, config, plan.durationMs, requireAudio && hasAudio, dimensions)
       Log.i(tag, "[VALIDATION_RESULT] valid=${validation.valid} message=${validation.message} duration=${validation.durationMs}ms videoCodec=${validation.videoCodec} audioCodec=${validation.audioCodec} res=${validation.width}x${validation.height}")
       if (!validation.valid) {
-        rendered.delete()
-        return@withContext Result.failure(IllegalStateException(validation.message))
+        if (effectiveRendered == rendered) {
+          Log.w(tag, "Primary render validation failed (${validation.message}); retrying with resilient pipeline...")
+          val fallbackExporter = VideoExporter(context)
+          effectiveRendered = fallbackExporter.exportWithHardwarePipeline(projectName, timeline, config, outputFile)
+          if (effectiveRendered != null && effectiveRendered.exists() && effectiveRendered.length() > 4096L) {
+            val fallbackValidation = ExportValidator.validate(effectiveRendered, config, plan.durationMs, requireAudio && hasAudio, dimensions)
+            if (!fallbackValidation.valid) {
+              effectiveRendered.delete()
+              return@withContext Result.failure(IllegalStateException(fallbackValidation.message))
+            }
+          } else {
+            return@withContext Result.failure(IllegalStateException(validation.message))
+          }
+        } else {
+          effectiveRendered.delete()
+          return@withContext Result.failure(IllegalStateException(validation.message))
+        }
       }
       checkCancelled()
 
       outputFile.parentFile?.mkdirs()
-      if (rendered.absolutePath != outputFile.absolutePath) {
-        rendered.copyTo(outputFile, overwrite = true)
-        rendered.delete()
+      if (effectiveRendered.absolutePath != outputFile.absolutePath) {
+        effectiveRendered.copyTo(outputFile, overwrite = true)
+        effectiveRendered.delete()
       }
       if (!outputFile.exists() || outputFile.length() <= 0L) {
         outputFile.delete()
