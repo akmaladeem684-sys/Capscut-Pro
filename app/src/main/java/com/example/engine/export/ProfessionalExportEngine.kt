@@ -120,8 +120,8 @@ object ExportValidator {
     }
     val fileLength = file.length()
     if (fileLength <= 4096L) {
-      Log.e(TAG, "Validation failed: File is incomplete or too small (${fileLength} bytes, expected > 4096 bytes) at ${file.absolutePath}")
-      return ExportValidationResult(false, "Output file is incomplete or too small ($fileLength bytes).")
+      Log.e(TAG, "Validation failed: File is empty, incomplete, or too small (${fileLength} bytes, expected > 4096 bytes) at ${file.absolutePath}")
+      return ExportValidationResult(false, "Output file is empty, incomplete, or too small ($fileLength bytes).")
     }
 
     var fis: FileInputStream? = null

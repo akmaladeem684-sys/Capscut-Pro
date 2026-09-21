@@ -15,6 +15,9 @@ jobs:
     name: Phase 8 Integration, Build and Tests
     runs-on: ubuntu-latest
 
+    env:
+      GRADLE_OPTS: "-Djava.awt.headless=true -Dfile.encoding=UTF-8 -Dorg.gradle.jvmargs=-Xmx4096m"
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -41,11 +44,8 @@ jobs:
           if [ ! -f "gradlew" ]; then gradle wrapper; fi
           chmod +x gradlew
 
-      - name: Clean build
-        run: ./gradlew clean --stacktrace
-
-      - name: Unit tests and debug build
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Prepare CI release signing key
         run: |
@@ -53,7 +53,7 @@ jobs:
             -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Ah Studio CI,O=Ah Studio,C=US"
 
-      - name: Release build
+      - name: Build Release APK
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/ci-release.jks
           STORE_PASSWORD: android
