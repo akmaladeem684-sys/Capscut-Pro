@@ -396,6 +396,24 @@ object GpuShaders {
   const val EFFECT_DISTORTION = 9
   const val EFFECT_LENS_FLARE = 10
   const val EFFECT_LIGHT_LEAK = 11
+  const val EFFECT_VIGNETTE = 12
+  const val EFFECT_NOISE = 13
+  const val EFFECT_CRT = 14
+  const val EFFECT_VHS = 15
+  const val EFFECT_THERMAL = 16
+  const val EFFECT_BLUEPRINT = 17
+  const val EFFECT_ACID_TRIP = 18
+  const val EFFECT_POP_ART = 19
+  const val EFFECT_SEPIA = 20
+  const val EFFECT_POLAROID = 21
+  const val EFFECT_OIL_PAINTING = 22
+  const val EFFECT_HALFTONE = 23
+  const val EFFECT_COMIC = 24
+  const val EFFECT_SOLAR_FLARE = 25
+  const val EFFECT_BOKEH = 26
+  const val EFFECT_PRISM = 27
+  const val EFFECT_MIRROR = 28
+  const val EFFECT_RIPPLE = 29
 
   val EFFECT_FRAGMENT_SHADER = """
     precision mediump float;
@@ -529,6 +547,16 @@ object GpuShaders {
         gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
         return;
       }
+
+      if (uEffectType == $EFFECT_RIPPLE) {
+        vec2 c = uv - vec2(0.5);
+        float dist = length(c);
+        float rip = sin(dist * 35.0 - uTime * 8.0) * (0.02 * intensity);
+        vec2 ripUv = uv + (dist > 0.001 ? (c / dist) * rip : vec2(0.0));
+        vec4 col = texture2D(uTexture, clamp(ripUv, 0.0, 1.0));
+        gl_FragColor = vec4(clamp(col.rgb, 0.0, 1.0), col.a);
+        return;
+      }
       
       if (uEffectType == $EFFECT_LENS_FLARE) {
         vec4 base = texture2D(uTexture, uv);
@@ -553,8 +581,171 @@ object GpuShaders {
         gl_FragColor = vec4(clamp(base.rgb + totalLeak, 0.0, 1.0), base.a);
         return;
       }
+
+      if (uEffectType == $EFFECT_VIGNETTE) {
+        vec4 col = texture2D(uTexture, uv);
+        vec2 d = uv - vec2(0.5);
+        float vig = smoothstep(0.8, 0.25, length(d) * (1.2 + intensity * 0.8));
+        gl_FragColor = vec4(col.rgb * vig, col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_NOISE) {
+        vec4 col = texture2D(uTexture, uv);
+        float n = fract(sin(dot(uv + vec2(fract(uTime * 17.0), fract(uTime * 23.0)), vec2(12.9898, 78.233))) * 43758.5453);
+        vec3 noisy = mix(col.rgb, col.rgb + (vec3(n) - 0.5) * 0.35, intensity);
+        gl_FragColor = vec4(clamp(noisy, 0.0, 1.0), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_CRT) {
+        float scanline = sin(uv.y * 360.0 + uTime * 10.0) * 0.12 * intensity;
+        vec4 col = texture2D(uTexture, uv);
+        vec3 crt = (col.rgb - scanline) * vec3(0.95, 1.05, 0.95);
+        gl_FragColor = vec4(clamp(crt, 0.0, 1.0), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_VHS) {
+        float scanY = floor(uv.y * 120.0);
+        float tapeNoise = fract(sin(dot(vec2(scanY, floor(uTime * 8.0)), vec2(12.9898, 78.233))) * 43758.5453);
+        float shift = (tapeNoise > 0.85) ? (tapeNoise - 0.85) * 0.05 * intensity : 0.0;
+        vec2 vUv = clamp(uv + vec2(shift, 0.0), 0.0, 1.0);
+        float r = texture2D(uTexture, clamp(vUv + vec2(0.008 * intensity, 0.0), 0.0, 1.0)).r;
+        float g = texture2D(uTexture, vUv).g;
+        float b = texture2D(uTexture, clamp(vUv - vec2(0.008 * intensity, 0.0), 0.0, 1.0)).b;
+        vec3 vhs = mix(vec3(r, g, b), vec3(r * 1.1, g * 0.95, b * 0.8), 0.4);
+        gl_FragColor = vec4(clamp(vhs, 0.0, 1.0), 1.0);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_THERMAL) {
+        vec4 col = texture2D(uTexture, uv);
+        float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 thermal;
+        if (luma < 0.33) {
+          thermal = mix(vec3(0.0, 0.0, 0.8), vec3(0.0, 0.8, 0.8), luma * 3.0);
+        } else if (luma < 0.66) {
+          thermal = mix(vec3(0.0, 0.8, 0.8), vec3(1.0, 0.9, 0.0), (luma - 0.33) * 3.0);
+        } else {
+          thermal = mix(vec3(1.0, 0.9, 0.0), vec3(1.0, 0.1, 0.0), (luma - 0.66) * 3.0);
+        }
+        gl_FragColor = vec4(mix(col.rgb, thermal, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_BLUEPRINT) {
+        vec4 col = texture2D(uTexture, uv);
+        float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 bp = vec3(0.05, 0.25, 0.75) + vec3(luma * 0.8);
+        gl_FragColor = vec4(mix(col.rgb, bp, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_ACID_TRIP) {
+        vec4 col = texture2D(uTexture, uv);
+        float angle = uTime * 3.0 * intensity;
+        vec3 rotated = vec3(
+          col.r * cos(angle) - col.g * sin(angle),
+          col.r * sin(angle) + col.g * cos(angle),
+          col.b
+        );
+        gl_FragColor = vec4(clamp(abs(rotated), 0.0, 1.0), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_POP_ART) {
+        vec4 col = texture2D(uTexture, uv);
+        vec3 pop = vec3(
+          step(0.4, col.r),
+          step(0.4, col.g),
+          step(0.4, col.b)
+        );
+        gl_FragColor = vec4(mix(col.rgb, pop, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_SEPIA) {
+        vec4 col = texture2D(uTexture, uv);
+        vec3 sepia = vec3(
+          dot(col.rgb, vec3(0.393, 0.769, 0.189)),
+          dot(col.rgb, vec3(0.349, 0.686, 0.168)),
+          dot(col.rgb, vec3(0.272, 0.534, 0.131))
+        );
+        gl_FragColor = vec4(mix(col.rgb, sepia, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_POLAROID) {
+        vec4 col = texture2D(uTexture, uv);
+        vec3 pol = col.rgb * vec3(1.15, 1.05, 0.88) + vec3(0.05, 0.04, 0.01);
+        gl_FragColor = vec4(mix(col.rgb, clamp(pol, 0.0, 1.0), intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_OIL_PAINTING) {
+        vec2 p = floor(uv / (uTexelSize * 3.0)) * (uTexelSize * 3.0);
+        vec4 col = texture2D(uTexture, p);
+        gl_FragColor = vec4(mix(texture2D(uTexture, uv).rgb, col.rgb, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_HALFTONE) {
+        vec4 col = texture2D(uTexture, uv);
+        float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+        vec2 dotPos = fract(uv / (uTexelSize * 6.0)) - vec2(0.5);
+        float circle = length(dotPos);
+        float radius = (1.0 - luma) * 0.65;
+        float dotCol = step(radius, circle);
+        gl_FragColor = vec4(mix(col.rgb, vec3(dotCol), intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_COMIC) {
+        vec4 col = texture2D(uTexture, uv);
+        vec3 q = floor(col.rgb * 4.0) / 4.0;
+        gl_FragColor = vec4(mix(col.rgb, q, intensity), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_SOLAR_FLARE) {
+        vec4 col = texture2D(uTexture, uv);
+        vec2 center = vec2(0.5 + sin(uTime * 0.8) * 0.2, 0.5 + cos(uTime * 0.8) * 0.2);
+        float d = distance(uv, center);
+        vec3 flare = vec3(1.0, 0.5, 0.1) * (1.0 - smoothstep(0.0, 0.6, d)) * intensity * 1.5;
+        gl_FragColor = vec4(clamp(col.rgb + flare, 0.0, 1.0), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_BOKEH) {
+        vec4 col = texture2D(uTexture, uv);
+        float d1 = distance(uv, vec2(0.2 + sin(uTime * 0.5) * 0.1, 0.3 + cos(uTime * 0.5) * 0.1));
+        float d2 = distance(uv, vec2(0.8 - sin(uTime * 0.4) * 0.1, 0.7 - cos(uTime * 0.4) * 0.1));
+        float b1 = smoothstep(0.18, 0.02, d1);
+        float b2 = smoothstep(0.22, 0.03, d2);
+        vec3 bokeh = (vec3(1.0, 0.8, 0.4) * b1 + vec3(0.4, 0.8, 1.0) * b2) * (intensity * 0.8);
+        gl_FragColor = vec4(clamp(col.rgb + bokeh, 0.0, 1.0), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_PRISM) {
+        vec4 col = texture2D(uTexture, uv);
+        float r = texture2D(uTexture, clamp(uv + vec2(0.012 * intensity, 0.008 * intensity), 0.0, 1.0)).r;
+        float g = texture2D(uTexture, uv).g;
+        float b = texture2D(uTexture, clamp(uv - vec2(0.012 * intensity, 0.008 * intensity), 0.0, 1.0)).b;
+        gl_FragColor = vec4(vec3(r, g, b), col.a);
+        return;
+      }
+
+      if (uEffectType == $EFFECT_MIRROR) {
+        vec2 mUv = uv;
+        if (mUv.x > 0.5) mUv.x = 1.0 - mUv.x;
+        vec4 col = texture2D(uTexture, mUv);
+        gl_FragColor = mix(texture2D(uTexture, uv), col, intensity);
+        return;
+      }
       
-      // Default
+      // Clean default passthrough
       vec4 def = texture2D(uTexture, uv);
       gl_FragColor = vec4(clamp(def.rgb, 0.0, 1.0), def.a);
     }

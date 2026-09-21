@@ -53,8 +53,15 @@ class GpuCompositionRenderer(private val context: Context) {
         EffectType.AI_SCI_FI_PORTAL, EffectType.AI_FREEZE_TIME,
         EffectType.AI_LIQUID_GOLD, EffectType.AI_GOLDEN_GOD,
         EffectType.AI_EXPANSION,
-        EffectType.AI_FANTASY_KINGDOM -> true
-        else -> false
+        EffectType.AI_FANTASY_KINGDOM,
+        EffectType.AI_STYLE_MORPH, EffectType.AI_ANIME_WORLD,
+        EffectType.ANIME_SILHOUETTE, EffectType.SKELETON_XRAY,
+        EffectType.FACE_BEAUTY, EffectType.SLIM_SHAPE,
+        EffectType.WATERCOLOR, EffectType.CHARCOAL_DRAW,
+        EffectType.PASTEL_DREAM, EffectType.COLOR_POP_SPLASH,
+        EffectType.Y2K_CHROME, EffectType.DIGICAM_2004,
+        EffectType.OLD_PAPER_TEXTURE -> true
+        else -> type.name.startsWith("VFX_BODY_") || type.name.startsWith("VFX_AI_") || type.name.startsWith("VFX_STICKER_")
       }
     }
 
@@ -67,8 +74,7 @@ class GpuCompositionRenderer(private val context: Context) {
         EffectType.MOTION_BLUR, EffectType.VFX_VIRAL_1, EffectType.VFX_VIRAL_14,
         EffectType.VFX_BLUR_2, EffectType.VFX_BLUR_4, EffectType.VFX_BLUR_5,
         EffectType.VFX_BLUR_6, EffectType.VFX_BLUR_7, EffectType.VFX_BLUR_14,
-        EffectType.GLOW, EffectType.HALO_GLOW, EffectType.BODY_AURA, EffectType.FIRE_AURA,
-        EffectType.LIGHTNING_BODY, EffectType.MUSCLE_GLOW, EffectType.DARK_SHADOW_AURA,
+        EffectType.GLOW, EffectType.HALO_GLOW,
         EffectType.VFX_LIGHT_4, EffectType.VFX_LIGHT_7, EffectType.VFX_LIGHT_14,
         EffectType.VFX_LIGHT_18, EffectType.VFX_LIGHT_19, EffectType.VFX_VIRAL_21,
         EffectType.VFX_VIRAL_22,
@@ -98,8 +104,14 @@ class GpuCompositionRenderer(private val context: Context) {
         EffectType.LIGHT_LEAK, EffectType.GOLDEN_HOUR, EffectType.BOKEH, EffectType.PARTY_PRISM,
         EffectType.VFX_LIGHT_1, EffectType.VFX_LIGHT_3, EffectType.VFX_LIGHT_5,
         EffectType.VFX_LIGHT_10, EffectType.VFX_LIGHT_17, EffectType.VFX_RETRO_7,
-        EffectType.VFX_VIRAL_24 -> true
-        else -> false
+        EffectType.VFX_VIRAL_24,
+        EffectType.VIGNETTE, EffectType.NOISE, EffectType.THERMAL_CAMERA,
+        EffectType.BLUEPRINT_CAD, EffectType.POP_ART_POSTER, EffectType.SEPIA_VINTAGE,
+        EffectType.POLAROID_VINTAGE, EffectType.OIL_PAINTING, EffectType.HALFTONE_DOT,
+        EffectType.COMIC_SKETCH, EffectType.MIRROR -> true
+        else -> type.name.startsWith("VFX_BLUR_") || type.name.startsWith("VFX_GLITCH_") ||
+                type.name.startsWith("VFX_LIGHT_") || type.name.startsWith("VFX_RETRO_") ||
+                type.name.startsWith("VFX_DISTORT_") || type.name.startsWith("VFX_COLOR_")
       }
     }
     private const val FLOAT_SIZE_BYTES = 4
@@ -1239,9 +1251,8 @@ class GpuCompositionRenderer(private val context: Context) {
       EffectType.VFX_BLUR_2, EffectType.VFX_BLUR_4, EffectType.VFX_BLUR_5,
       EffectType.VFX_BLUR_6, EffectType.VFX_BLUR_7, EffectType.VFX_BLUR_14 -> GpuShaders.EFFECT_MOTION_BLUR
 
-      // Glow, Aura, Halo
-      EffectType.GLOW, EffectType.HALO_GLOW, EffectType.BODY_AURA, EffectType.FIRE_AURA,
-      EffectType.LIGHTNING_BODY, EffectType.MUSCLE_GLOW, EffectType.DARK_SHADOW_AURA,
+      // Glow, Halo
+      EffectType.GLOW, EffectType.HALO_GLOW,
       EffectType.VFX_LIGHT_4, EffectType.VFX_LIGHT_7, EffectType.VFX_LIGHT_14,
       EffectType.VFX_LIGHT_18, EffectType.VFX_LIGHT_19, EffectType.VFX_VIRAL_21,
       EffectType.VFX_VIRAL_22 -> GpuShaders.EFFECT_GLOW
@@ -1264,34 +1275,55 @@ class GpuCompositionRenderer(private val context: Context) {
       EffectType.VFX_LIGHT_16, EffectType.VFX_VIRAL_23 -> GpuShaders.EFFECT_FLASH
 
       // Glitch, CRT, VHS
-      EffectType.GLITCH, EffectType.CRT_TV, EffectType.VHS_VINTAGE, EffectType.AI_GLITCH_REALITY,
+      EffectType.GLITCH, EffectType.AI_GLITCH_REALITY,
       EffectType.VFX_GLITCH_1, EffectType.VFX_GLITCH_2, EffectType.VFX_GLITCH_3,
       EffectType.VFX_GLITCH_6, EffectType.VFX_GLITCH_7, EffectType.VFX_GLITCH_8,
       EffectType.VFX_GLITCH_9, EffectType.VFX_GLITCH_10, EffectType.VFX_GLITCH_11,
       EffectType.VFX_GLITCH_13, EffectType.VFX_GLITCH_17, EffectType.VFX_GLITCH_18,
-      EffectType.VFX_GLITCH_20, EffectType.VFX_RETRO_1, EffectType.VFX_RETRO_10,
+      EffectType.VFX_GLITCH_20, EffectType.VFX_RETRO_10,
       EffectType.VFX_VIRAL_4, EffectType.VFX_VIRAL_30, EffectType.VFX_VIRAL_31 -> GpuShaders.EFFECT_GLITCH
+
+      EffectType.CRT_TV, EffectType.VFX_RETRO_1 -> GpuShaders.EFFECT_CRT
+      EffectType.VHS_VINTAGE -> GpuShaders.EFFECT_VHS
 
       // RGB Split
       EffectType.RGB_SPLIT, EffectType.VFX_VIRAL_5, EffectType.VFX_VIRAL_29,
       EffectType.VFX_GLITCH_12 -> GpuShaders.EFFECT_RGB_SPLIT
 
-      // Distortion, Wave, Ripple, Fisheye
-      EffectType.DISTORTION, EffectType.WAVE, EffectType.RIPPLE, EffectType.FISHEYE,
-      EffectType.ACID_TRIP, EffectType.FUNNY_ALIEN_WARP, EffectType.VFX_GLITCH_4,
+      // Distortion, Wave, Fisheye
+      EffectType.DISTORTION, EffectType.WAVE, EffectType.FISHEYE,
+      EffectType.FUNNY_ALIEN_WARP, EffectType.VFX_GLITCH_4,
       EffectType.VFX_GLITCH_5, EffectType.VFX_GLITCH_15, EffectType.VFX_VIRAL_8,
       EffectType.VFX_VIRAL_9, EffectType.VFX_3D_2 -> GpuShaders.EFFECT_DISTORTION
 
-      // Lens Flare
-      EffectType.LENS_FLARE, EffectType.SOLAR_FLARE, EffectType.VFX_LIGHT_2 -> GpuShaders.EFFECT_LENS_FLARE
+      EffectType.RIPPLE -> GpuShaders.EFFECT_RIPPLE
+
+      // Lens Flare & Solar Flare
+      EffectType.LENS_FLARE, EffectType.VFX_LIGHT_2 -> GpuShaders.EFFECT_LENS_FLARE
+      EffectType.SOLAR_FLARE -> GpuShaders.EFFECT_SOLAR_FLARE
 
       // Light Leak, Golden Hour, Bokeh, Prism
-      EffectType.LIGHT_LEAK, EffectType.GOLDEN_HOUR, EffectType.BOKEH, EffectType.PARTY_PRISM,
+      EffectType.LIGHT_LEAK, EffectType.GOLDEN_HOUR,
       EffectType.VFX_LIGHT_1, EffectType.VFX_LIGHT_3, EffectType.VFX_LIGHT_5,
       EffectType.VFX_LIGHT_10, EffectType.VFX_LIGHT_17, EffectType.VFX_RETRO_7,
       EffectType.VFX_VIRAL_24 -> GpuShaders.EFFECT_LIGHT_LEAK
 
-      else -> return
+      EffectType.BOKEH -> GpuShaders.EFFECT_BOKEH
+      EffectType.PARTY_PRISM -> GpuShaders.EFFECT_PRISM
+      EffectType.VIGNETTE -> GpuShaders.EFFECT_VIGNETTE
+      EffectType.NOISE -> GpuShaders.EFFECT_NOISE
+      EffectType.THERMAL_CAMERA -> GpuShaders.EFFECT_THERMAL
+      EffectType.BLUEPRINT_CAD -> GpuShaders.EFFECT_BLUEPRINT
+      EffectType.ACID_TRIP -> GpuShaders.EFFECT_ACID_TRIP
+      EffectType.POP_ART_POSTER -> GpuShaders.EFFECT_POP_ART
+      EffectType.SEPIA_VINTAGE -> GpuShaders.EFFECT_SEPIA
+      EffectType.POLAROID_VINTAGE -> GpuShaders.EFFECT_POLAROID
+      EffectType.OIL_PAINTING -> GpuShaders.EFFECT_OIL_PAINTING
+      EffectType.HALFTONE_DOT -> GpuShaders.EFFECT_HALFTONE
+      EffectType.COMIC_SKETCH -> GpuShaders.EFFECT_COMIC
+      EffectType.MIRROR -> GpuShaders.EFFECT_MIRROR
+
+      else -> -1
     }
 
     if (uEffectTypeHandle >= 0) GLES20.glUniform1i(uEffectTypeHandle, glEffectType)
