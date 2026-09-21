@@ -64,21 +64,4 @@ class EffectRegistry {
 
     @Synchronized
     fun size(): Int = canonical.size
-
-    companion object {
-        val shared = EffectRegistry()
-
-        @JvmStatic
-        fun register(def: EffectDefinition, factory: (() -> Any)? = null) {
-            if (!shared.hasEffect(def.id)) {
-                shared.registerEffect(def)
-            }
-        }
-
-        @JvmStatic
-        fun getDefinition(id: String): EffectDefinition? = shared.getEffectOrNull(id)
-
-        @JvmStatic
-        fun getAllDefinitions(): List<EffectDefinition> = shared.listEffects()
-    }
 }

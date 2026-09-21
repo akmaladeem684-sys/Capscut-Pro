@@ -20,65 +20,51 @@ import com.vfx.engine.core.transform.Transform2D
  */
 class EffectStack(val registry: EffectRegistry = EffectRegistry()) {
 
-    private val effectList = ArrayList<EffectInstance>()
+    private val effects = ArrayList<EffectInstance>()
     val transform = Transform2D()
 
-    constructor(initialEffects: List<EffectInstance>, registry: EffectRegistry = EffectRegistry()) : this(registry) {
-        initialEffects.forEach { addInstance(it) }
-    }
-
-    val size: Int get() = effectList.size
-    fun isEmpty(): Boolean = effectList.isEmpty()
-    fun effectAt(index: Int): EffectInstance = effectList[index]
-    fun effects(): List<EffectInstance> = effectList.toList()
-    val effects: List<EffectInstance> get() = effectList.toList()
-    fun indexOf(instance: EffectInstance): Int = effectList.indexOf(instance)
+    val size: Int get() = effects.size
+    fun isEmpty(): Boolean = effects.isEmpty()
+    fun effectAt(index: Int): EffectInstance = effects[index]
+    fun effects(): List<EffectInstance> = effects.toList()
+    fun indexOf(instance: EffectInstance): Int = effects.indexOf(instance)
 
     // ---------- mutation ----------
     /** Creates an instance from the registry and inserts at [index] (default: end). */
-    fun addEffect(id: String, index: Int = effectList.size): EffectInstance {
+    fun addEffect(id: String, index: Int = effects.size): EffectInstance {
         val inst = registry.createEffect(id)
-        effectList.add(index.coerceIn(0, effectList.size), inst)
+        effects.add(index.coerceIn(0, effects.size), inst)
         return inst
     }
 
     /** Inserts a host-created instance (e.g. pre-configured). */
-    fun addInstance(instance: EffectInstance, index: Int = effectList.size) {
-        effectList.add(index.coerceIn(0, effectList.size), instance)
+    fun addInstance(instance: EffectInstance, index: Int = effects.size) {
+        effects.add(index.coerceIn(0, effects.size), instance)
     }
 
-    fun addEffect(effect: EffectInstance): EffectStack {
-        addInstance(effect)
-        return this
-    }
-
-    fun removeEffect(instance: EffectInstance): Boolean = effectList.remove(instance)
-    fun removeAt(index: Int): EffectInstance = effectList.removeAt(index)
-    fun removeEffect(instanceId: String): EffectStack {
-        effectList.removeAll { it.id == instanceId || it.instanceId == instanceId }
-        return this
-    }
+    fun removeEffect(instance: EffectInstance): Boolean = effects.remove(instance)
+    fun removeAt(index: Int): EffectInstance = effects.removeAt(index)
 
     fun move(from: Int, to: Int) {
-        require(from in effectList.indices) { "move: bad source $from" }
-        require(to in effectList.indices) { "move: bad target $to" }
-        val e = effectList.removeAt(from)
-        effectList.add(to, e)
+        require(from in effects.indices) { "move: bad source $from" }
+        require(to in effects.indices) { "move: bad target $to" }
+        val e = effects.removeAt(from)
+        effects.add(to, e)
     }
 
-    fun clear() = effectList.clear()
+    fun clear() = effects.clear()
 
     /**
      * Duplicate an effect within the stack (inserted right after the original).
      * Copy includes params, keyframes, mask, blend, intensity.
      */
     fun duplicate(instance: EffectInstance): EffectInstance {
-        val index = effectList.indexOf(instance)
+        val index = effects.indexOf(instance)
         require(index >= 0) { "Instance not in stack" }
         val json = Json.parse(Json.write(instance.serialize()))
         val copy = registry.createEffect(instance.definition.id)
         copy.deserializeState(json.asObj()!!)
-        effectList.add(index + 1, copy)
+        effects.add(index + 1, copy)
         return copy
     }
 
@@ -90,19 +76,19 @@ class EffectStack(val registry: EffectRegistry = EffectRegistry()) {
      * Skipped effects: enabled == false, or intensity <= 1e-4 (provably a no-op).
      */
     fun resolveAt(timeUs: Long): List<ResolvedEffect> =
-        effectList
+        effects
             .filter { it.enabled && it.intensity > EFFECT_EPSILON }
             .map { ResolvedEffect(it, it.snapshotAt(timeUs)) }
 
     /** Max intensity in the stack — used by the pipeline to skip graph builds entirely. */
     fun anyActive(): Boolean =
-        effectList.any { it.enabled && it.intensity > EFFECT_EPSILON }
+        effects.any { it.enabled && it.intensity > EFFECT_EPSILON }
 
     // ---------- serialization ----------
     fun serialize(): Json.Obj = Json.obj(
         "version" to Json.Num(SCHEMA_VERSION.toDouble()),
         "transform" to serializeTransform(),
-        "effects" to Json.Arr(effectList.map { it.serialize() })
+        "effects" to Json.Arr(effects.map { it.serialize() })
     )
 
     /**
@@ -148,7 +134,7 @@ class EffectStack(val registry: EffectRegistry = EffectRegistry()) {
 
     private fun addInstanceOrdered(def: com.vfx.engine.core.effect.EffectDefinition): EffectInstance {
         val inst = EffectInstance(def)
-        effectList.add(inst)
+        effects.add(inst)
         return inst
     }
 
@@ -170,14 +156,5 @@ class EffectStack(val registry: EffectRegistry = EffectRegistry()) {
     companion object {
         const val SCHEMA_VERSION = 1L
         const val EFFECT_EPSILON = 1e-4f
-    }
-}
-
-object StackEvaluator {
-    fun evaluateStackAtTime(
-        stack: EffectStack,
-        pts: com.vfx.engine.core.Microseconds
-    ): List<Pair<EffectInstance, com.vfx.engine.core.params.ParamMap>> {
-        return stack.effects.filter { it.enabled }.map { it to it.parameters }
     }
 }
