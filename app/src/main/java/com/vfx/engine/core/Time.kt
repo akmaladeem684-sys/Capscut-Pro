@@ -2,6 +2,18 @@ package com.vfx.engine.core
 
 import java.util.Locale
 
+/** Media timestamp in microseconds. NEVER wall-clock. */
+@JvmInline
+value class TimeUs(val value: Long) : Comparable<TimeUs> {
+    override fun compareTo(other: TimeUs) = value.compareTo(other.value)
+    val seconds: Float get() = value / 1_000_000f
+    val nanos: Long get() = value * 1_000L
+    companion object {
+        val ZERO = TimeUs(0)
+        fun ofSeconds(s: Double) = TimeUs((s * 1_000_000).toLong())
+    }
+}
+
 @JvmInline
 value class Microseconds(val value: Long) {
   val seconds: Double get() = value / 1_000_000.0
@@ -33,12 +45,19 @@ data class TimeCode(
 }
 
 data class TimelineRange(
-  val start: Microseconds,
-  val duration: Microseconds
+  val start: Microseconds = Microseconds(0),
+  val duration: Microseconds = Microseconds(0),
+  val startUs: TimeUs = TimeUs(start.value),
+  val durationUs: Long = duration.value
 ) {
   val end: Microseconds get() = Microseconds(start.value + duration.value)
+  val endUs: TimeUs get() = TimeUs(startUs.value + durationUs)
 
   fun contains(pts: Microseconds): Boolean {
     return pts.value >= start.value && pts.value < end.value
+  }
+
+  fun contains(t: TimeUs): Boolean {
+    return t.value >= startUs.value && t.value < endUs.value
   }
 }
