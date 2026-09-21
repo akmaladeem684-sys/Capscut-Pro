@@ -2901,6 +2901,142 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
     }
   }
 
+  fun toggleClipBackgroundRemoval(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isBackgroundRemoved = !it.isBackgroundRemoved) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isBackgroundRemoved = !it.isBackgroundRemoved) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    return false
+  }
+
+  fun toggleMotionBlur(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(motionBlurEnabled = !it.motionBlurEnabled) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(motionBlurEnabled = !it.motionBlurEnabled) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    return false
+  }
+
+  fun toggleStabilization(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isStabilized = !it.isStabilized) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isStabilized = !it.isStabilized) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    return false
+  }
+
+  fun toggleQualityEnhancement(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isQualityEnhanced = !it.isQualityEnhanced) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isQualityEnhanced = !it.isQualityEnhanced) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    return false
+  }
+
+  fun toggleRetouch(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isRetouched = !it.isRetouched) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(isRetouched = !it.isRetouched) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    return false
+  }
+
+  fun setClipOpacity(clipId: String? = null, opacity: Float): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    val clamped = opacity.coerceIn(0f, 1f)
+    recordHistory()
+    var updated = false
+    val newVideos = _timeline.value.videoClips.map {
+      if (it.id == targetId) { updated = true; it.copy(opacity = clamped) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(videoClips = newVideos); return true }
+    val newOverlays = _timeline.value.overlayClips.map {
+      if (it.id == targetId) { updated = true; it.copy(opacity = clamped) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(overlayClips = newOverlays); return true }
+    val newTexts = _timeline.value.textClips.map {
+      if (it.id == targetId) { updated = true; it.copy(opacity = clamped) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(textClips = newTexts); return true }
+    val newStickers = _timeline.value.stickerClips.map {
+      if (it.id == targetId) { updated = true; it.copy(opacity = clamped) } else it
+    }
+    if (updated) { _timeline.value = _timeline.value.copy(stickerClips = newStickers); return true }
+    return false
+  }
+
+  fun extractAudioFromSelectedClip(): String? {
+    val targetId = _selectedClipIds.value.firstOrNull()
+      ?: (when (val sel = _selectedElement.value) {
+        is SelectedTrackElement.Video -> sel.clipId
+        is SelectedTrackElement.Overlay -> sel.clipId
+        else -> findClipUnderPlayhead()
+      }) ?: return null
+    return extractAudioFromClip(targetId)
+  }
+
+  fun enhanceSelectedAudio(clipId: String? = null): Boolean {
+    val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: findClipUnderPlayhead() ?: return false
+    recordHistory()
+    var updated = false
+    val newAudios = _timeline.value.audioClips.map { clip ->
+      if (clip.id == targetId) {
+        updated = true
+        clip.copy(audioEffects = clip.audioEffects.copy(normalizeVolume = true, noiseReductionDb = 12f))
+      } else clip
+    }
+    if (updated) {
+      _timeline.value = _timeline.value.copy(audioClips = newAudios)
+      return true
+    }
+    val newVideos = _timeline.value.videoClips.map { clip ->
+      if (clip.id == targetId) {
+        updated = true
+        clip.copy(audioEffects = clip.audioEffects.copy(normalizeVolume = true, noiseReductionDb = 12f))
+      } else clip
+    }
+    if (updated) {
+      _timeline.value = _timeline.value.copy(videoClips = newVideos)
+      return true
+    }
+    return false
+  }
+
   fun setClipSpeed(clipId: String? = null, speed: Float): Boolean {
     val targetId = clipId ?: _selectedClipIds.value.firstOrNull() ?: return false
     val element = findTrackElementForClip(targetId)

@@ -155,6 +155,8 @@ fun EditorScreen(
   var isFullscreenPreview by remember { mutableStateOf(false) }
   var showDiagnosticOverlay by remember { mutableStateOf(false) }
   var showMoreToolsDialog by remember { mutableStateOf(false) }
+  var isEditToolsOpen by remember { mutableStateOf(false) }
+  var showOpacityDialog by remember { mutableStateOf(false) }
   var pendingReplaceClipId by remember { mutableStateOf<String?>(null) }
   var draggedTransitionType by remember { mutableStateOf<TransitionType?>(null) }
   var activeTextSubTool by remember { mutableStateOf(TextSubTool.TEXT_TEMPLATES) }
@@ -660,8 +662,17 @@ fun EditorScreen(
         EditorBottomToolbar(
           tools = editorTools,
           activeTab = activeTab,
+          isEditToolsOpen = isEditToolsOpen,
+          selectedElement = selectedElement,
+          onOpenEditTools = { isEditToolsOpen = true },
+          onCloseEditTools = {
+            isEditToolsOpen = false
+            viewModel.timelineEngine.clearSelection()
+          },
           onToolClick = handleToolClick,
-          onMoreClick = { showMoreToolsDialog = true }
+          onMoreClick = { showMoreToolsDialog = true },
+          onOpenOpacityDialog = { showOpacityDialog = true },
+          viewModel = viewModel
         )
       } // End of Column (Timeline + Bottom Navigation Bar)
     } // End of AnimatedVisibility(visible = activeTab == null)
@@ -1015,6 +1026,69 @@ fun EditorScreen(
       onSelectTool = { tool ->
         showMoreToolsDialog = false
         handleToolClick(tool)
+      }
+    )
+  }
+
+  // Clip Opacity Dialog
+  if (showOpacityDialog) {
+    val targetClipId = when (selectedElement) {
+      is SelectedTrackElement.Video -> (selectedElement as SelectedTrackElement.Video).clipId
+      is SelectedTrackElement.Overlay -> (selectedElement as SelectedTrackElement.Overlay).clipId
+      else -> timeline.videoClips.firstOrNull()?.id
+    }
+    val currentOpacity = timeline.videoClips.find { it.id == targetClipId }?.opacity
+      ?: timeline.overlayClips.find { it.id == targetClipId }?.opacity
+      ?: 1.0f
+    var opacityVal by remember(targetClipId, currentOpacity) { mutableFloatStateOf(currentOpacity) }
+
+    AlertDialog(
+      onDismissRequest = { showOpacityDialog = false },
+      containerColor = Color(0xFF0F1523),
+      title = {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Default.Opacity, contentDescription = null, tint = CyanAccent)
+            Text("Clip Opacity", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+          }
+          IconButton(onClick = { showOpacityDialog = false }) {
+            Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
+          }
+        }
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Transparency Level", color = TextSecondary, fontSize = 13.sp)
+            Text("${(opacityVal * 100).toInt()}%", color = CyanAccent, fontWeight = FontWeight.Bold)
+          }
+          Slider(
+            value = opacityVal,
+            onValueChange = {
+              opacityVal = it
+              viewModel.timelineEngine.setClipOpacity(targetClipId, it)
+            },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+              thumbColor = CyanAccent,
+              activeTrackColor = CyanAccent,
+              inactiveTrackColor = StudioBorder
+            ),
+            modifier = Modifier.testTag("opacity_slider")
+          )
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = { showOpacityDialog = false },
+          colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)
+        ) {
+          Text("Done", color = Color.Black, fontWeight = FontWeight.Bold)
+        }
       }
     )
   }
@@ -2164,44 +2238,396 @@ private fun FilmstripThumbnailCell(
   }
 }
 
-// BOTTOM TOOLBAR: Firestore-driven Tools + More Dialog
+// BOTTOM TOOLBAR: Firestore-driven Tools + Edit Tools Mode + More Dialog
 @Composable
 private fun EditorBottomToolbar(
   tools: List<EditorToolItem>,
   activeTab: EditorToolbarTab?,
+  isEditToolsOpen: Boolean,
+  selectedElement: SelectedTrackElement?,
+  onOpenEditTools: () -> Unit,
+  onCloseEditTools: () -> Unit,
   onToolClick: (EditorToolItem) -> Unit,
-  onMoreClick: () -> Unit
+  onMoreClick: () -> Unit,
+  onOpenOpacityDialog: () -> Unit,
+  viewModel: StudioViewModel
 ) {
-  val activeTools = remember(tools) {
-    tools.filter { it.isActive }.sortedBy { it.order }
-  }
+  val isEditMode = isEditToolsOpen || selectedElement != null
 
-  val navItems = remember(activeTools, activeTab) {
-    activeTools.map { tool ->
-      FuturisticNavItemData(
-        id = tool.id,
-        label = tool.name,
-        icon = tool.icon,
-        theme = tool.theme,
-        isSelected = tool.mappedTab != null && activeTab == tool.mappedTab,
-        testTag = "tool_${tool.id.lowercase()}_btn",
-        onClick = { onToolClick(tool) }
+  if (isEditMode) {
+    // Edit Tools Mode: Show all 36 tools in ONE horizontal row with Back arrow at start
+    val currentPosMs by viewModel.timelineEngine.currentPositionMs.collectAsState()
+
+    val editToolItems = remember(selectedElement, currentPosMs) {
+      listOf(
+        FuturisticNavItemData(
+          id = "split",
+          label = "Split",
+          icon = Icons.Default.ContentCut,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_split_btn",
+          onClick = {
+            viewModel.timelineEngine.splitSelectedClipAtPlayhead()
+          }
+        ),
+        FuturisticNavItemData(
+          id = "volume",
+          label = "Volume",
+          icon = Icons.Default.VolumeUp,
+          theme = NavItemThemes.Audio,
+          isSelected = activeTab == EditorToolbarTab.VOLUME,
+          testTag = "tool_volume_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.VOLUME) }
+        ),
+        FuturisticNavItemData(
+          id = "delete",
+          label = "Delete",
+          icon = Icons.Default.Delete,
+          theme = NavItemThemes.DefaultSlate,
+          isSelected = false,
+          testTag = "tool_delete_btn",
+          onClick = { viewModel.timelineEngine.deleteSelected() }
+        ),
+        FuturisticNavItemData(
+          id = "animations",
+          label = "Animations",
+          icon = Icons.Default.AutoAwesome,
+          theme = NavItemThemes.Animations,
+          isSelected = activeTab == EditorToolbarTab.ANIMATIONS,
+          testTag = "tool_animations_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.ANIMATIONS) }
+        ),
+        FuturisticNavItemData(
+          id = "effects",
+          label = "Effects",
+          icon = Icons.Default.AutoFixHigh,
+          theme = NavItemThemes.Effects,
+          isSelected = activeTab == EditorToolbarTab.EFFECTS,
+          testTag = "tool_effects_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.EFFECTS) }
+        ),
+        FuturisticNavItemData(
+          id = "speed",
+          label = "Speed",
+          icon = Icons.Default.Speed,
+          theme = NavItemThemes.Speed,
+          isSelected = activeTab == EditorToolbarTab.SPEED,
+          testTag = "tool_speed_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.SPEED) }
+        ),
+        FuturisticNavItemData(
+          id = "beats",
+          label = "Beats",
+          icon = Icons.Default.GraphicEq,
+          theme = NavItemThemes.Audio,
+          isSelected = false,
+          testTag = "tool_beats_btn",
+          onClick = { viewModel.timelineEngine.jumpToNextAudioPeak() }
+        ),
+        FuturisticNavItemData(
+          id = "aivideo",
+          label = "AI Video",
+          icon = Icons.Default.Psychology,
+          theme = NavItemThemes.AI,
+          isSelected = activeTab == EditorToolbarTab.AI,
+          testTag = "tool_aivideo_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "crop",
+          label = "Crop",
+          icon = Icons.Default.Crop,
+          theme = NavItemThemes.Edit,
+          isSelected = activeTab == EditorToolbarTab.TRIM,
+          testTag = "tool_crop_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.TRIM) }
+        ),
+        FuturisticNavItemData(
+          id = "duplicate",
+          label = "Duplicate",
+          icon = Icons.Default.ContentCopy,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_duplicate_btn",
+          onClick = { viewModel.timelineEngine.duplicateSelected() }
+        ),
+        FuturisticNavItemData(
+          id = "replace",
+          label = "Replace",
+          icon = Icons.Default.FindReplace,
+          theme = NavItemThemes.Edit,
+          isSelected = activeTab == EditorToolbarTab.MEDIA,
+          testTag = "tool_replace_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.MEDIA) }
+        ),
+        FuturisticNavItemData(
+          id = "overlay",
+          label = "Overlay",
+          icon = Icons.Default.Layers,
+          theme = NavItemThemes.Overlay,
+          isSelected = activeTab == EditorToolbarTab.OVERLAY,
+          testTag = "tool_overlay_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.OVERLAY) }
+        ),
+        FuturisticNavItemData(
+          id = "adjust",
+          label = "Adjust",
+          icon = Icons.Default.Tune,
+          theme = NavItemThemes.Filters,
+          isSelected = activeTab == EditorToolbarTab.ADJUST,
+          testTag = "tool_adjust_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.ADJUST) }
+        ),
+        FuturisticNavItemData(
+          id = "filters",
+          label = "Filters",
+          icon = Icons.Default.Filter,
+          theme = NavItemThemes.Filters,
+          isSelected = activeTab == EditorToolbarTab.FILTERS,
+          testTag = "tool_filters_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.FILTERS) }
+        ),
+        FuturisticNavItemData(
+          id = "retouch",
+          label = "Retouch",
+          icon = Icons.Default.Face,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_retouch_btn",
+          onClick = { viewModel.timelineEngine.toggleRetouch() }
+        ),
+        FuturisticNavItemData(
+          id = "videoquality",
+          label = "Video Quality",
+          icon = Icons.Default.HighQuality,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_videoquality_btn",
+          onClick = { viewModel.timelineEngine.toggleQualityEnhancement() }
+        ),
+        FuturisticNavItemData(
+          id = "removebg",
+          label = "Remove BG",
+          icon = Icons.Default.PersonRemove,
+          theme = NavItemThemes.AI,
+          isSelected = activeTab == EditorToolbarTab.AI_MATTING,
+          testTag = "tool_removebg_btn",
+          onClick = { viewModel.timelineEngine.toggleClipBackgroundRemoval() }
+        ),
+        FuturisticNavItemData(
+          id = "airemover",
+          label = "AI Remover",
+          icon = Icons.Default.AutoFixNormal,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_airemover_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "aiexpand",
+          label = "AI Expand",
+          icon = Icons.Default.AspectRatio,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_aiexpand_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "airemix",
+          label = "AI Remix",
+          icon = Icons.Default.Shuffle,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_airemix_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "eyecontact",
+          label = "Eye Contact",
+          icon = Icons.Default.Visibility,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_eyecontact_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "relight",
+          label = "Relight",
+          icon = Icons.Default.WbSunny,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_relight_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "opacity",
+          label = "Opacity",
+          icon = Icons.Default.Opacity,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_opacity_btn",
+          onClick = onOpenOpacityDialog
+        ),
+        FuturisticNavItemData(
+          id = "motionblur",
+          label = "Motion Blur",
+          icon = Icons.Default.BlurOn,
+          theme = NavItemThemes.Effects,
+          isSelected = false,
+          testTag = "tool_motionblur_btn",
+          onClick = { viewModel.timelineEngine.toggleMotionBlur() }
+        ),
+        FuturisticNavItemData(
+          id = "lipsync",
+          label = "Lip Sync",
+          icon = Icons.Default.RecordVoiceOver,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_lipsync_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AI) }
+        ),
+        FuturisticNavItemData(
+          id = "transform",
+          label = "Transform",
+          icon = Icons.Default.Transform,
+          theme = NavItemThemes.Edit,
+          isSelected = activeTab == EditorToolbarTab.EDIT,
+          testTag = "tool_transform_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.EDIT) }
+        ),
+        FuturisticNavItemData(
+          id = "autoframe",
+          label = "Auto Frame",
+          icon = Icons.Default.CropFree,
+          theme = NavItemThemes.AI,
+          isSelected = false,
+          testTag = "tool_autoframe_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.EDIT) }
+        ),
+        FuturisticNavItemData(
+          id = "stabilize",
+          label = "Stabilize",
+          icon = Icons.Default.Security,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_stabilize_btn",
+          onClick = { viewModel.timelineEngine.toggleStabilization() }
+        ),
+        FuturisticNavItemData(
+          id = "extractaudio",
+          label = "Extract Audio",
+          icon = Icons.Default.MusicNote,
+          theme = NavItemThemes.Audio,
+          isSelected = false,
+          testTag = "tool_extractaudio_btn",
+          onClick = { viewModel.timelineEngine.extractAudioFromSelectedClip() }
+        ),
+        FuturisticNavItemData(
+          id = "isolate",
+          label = "Isolate",
+          icon = Icons.Default.FilterCenterFocus,
+          theme = NavItemThemes.Audio,
+          isSelected = false,
+          testTag = "tool_isolate_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.AUDIO) }
+        ),
+        FuturisticNavItemData(
+          id = "enhancevoice",
+          label = "Enhance Voice",
+          icon = Icons.Default.Mic,
+          theme = NavItemThemes.Audio,
+          isSelected = false,
+          testTag = "tool_enhancevoice_btn",
+          onClick = { viewModel.timelineEngine.enhanceSelectedAudio() }
+        ),
+        FuturisticNavItemData(
+          id = "videotranslator",
+          label = "Video Translat",
+          icon = Icons.Default.Translate,
+          theme = NavItemThemes.Captions,
+          isSelected = activeTab == EditorToolbarTab.CAPTIONS,
+          testTag = "tool_videotranslator_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.CAPTIONS) }
+        ),
+        FuturisticNavItemData(
+          id = "freeze",
+          label = "Freeze",
+          icon = Icons.Default.AcUnit,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_freeze_btn",
+          onClick = { viewModel.timelineEngine.freezeFrameAtPlayhead() }
+        ),
+        FuturisticNavItemData(
+          id = "reverse",
+          label = "Reverse",
+          icon = Icons.Default.FastRewind,
+          theme = NavItemThemes.Edit,
+          isSelected = false,
+          testTag = "tool_reverse_btn",
+          onClick = { viewModel.timelineEngine.toggleReverseSelectedClip() }
+        ),
+        FuturisticNavItemData(
+          id = "mask",
+          label = "Mask",
+          icon = Icons.Default.Brush,
+          theme = NavItemThemes.Edit,
+          isSelected = activeTab == EditorToolbarTab.MASK,
+          testTag = "tool_mask_btn",
+          onClick = { viewModel.setActiveToolbarTab(EditorToolbarTab.MASK) }
+        )
       )
-    } + FuturisticNavItemData(
-      id = "more_tools",
-      label = "More",
-      icon = Icons.Default.Tune,
-      theme = NavItemThemes.DefaultSlate,
+    }
+
+    FuturisticBottomNavBarContainer(
+      onBackClick = onCloseEditTools,
+      items = editToolItems,
+      showDividers = true
+    )
+  } else {
+    // Standard Bottom Toolbar Mode: "Edit Tools" is the FIRST item on the left
+    val activeTools = remember(tools) {
+      tools.filter { it.isActive }.sortedBy { it.order }
+    }
+
+    val editToolsNavItem = FuturisticNavItemData(
+      id = "edit_tools_primary",
+      label = "Edit Tools",
+      icon = Icons.Default.ContentCut,
+      theme = NavItemThemes.Edit,
       isSelected = false,
-      testTag = "more_btn",
-      onClick = onMoreClick
+      testTag = "tool_edit_tools_btn",
+      onClick = onOpenEditTools
+    )
+
+    val navItems = remember(activeTools, activeTab) {
+      listOf(editToolsNavItem) + activeTools.map { tool ->
+        FuturisticNavItemData(
+          id = tool.id,
+          label = tool.name,
+          icon = tool.icon,
+          theme = tool.theme,
+          isSelected = tool.mappedTab != null && activeTab == tool.mappedTab,
+          testTag = "tool_${tool.id.lowercase()}_btn",
+          onClick = { onToolClick(tool) }
+        )
+      } + FuturisticNavItemData(
+        id = "more_tools",
+        label = "More",
+        icon = Icons.Default.Tune,
+        theme = NavItemThemes.DefaultSlate,
+        isSelected = false,
+        testTag = "more_btn",
+        onClick = onMoreClick
+      )
+    }
+
+    FuturisticBottomNavBarContainer(
+      items = navItems,
+      showDividers = true
     )
   }
-
-  FuturisticBottomNavBarContainer(
-    items = navItems,
-    showDividers = true
-  )
 }
 
 @Composable

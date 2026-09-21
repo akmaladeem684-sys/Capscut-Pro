@@ -42,10 +42,10 @@ import com.example.ui.theme.*
 import kotlin.math.*
 
 enum class AnimationCategoryTab(val label: String, val icon: ImageVector) {
-  PRESETS("1-Tap Combos", Icons.Default.AutoAwesome),
-  IN("In-Animation", Icons.Default.Login),
-  OUT("Out-Animation", Icons.Default.Logout),
-  COMBO("Loop / Combo", Icons.Default.Sync),
+  IN("IN", Icons.Default.Login),
+  OUT("OUT", Icons.Default.Logout),
+  LOOP("LOOP", Icons.Default.Sync),
+  PRESETS("Combos", Icons.Default.AutoAwesome),
   CUSTOMIZE("Customise", Icons.Default.Tune)
 }
 
@@ -232,7 +232,7 @@ fun AnimationsToolPanel(
     } else null
   }
 
-  var activeCategoryTab by remember { mutableStateOf(AnimationCategoryTab.PRESETS) }
+  var activeCategoryTab by remember { mutableStateOf(AnimationCategoryTab.IN) }
   var showApplyAllNotice by remember { mutableStateOf(false) }
 
   // Auto-hide notice after 2.5s
@@ -606,7 +606,7 @@ fun AnimationsToolPanel(
             }
           )
         }
-        AnimationCategoryTab.COMBO -> {
+        AnimationCategoryTab.LOOP -> {
           ComboAnimationGrid(
             currentType = animSettings.comboType,
             speed = animSettings.speed,

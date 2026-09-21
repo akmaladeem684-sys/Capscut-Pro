@@ -369,6 +369,27 @@ fun VolumeToolPanel(
   viewModel: StudioViewModel,
   modifier: Modifier = Modifier
 ) {
+  val timeline by viewModel.timelineEngine.timeline.collectAsState()
+  val selectedElement by viewModel.timelineEngine.selectedElement.collectAsState()
+
+  val targetClipId = when (selectedElement) {
+    is SelectedTrackElement.Video -> (selectedElement as SelectedTrackElement.Video).clipId
+    is SelectedTrackElement.Overlay -> (selectedElement as SelectedTrackElement.Overlay).clipId
+    is SelectedTrackElement.Audio -> (selectedElement as SelectedTrackElement.Audio).clipId
+    else -> timeline.videoClips.firstOrNull()?.id ?: timeline.audioClips.firstOrNull()?.id
+  }
+
+  val videoClip = timeline.videoClips.find { it.id == targetClipId }
+  val audioClip = timeline.audioClips.find { it.id == targetClipId }
+  val currentAudioFx = videoClip?.audioEffects ?: audioClip?.audioEffects ?: AudioEffectsSettings()
+
+  var noiseReduceEnabled by remember(targetClipId, currentAudioFx.noiseReductionDb) {
+    mutableStateOf(currentAudioFx.noiseReductionDb > 0.0f)
+  }
+  var noiseDbLevel by remember(targetClipId, currentAudioFx.noiseReductionDb) {
+    mutableFloatStateOf(if (currentAudioFx.noiseReductionDb > 0.0f) currentAudioFx.noiseReductionDb else 12.0f)
+  }
+
   Column(
     modifier = modifier
       .fillMaxWidth()
@@ -384,7 +405,7 @@ fun VolumeToolPanel(
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(Icons.Default.VolumeUp, contentDescription = null, tint = GreenAccent)
         Text(
-          text = "Track / Clip Volume Gain",
+          text = "Track / Clip Volume & Noise Controls",
           style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
         )
       }
@@ -394,6 +415,102 @@ fun VolumeToolPanel(
     }
 
     VolumeSliderSection(viewModel = viewModel)
+
+    // Noise Reduction Controls Section
+    Surface(
+      shape = RoundedCornerShape(12.dp),
+      color = StudioSurfaceVariant,
+      border = BorderStroke(1.dp, StudioBorder),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            Icon(
+              imageVector = Icons.Default.GraphicEq,
+              contentDescription = null,
+              tint = CyanAccent,
+              modifier = Modifier.size(20.dp)
+            )
+            Column {
+              Text(
+                text = "Reduce Noise",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
+              )
+              Text(
+                text = "Spectral noise gate & hum reduction",
+                style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary, fontSize = 11.sp)
+              )
+            }
+          }
+
+          Switch(
+            checked = noiseReduceEnabled,
+            onCheckedChange = { enabled ->
+              noiseReduceEnabled = enabled
+              val updatedDb = if (enabled) noiseDbLevel else 0.0f
+              val newFx = currentAudioFx.copy(noiseReductionDb = updatedDb)
+              viewModel.timelineEngine.setClipAudioEffects(targetClipId, newFx)
+            },
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = Color.White,
+              checkedTrackColor = CyanAccent,
+              uncheckedThumbColor = TextSecondary,
+              uncheckedTrackColor = StudioBorder
+            ),
+            modifier = Modifier.testTag("reduce_noise_switch")
+          )
+        }
+
+        if (noiseReduceEnabled) {
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = "Background Noise Reduction",
+                style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary)
+              )
+              Text(
+                text = "${noiseDbLevel.toInt()} dB",
+                style = MaterialTheme.typography.labelMedium.copy(color = CyanAccent, fontWeight = FontWeight.Bold)
+              )
+            }
+
+            Slider(
+              value = noiseDbLevel,
+              onValueChange = { db ->
+                noiseDbLevel = db
+                val newFx = currentAudioFx.copy(noiseReductionDb = db)
+                viewModel.timelineEngine.setClipAudioEffects(targetClipId, newFx)
+              },
+              valueRange = 3.0f..24.0f,
+              steps = 20,
+              colors = SliderDefaults.colors(
+                thumbColor = CyanAccent,
+                activeTrackColor = CyanAccent,
+                inactiveTrackColor = StudioBorder
+              ),
+              modifier = Modifier.testTag("noise_reduction_db_slider")
+            )
+          }
+        }
+      }
+    }
   }
 }
 

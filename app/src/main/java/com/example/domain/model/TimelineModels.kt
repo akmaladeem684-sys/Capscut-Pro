@@ -285,6 +285,11 @@ data class VideoClip(
   val audioEffects: AudioEffectsSettings = AudioEffectsSettings(),
   val isLocked: Boolean = false,
   val isHidden: Boolean = false,
+  val isBackgroundRemoved: Boolean = false,
+  val motionBlurEnabled: Boolean = false,
+  val isStabilized: Boolean = false,
+  val isQualityEnhanced: Boolean = false,
+  val isRetouched: Boolean = false,
   /** Independent NLE lane index. Main video defaults to lane 0; overlays use additional lanes. */
   val trackIndex: Int = 0
 ) {
