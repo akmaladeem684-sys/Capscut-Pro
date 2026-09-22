@@ -95,6 +95,34 @@ private fun TrackRow(
                 .background(TimelineTokens.TrackLaneDivider)
         )
 
+        // Floating/attached Track Head item at start of track (before time 0)
+        // Moves dynamically along with the track as video plays or user scrubs!
+        val headWidth = 98.dp
+        val headWidthPx = with(LocalDensity.current) { headWidth.toPx() }
+        val headStartPx = ctrl.viewport.contentPxAtTime(0L) - headWidthPx - 6.dp.value - ctrl.scrollX
+
+        if (headStartPx + headWidthPx > -100f && headStartPx < ctrl.viewport.viewportWidthPx + 100f) {
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(headStartPx.roundToInt(), 0) }
+                    .width(headWidth)
+                    .height(rowDp)
+                    .padding(vertical = 2.dp, horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (row == 0 && track.kind == TrackKind.VIDEO) {
+                    PrimaryVideoHeaderRow(
+                        track = track,
+                        onToggleMute = {
+                            ctrl.engine.updateTrack(track.id) { it.copy(muted = !it.muted) }
+                        }
+                    )
+                } else {
+                    SecondaryTrackIconTile(track = track)
+                }
+            }
+        }
+
         allClips.forEachIndexed { idx, clip ->
             ClipBox(ctrl, clip, track, m)
 
@@ -134,7 +162,7 @@ fun ClipBox(ctrl: TimelineUiController, clip: Clip, track: Track, m: TimelineMet
     val widthPx = ctrl.viewport.contentPxAtTime(shown.durationMicros).coerceAtLeast(2f)
     val wI = widthPx.roundToInt().coerceAtLeast(1)
 
-    val isVideo = track.kind == TrackKind.VIDEO || clip.kind == ClipKind.VIDEO
+    val isVideo = track.kind == TrackKind.VIDEO || track.kind == TrackKind.OVERLAY || clip.kind == ClipKind.VIDEO
     val isAudio = track.kind.isAudioLike() || clip.kind == ClipKind.AUDIO
     val isText = track.kind == TrackKind.TEXT || clip.kind == ClipKind.TEXT || track.kind == TrackKind.CAPTION
 

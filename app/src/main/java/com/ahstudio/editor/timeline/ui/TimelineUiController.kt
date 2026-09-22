@@ -126,7 +126,7 @@ class TimelineUiController(
     // ---------------- scroll plumbing ----------------
     private fun clampScrollX(v: Float): Float {
         if (viewport.viewportWidthPx <= 0f) return v
-        val min = -viewport.playheadXPx
+        val min = -viewport.playheadXPx - 110f * densityScale
         val max = viewport.contentPxAtTime(contentDurationMicros()) - viewport.playheadXPx
         return v.coerceIn(min, max)
     }

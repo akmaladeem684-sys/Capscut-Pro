@@ -102,7 +102,7 @@ fun TrackHeaders(ctrl: TimelineUiController, m: TimelineMetrics, modifier: Modif
 }
 
 @Composable
-private fun PrimaryVideoHeaderRow(
+fun PrimaryVideoHeaderRow(
     track: Track,
     onToggleMute: () -> Unit
 ) {
@@ -188,7 +188,7 @@ private fun PrimaryVideoHeaderRow(
 }
 
 @Composable
-private fun SecondaryTrackIconTile(track: Track) {
+fun SecondaryTrackIconTile(track: Track) {
     val icon: ImageVector = when (track.kind) {
         TrackKind.OVERLAY -> Icons.Default.Layers
         TrackKind.AUDIO, TrackKind.MUSIC, TrackKind.VOICE, TrackKind.SFX -> Icons.Default.Audiotrack
