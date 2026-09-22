@@ -2221,7 +2221,7 @@ private fun EditorBottomToolbar(
   onOpenOpacityDialog: () -> Unit,
   viewModel: StudioViewModel
 ) {
-  val isEditMode = isEditToolsOpen || selectedElement != null
+  val isEditMode = isEditToolsOpen
 
   if (isEditMode) {
     // Edit Tools Mode: Show all 36 tools in ONE horizontal row with Back arrow at start

@@ -17,7 +17,8 @@ object SnapEngine {
         thresholdDp: Float = TimelineConstants.SNAP_THRESHOLD_DP,
         excludeClipId: Long? = null
     ): SnapResult {
-        val thresholdUs = ((thresholdDp / 160f) * 1000f * (1000f / zoomPxPerSecond)).toLong().coerceAtLeast(5_000L)
+        // thresholdDp pixels converted to microseconds based on zoomPxPerSecond (pixels per second)
+        val thresholdUs = (thresholdDp * (1_000_000f / zoomPxPerSecond)).toLong().coerceAtLeast(50_000L)
         val candidates = ArrayList<Long>()
         candidates.add(playheadUs)
         for (m in markers) candidates.add(m.timeUs)

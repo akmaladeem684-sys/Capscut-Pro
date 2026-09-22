@@ -56,10 +56,10 @@ fun HomeScreen(
   var activeHomeTab by rememberSaveable { mutableStateOf(HomeTab.PROJECTS) }
 
   val instantNewProjectVideoPickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      viewModel.createProjectFromPickedVideo(uri.toString())
+    contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10)
+  ) { uris: List<Uri> ->
+    if (uris.isNotEmpty()) {
+      viewModel.createProjectWithMedia("Video Project", uris.map { it.toString() }, isVideo = true)
     }
   }
 

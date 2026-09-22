@@ -835,7 +835,7 @@ object TextLayerRenderer {
       val w = paint.measureText(line)
       if (w > maxLineWidth) maxLineWidth = w
     }
-    val layoutWidth = max(maxLineWidth.toInt() + 16, 32)
+    val layoutWidth = max(maxLineWidth.toInt() + 8, 32)
 
     val textDir = if (containsUrdu) TextDirectionHeuristics.ANYRTL_LTR else TextDirectionHeuristics.FIRSTSTRONG_LTR
     val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -843,26 +843,25 @@ object TextLayerRenderer {
         .setAlignment(layoutAlignment)
         .setTextDirection(textDir)
         .setLineSpacing(0f, effectiveLineSpacing)
-        .setIncludePad(true)
+        .setIncludePad(false)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && containsChinese) {
         builder.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
       }
       builder.build()
     } else {
       @Suppress("DEPRECATION")
-      StaticLayout(rawText, paint, layoutWidth, layoutAlignment, effectiveLineSpacing, 0f, true)
+      StaticLayout(rawText, paint, layoutWidth, layoutAlignment, effectiveLineSpacing, 0f, false)
     }
 
-    val totalTextWidth = layout.width.toFloat()
+    val totalTextWidth = maxLineWidth
     val totalTextHeight = layout.height.toFloat()
 
     val (boundWidth, boundHeight) = if (clip.hasBackground || clip.subtitleStyle.equals("Bold", true)) {
       val padX = clip.bgPadding * scaleFactor
-      val padY = (clip.bgPadding * 0.7f) * scaleFactor
-      Pair(totalTextWidth + 2 * padX, totalTextHeight + 2 * padY)
+      val padY = (clip.bgPadding * 0.5f) * scaleFactor
+      Pair(totalTextWidth + padX, totalTextHeight + padY)
     } else {
-      val strokeExtra = if (clip.strokeWidth > 0f) clip.strokeWidth * scaleFactor * 2f else 0f
-      Pair(totalTextWidth + strokeExtra, totalTextHeight + strokeExtra)
+      Pair(totalTextWidth + 6f, totalTextHeight + 6f)
     }
 
     val centerXPx = (width / 2f) + (state.posX * width / 2f)

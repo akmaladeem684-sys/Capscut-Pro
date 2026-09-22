@@ -28,13 +28,18 @@ class TimelineEngine(val clock: MasterTimelineClock) {
     init {
         val defaultTracks = listOf(
             TimelineTrack(1L, TrackKind.VIDEO_MAIN, "Video 1"),
-            TimelineTrack(2L, TrackKind.AUDIO, "Audio 1")
+            TimelineTrack(2L, TrackKind.OVERLAY, "Overlay 1"),
+            TimelineTrack(3L, TrackKind.TEXT, "Audio & Text")
         )
-        val defaultClips = listOf(
-            TimelineClip(101L, 1L, ClipKind.VIDEO, 0L, 5_000_000L, label = "Master Intro Video"),
-            TimelineClip(102L, 2L, ClipKind.AUDIO, 0L, 5_000_000L, label = "Master Audio Track")
-        )
-        setInitialState(defaultTracks, defaultClips, emptyList())
+        setInitialState(defaultTracks, emptyList(), emptyList())
+    }
+
+    fun addClipToTrack(trackId: Long, kind: ClipKind, durationUs: Long = 5_000_000L, label: String = "New Clip") {
+        val existingClips = _state.value.clips.filter { it.trackId == trackId }
+        val placement = PlaceCalculator.findFreePlacement(existingClips, clock.positionUs.value, durationUs)
+        val newClipId = System.currentTimeMillis()
+        val clip = TimelineClip(newClipId, trackId, kind, placement.startUs, placement.durationUs, label = label)
+        execute(AddClipsCommand(listOf(clip)))
     }
 
     fun setInitialState(tracks: List<TimelineTrack>, clips: List<TimelineClip>, markers: List<TimelineMarker>) {
@@ -90,42 +95,77 @@ class TimelineEngine(val clock: MasterTimelineClock) {
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
 
-    fun replaceAllInternal(newClips: List<TimelineClip>) {
-        val cur = _state.value.clips.toMutableList()
-        for (nc in newClips) {
-            val idx = cur.indexOfFirst { it.id == nc.id }
-            if (idx >= 0) cur[idx] = nc else cur.add(nc)
+    fun clipsForTrack(trackId: Long): List<TimelineClip> =
+        _state.value.clips.filter { it.trackId == trackId }.sortedBy { it.startUs }
+
+    fun clipById(id: Long): TimelineClip? = _state.value.clips.find { it.id == id }
+
+    fun setZoom(newZoom: Float) {
+        val clamped = newZoom.coerceIn(TimelineConstants.ZOOM_MIN_PX_PER_SECOND, TimelineConstants.ZOOM_MAX_PX_PER_SECOND)
+        _state.value = _state.value.copy(zoomPxPerSec = clamped)
+    }
+
+    fun selectClip(clipId: Long, add: Boolean = false) {
+        val current = _state.value.selectedClipIds
+        val newSet = if (add) {
+            if (current.contains(clipId)) current - clipId else current + clipId
+        } else {
+            setOf(clipId)
         }
-        _state.value = _state.value.copy(clips = cur)
-        rebuildIndexes()
+        _state.value = _state.value.copy(selectedClipIds = newSet)
     }
 
-    fun removeClipInternal(clipId: Long) {
-        val cur = _state.value.clips.filterNot { it.id == clipId }
-        _state.value = _state.value.copy(clips = cur, selectedClipIds = _state.value.selectedClipIds - clipId)
-        rebuildIndexes()
+    fun clearSelection() {
+        _state.value = _state.value.copy(selectedClipIds = emptySet())
     }
 
-    fun insertClipInternal(clip: TimelineClip) {
-        val cur = _state.value.clips + clip
-        _state.value = _state.value.copy(clips = cur)
+    internal fun applyRawState(newState: TimelineState) {
+        _state.value = newState
         rebuildIndexes()
+        updateDuration()
     }
 
-    fun insertTrackInternal(track: TimelineTrack, index: Int) {
+    internal fun replaceAllInternal(newClips: List<TimelineClip>) {
+        val clipsMap = _state.value.clips.associateBy { it.id }.toMutableMap()
+        for (c in newClips) clipsMap[c.id] = c
+        _state.value = _state.value.copy(clips = clipsMap.values.toList())
+        rebuildIndexes()
+        updateDuration()
+    }
+
+    internal fun insertClipInternal(clip: TimelineClip) {
+        val list = _state.value.clips.toMutableList()
+        if (list.none { it.id == clip.id }) {
+            list.add(clip)
+            _state.value = _state.value.copy(clips = list)
+            rebuildIndexes()
+            updateDuration()
+        }
+    }
+
+    internal fun removeClipInternal(clipId: Long) {
+        val list = _state.value.clips.filterNot { it.id == clipId }
+        _state.value = _state.value.copy(clips = list)
+        rebuildIndexes()
+        updateDuration()
+    }
+
+    internal fun insertTrackInternal(track: TimelineTrack, index: Int) {
         val tracks = _state.value.tracks.toMutableList()
-        tracks.add(index.coerceIn(0, tracks.size), track)
+        val idx = index.coerceIn(0, tracks.size)
+        tracks.add(idx, track)
         _state.value = _state.value.copy(tracks = tracks)
     }
 
-    fun removeTrackInternal(trackId: Long) {
+    internal fun removeTrackInternal(trackId: Long) {
         val tracks = _state.value.tracks.filterNot { it.id == trackId }
         val clips = _state.value.clips.filterNot { it.trackId == trackId }
         _state.value = _state.value.copy(tracks = tracks, clips = clips)
         rebuildIndexes()
+        updateDuration()
     }
 
-    fun moveTrackInternal(from: Int, to: Int) {
+    internal fun moveTrackInternal(from: Int, to: Int) {
         val tracks = _state.value.tracks.toMutableList()
         if (from in tracks.indices && to in tracks.indices) {
             val item = tracks.removeAt(from)
@@ -134,36 +174,21 @@ class TimelineEngine(val clock: MasterTimelineClock) {
         }
     }
 
-    fun setTrackInternal(track: TimelineTrack) {
+    internal fun setTrackInternal(track: TimelineTrack) {
         val tracks = _state.value.tracks.map { if (it.id == track.id) track else it }
         _state.value = _state.value.copy(tracks = tracks)
     }
 
-    fun insertMarkerInternal(marker: TimelineMarker) {
-        _state.value = _state.value.copy(markers = _state.value.markers + marker)
-    }
-
-    fun removeMarkerInternal(markerId: Long) {
-        _state.value = _state.value.copy(markers = _state.value.markers.filterNot { it.id == markerId })
-    }
-
-    fun clipById(id: Long): TimelineClip? = _state.value.clips.find { it.id == id }
-
-    fun clipsForTrack(trackId: Long): List<TimelineClip> =
-        trackClipIndexes[trackId]?.all() ?: emptyList()
-
-    fun selectClip(clipId: Long, additive: Boolean) {
-        val sel = if (additive) {
-            if (_state.value.selectedClipIds.contains(clipId)) _state.value.selectedClipIds - clipId
-            else _state.value.selectedClipIds + clipId
-        } else {
-            setOf(clipId)
+    internal fun insertMarkerInternal(marker: TimelineMarker) {
+        val markers = _state.value.markers.toMutableList()
+        if (markers.none { it.id == marker.id }) {
+            markers.add(marker)
+            _state.value = _state.value.copy(markers = markers)
         }
-        _state.value = _state.value.copy(selectedClipIds = sel)
     }
 
-    fun setZoom(zoom: Float) {
-        val clamped = zoom.coerceIn(TimelineConstants.ZOOM_MIN_PX_PER_SECOND, TimelineConstants.ZOOM_MAX_PX_PER_SECOND)
-        _state.value = _state.value.copy(zoomPxPerSec = clamped)
+    internal fun removeMarkerInternal(markerId: Long) {
+        val markers = _state.value.markers.filterNot { it.id == markerId }
+        _state.value = _state.value.copy(markers = markers)
     }
 }
