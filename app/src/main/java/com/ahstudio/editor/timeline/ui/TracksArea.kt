@@ -84,8 +84,17 @@ private fun TrackRow(
         Modifier
             .fillMaxWidth()
             .height(rowDp)
-            .background(if (row % 2 == 0) TimelineTokens.TrackBg else TimelineTokens.TrackBg.copy(alpha = 0.85f))
+            .background(if (row % 2 == 0) TimelineTokens.TrackBg else TimelineTokens.TrackBgAlt)
     ) {
+        // Continuous lane bottom boundary divider line
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .align(Alignment.BottomCenter)
+                .background(TimelineTokens.TrackLaneDivider)
+        )
+
         allClips.forEachIndexed { idx, clip ->
             ClipBox(ctrl, clip, track, m)
 
@@ -96,7 +105,7 @@ private fun TrackRow(
                     val splitPx = ctrl.viewport.contentPxAtTime(clip.endMicros) - ctrl.scrollX
                     TransitionButton(
                         modifier = Modifier
-                            .offset { IntOffset((splitPx - 11.dp.toPx()).roundToInt(), (m.rowHeightPx / 2f - 13.dp.toPx()).roundToInt()) }
+                            .offset { IntOffset((splitPx - 10.dp.toPx()).roundToInt(), (m.rowHeightPx / 2f - 11.dp.toPx()).roundToInt()) }
                     )
                 }
             }
@@ -108,7 +117,7 @@ private fun TrackRow(
             val addBtnPx = ctrl.viewport.contentPxAtTime(lastEndMicros) - ctrl.scrollX + 16.dp.value
             AddClipButton(
                 modifier = Modifier
-                    .offset { IntOffset(addBtnPx.roundToInt(), (m.rowHeightPx / 2f - 16.dp.toPx()).roundToInt()) }
+                    .offset { IntOffset(addBtnPx.roundToInt(), (m.rowHeightPx / 2f - 13.dp.toPx()).roundToInt()) }
             ) {
                 // Add media action
             }
@@ -487,25 +496,43 @@ private fun GenericClipView(
 }
 
 /**
- * Transition separator button [ | ] between adjacent video clips.
+ * Transition separator button between adjacent video clips.
  */
 @Composable
 private fun TransitionButton(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .size(width = 22.dp, height = 26.dp)
+            .size(width = 20.dp, height = 22.dp)
             .clip(RoundedCornerShape(4.dp))
-            .background(Color.White)
+            .background(TimelineTokens.TransitionBadgeBg)
+            .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(4.dp))
             .clickable { /* Transition picker action */ },
         contentAlignment = Alignment.Center
     ) {
-        // Vertical dark slit in center
-        Box(
-            modifier = Modifier
-                .width(2.dp)
-                .height(14.dp)
-                .background(Color(0xFF1E2024))
-        )
+        // Vertical transition split glyph
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(1.5.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(10.dp)
+                    .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(1.dp))
+            )
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(12.dp)
+                    .background(Color.White.copy(alpha = 0.5f))
+            )
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(10.dp)
+                    .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(1.dp))
+            )
+        }
     }
 }
 
@@ -519,17 +546,18 @@ private fun AddClipButton(
 ) {
     Box(
         modifier = modifier
-            .size(32.dp)
+            .size(26.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color.White)
+            .background(Color(0xFF22252D))
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(6.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = Icons.Default.Add,
             contentDescription = "Add Media",
-            tint = Color(0xFF14161C),
-            modifier = Modifier.size(20.dp)
+            tint = Color.White,
+            modifier = Modifier.size(16.dp)
         )
     }
 }

@@ -614,7 +614,8 @@ fun EditorScreen(
                     .weight(1f)
                 ) {
                   com.ahstudio.editor.timeline.ui.MasterTimelineView(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    viewModel = viewModel
                   )
                 }
               }

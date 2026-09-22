@@ -83,7 +83,7 @@ fun AhTimelineEditor(ctrl: TimelineUiController, modifier: Modifier = Modifier) 
             // 2. Right Content Viewport (Ruler + Tracks)
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
                 val viewportWidth = constraints.maxWidth.toFloat()
-                LaunchedEffect(viewportWidth) { ctrl.viewport.viewportWidthPx = viewportWidth }
+                LaunchedEffect(viewportWidth) { ctrl.onViewportWidthChanged(viewportWidth) }
 
                 // ONE gesture pipeline — full content viewport (ruler + tracks)
                 Column(

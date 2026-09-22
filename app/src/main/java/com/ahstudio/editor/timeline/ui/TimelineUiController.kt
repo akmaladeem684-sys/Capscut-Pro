@@ -88,11 +88,24 @@ class TimelineUiController(
 
     init {
         engine.addListener(this)
-        clock.addListener { micros, _ -> playheadMicros = micros }
+        clock.addListener { micros, _ ->
+            playheadMicros = micros
+            if (isPlaying || !isScrubbing) {
+                scrollToTime(micros)
+            }
+        }
         history.listener = object : com.ahstudio.editor.timeline.engine.HistoryListener {
             override fun onHistoryChanged(canUndo: Boolean, canRedo: Boolean) {
                 this@TimelineUiController.canUndo = canUndo; this@TimelineUiController.canRedo = canRedo
             }
+        }
+    }
+
+    fun onViewportWidthChanged(width: Float) {
+        val prevWidth = viewport.viewportWidthPx
+        viewport.viewportWidthPx = width
+        if (prevWidth <= 0f || abs(prevWidth - width) > 1f) {
+            scrollToTime(playheadMicros)
         }
     }
 

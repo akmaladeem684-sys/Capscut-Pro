@@ -16,17 +16,19 @@ data class TimelineMetrics(
 )
 
 object TimelineTokens {
-    val RowHeight = 56.dp
+    val RowHeight = 52.dp
     val RulerHeight = 28.dp
-    val HeaderWidth = 108.dp
+    val HeaderWidth = 104.dp
     val TrimHandle = 20.dp
     val SnapHit = 10.dp
     val EdgeMargin = 56.dp
 
-    val PanelBg = Color(0xFF121316)
-    val RulerBg = Color(0xFF121316)
-    val TrackBg = Color(0xFF1A1B20)
-    val HeaderBg = Color(0xFF121316)
+    val PanelBg = Color(0xFF0E0F12)
+    val RulerBg = Color(0xFF0E0F12)
+    val TrackBg = Color(0xFF141519)
+    val TrackBgAlt = Color(0xFF16171D)
+    val TrackLaneDivider = Color(0xFF22242B)
+    val HeaderBg = Color(0xFF0E0F12)
     val ClipStroke = Color(0xFF2A3240)
     val Selection = Color(0xFFFFFFFF)
     val Playhead = Color(0xFFFFFFFF) // Crisp solid white CTI
@@ -37,6 +39,7 @@ object TimelineTokens {
     val AudioColor = Color(0xFF1C6878)
     val TextColor = Color(0xFFE67300)
     val OverlayColor = Color(0xFF244430)
+    val TransitionBadgeBg = Color(0xFF25272F)
 
     fun trackColor(kind: TrackKind): Color = when (kind) {
         TrackKind.VIDEO      -> Color(0xFF141923)

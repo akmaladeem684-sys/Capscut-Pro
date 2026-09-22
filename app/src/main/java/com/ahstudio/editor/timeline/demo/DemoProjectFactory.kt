@@ -16,23 +16,23 @@ object DemoProjectFactory {
             startMicros = (startS * 1e6).toLong(), durationMicros = (durS * 1e6).toLong(),
             label = label, mediaUri = media, keyframes = kf)
 
-        // Main Video Track (Continuous Thumbnails)
-        engine.addClip(clip(v.id, ClipKind.VIDEO, 0.0, 4.5, "Cyber Matrix 1"))
-        engine.addClip(clip(v.id, ClipKind.VIDEO, 4.5, 6.5, "Cyber Matrix 2"))
+        // Main Video Track (Continuous Thumbnails - 40s total)
+        engine.addClip(clip(v.id, ClipKind.VIDEO, 0.0, 14.5, "Cyber Matrix 1"))
+        engine.addClip(clip(v.id, ClipKind.VIDEO, 14.5, 25.5, "Cyber Matrix 2"))
 
         // Overlay Track (PiP)
-        engine.addClip(clip(ov.id, ClipKind.VIDEO, 6.0, 4.0, "PiP.mp4"))
+        engine.addClip(clip(ov.id, ClipKind.VIDEO, 18.0, 14.0, "PiP.mp4"))
 
         // Voiceover / Audio Track (Teal Waveforms)
-        engine.addClip(clip(vo.id, ClipKind.AUDIO, 0.0, 3.2, "Voiceover 5"))
-        engine.addClip(clip(vo.id, ClipKind.AUDIO, 3.2, 4.2, "Voiceover 2"))
-        engine.addClip(clip(vo.id, ClipKind.AUDIO, 7.4, 4.0, "Energetic Tech"))
+        engine.addClip(clip(vo.id, ClipKind.AUDIO, 0.0, 10.2, "Voiceover 5"))
+        engine.addClip(clip(vo.id, ClipKind.AUDIO, 10.2, 13.8, "Voiceover 2"))
+        engine.addClip(clip(vo.id, ClipKind.AUDIO, 24.0, 16.0, "Energetic Tech"))
 
         // Text Track (Orange Pills)
-        engine.addClip(clip(tx.id, ClipKind.TEXT, 0.0, 5.0, "Enter text..."))
-        engine.addClip(clip(tx.id, ClipKind.TEXT, 5.0, 5.5, "Enter text..."))
+        engine.addClip(clip(tx.id, ClipKind.TEXT, 0.0, 15.0, "Enter text..."))
+        engine.addClip(clip(tx.id, ClipKind.TEXT, 15.0, 25.0, "Enter text..."))
 
         engine.addMarker(0L, "Start")
-        engine.addMarker(4_500_000L, "Cut 1")
+        engine.addMarker(14_500_000L, "Cut 1")
     }
 }

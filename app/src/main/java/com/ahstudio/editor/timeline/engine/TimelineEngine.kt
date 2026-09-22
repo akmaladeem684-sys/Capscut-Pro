@@ -62,6 +62,11 @@ class TimelineEngine(
         return try { val r = body(); if (owned) commit(); r } catch (t: Throwable) { if (owned) cancel(); throw t }
     }
 
+    fun reset(snapshot: TimelineSnapshot = TimelineSnapshot()) {
+        openTx = null
+        restoreInternal(snapshot, emptySet())
+    }
+
     internal fun restoreInternal(s: TimelineSnapshot, sel: Set<String>) {
         snapshot = s; indexes = TimelineIndexes(s)
         selection = sel.filter { s.clips.containsKey(it) }.toSet()
