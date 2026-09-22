@@ -42,16 +42,21 @@ fun TimelineRuler(ctrl: TimelineUiController, m: TimelineMetrics) {
         var t = first
         while (t <= toT + stepMicros) {
             val x = ctrl.viewport.contentPxAtTime(t) - scroll
-            if (x >= -200 && x <= w + 200) {
+            if (x >= -40f && x <= w + 40f) {
                 drawLine(TimelineTokens.TextDim, Offset(x, h * 0.45f), Offset(x, h), 1.2f)
                 val label = TimeFormatter.clock(TimelineTime(t), ctrl.fps, withFrames = showFrames && stepSec <= 5.0)
-                drawText(measurer, label, Offset(x + 6f, 2f),
-                    TextStyle(fontSize = 9.sp, color = TimelineTokens.TextPrimary))
+                val tr = measurer.measure(label, TextStyle(fontSize = 9.sp, color = TimelineTokens.TextPrimary))
+                val tx = x + 6f
+                if (tx >= 0f && tx + tr.size.width <= w) {
+                    drawText(textLayoutResult = tr, topLeft = Offset(tx, 2f))
+                }
                 if (subMicros > 0) {
                     var st = t + subMicros
                     while (st < t + stepMicros) {
                         val sx = ctrl.viewport.contentPxAtTime(st) - scroll
-                        drawLine(TimelineTokens.TextDim.copy(alpha = 0.4f), Offset(sx, h * 0.75f), Offset(sx, h), 1f)
+                        if (sx >= 0f && sx <= w) {
+                            drawLine(TimelineTokens.TextDim.copy(alpha = 0.4f), Offset(sx, h * 0.75f), Offset(sx, h), 1f)
+                        }
                         st += subMicros
                     }
                 }
@@ -79,11 +84,13 @@ fun TimelineRuler(ctrl: TimelineUiController, m: TimelineMetrics) {
         drawPath(head, TimelineTokens.Playhead)
         val label = TimeFormatter.clock(TimelineTime(ctrl.playheadMicros), ctrl.fps)
         val tr = measurer.measure(label, TextStyle(fontSize = 10.sp, color = Color(0xFF10131A)))
-        val bx = (px - tr.size.width / 2f).coerceIn(2f, w - tr.size.width - 2f)
+        val bubbleWidth = tr.size.width + 10f
+        val maxBx = (w - bubbleWidth - 2f).coerceAtLeast(2f)
+        val bx = (px - tr.size.width / 2f).coerceIn(2f, maxBx)
         drawRoundRect(
             color = TimelineTokens.Playhead,
             topLeft = Offset(bx, 1f),
-            size = androidx.compose.ui.geometry.Size(tr.size.width + 10f, tr.size.height + 4f),
+            size = androidx.compose.ui.geometry.Size(bubbleWidth, tr.size.height + 4f),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
         )
         drawText(textLayoutResult = tr, topLeft = Offset(bx + 5f, 3f))

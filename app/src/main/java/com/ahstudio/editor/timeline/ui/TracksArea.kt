@@ -75,7 +75,7 @@ fun ClipBox(ctrl: TimelineUiController, clip: Clip, track: Track, m: TimelineMet
     val color = clip.colorArgb?.let { Color(it) } ?: TimelineTokens.trackColor(track.kind)
     val startPx = ctrl.viewport.contentPxAtTime(ctrl.effectiveClipStart(shown)) - ctrl.scrollX
     val widthPx = ctrl.viewport.contentPxAtTime(shown.durationMicros).coerceAtLeast(2f)
-    val wI = widthPx.roundToInt()
+    val wI = widthPx.roundToInt().coerceAtLeast(1)
 
     Box(
         Modifier
