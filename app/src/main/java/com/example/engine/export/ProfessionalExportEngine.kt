@@ -286,12 +286,16 @@ class ProfessionalExportEngine(private val context: Context) {
         val progressJob = launch(Dispatchers.Default) {
           while (isActive) {
             val encoded = pipeline.metrics.encodedFrames.get()
+            // Ensure fraction is monotonically increasing.
             val fraction = if (plan.totalFrames > 0L) (encoded.toFloat() / plan.totalFrames).coerceIn(0f, 1f) else 0f
+            // Cap at 0.95 until the Finalization/Verification phase to avoid prematurely showing 100%
+            val cappedFraction = fraction.coerceAtMost(0.95f)
+            
             _progress.value = ProfessionalExportProgress(
               ProfessionalExportStage.ENCODING_VIDEO,
-              0.05f + fraction * 0.90f,
+              0.05f + cappedFraction * 0.90f,
               renderedDurationMs = ((encoded.toDouble() / max(1, plan.frameRate)) * 1000L).toLong(),
-              message = "Hardware GPU pipeline: encoded $encoded / ${plan.totalFrames} frames (${(fraction * 100).toInt()}%)"
+              message = "Hardware GPU pipeline: encoded $encoded / ${plan.totalFrames} frames (${(cappedFraction * 100).toInt()}%)"
             )
             delay(100L)
           }

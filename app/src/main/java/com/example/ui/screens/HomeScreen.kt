@@ -48,6 +48,7 @@ fun HomeScreen(
   modifier: Modifier = Modifier
 ) {
   val projects by viewModel.allProjects.collectAsState()
+  val isCreating by viewModel.isCreatingProject.collectAsState()
   val activeRecovery by viewModel.activeRecoverySession.collectAsState()
   var searchQuery by remember { mutableStateOf("") }
   var showNewProjectDialog by remember { mutableStateOf(false) }
@@ -95,12 +96,11 @@ fun HomeScreen(
     }
   }
 
-  Scaffold(
-    modifier = modifier
-      .fillMaxSize()
-      .background(Color(0xFFF6F9FE)), // 60% white/light base with 30% blue tint and 10% soft green warmth
-    containerColor = Color(0xFFF6F9FE),
-    topBar = {
+  Box(modifier = modifier.fillMaxSize()) {
+    Scaffold(
+      modifier = Modifier.fillMaxSize(),
+      containerColor = Color(0xFFF6F9FE),
+      topBar = {
       if (activeHomeTab == HomeTab.PROJECTS) {
         Box(
           modifier = Modifier
@@ -158,7 +158,8 @@ fun HomeScreen(
           verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
       // Crash Recovery Alert Banner
-      activeRecovery?.let { recovery ->
+      if (activeRecovery != null) {
+        val recovery = activeRecovery!!
         item {
           Card(
             modifier = Modifier
@@ -501,6 +502,7 @@ fun HomeScreen(
       }
     }
   }
+}
 
   // New Project Configuration Dialog
   if (showNewProjectDialog) {
@@ -515,7 +517,7 @@ fun HomeScreen(
 
   // Rename Dialog
   showRenameDialog?.let { project ->
-    RenameProjectDialog(
+    com.example.ui.components.RenameProjectDialog(
       currentName = project.name,
       onDismiss = { showRenameDialog = null },
       onConfirm = { newName ->
@@ -571,20 +573,25 @@ private fun FeatureHubTile(
         .padding(12.dp),
       verticalArrangement = Arrangement.SpaceBetween
     ) {
-      Icon(icon, contentDescription = title, tint = accentColor, modifier = Modifier.size(24.dp))
+      Box(
+        modifier = Modifier
+          .size(32.dp)
+          .clip(CircleShape)
+          .background(accentColor.copy(alpha = 0.2f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+      }
       Text(
         text = title,
-        style = MaterialTheme.typography.labelMedium.copy(
-          fontWeight = FontWeight.Bold,
-          color = TextPrimary
-        )
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 13.sp)
       )
     }
   }
 }
 
 @Composable
-fun ProjectItemCard(
+private fun ProjectItemCard(
   project: ProjectEntity,
   onClick: () -> Unit,
   onRename: () -> Unit,
@@ -592,10 +599,8 @@ fun ProjectItemCard(
   onDelete: () -> Unit
 ) {
   var showMenu by remember { mutableStateOf(false) }
-  val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.getDefault()) }
-  val formattedDate = remember(project.lastEditedTime) {
-    dateFormat.format(Date(project.lastEditedTime))
-  }
+  val dateFormat = SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.getDefault())
+  val dateStr = dateFormat.format(Date(project.lastEditedTime))
 
   Card(
     modifier = Modifier
@@ -609,137 +614,67 @@ fun ProjectItemCard(
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(12.dp),
+        .padding(14.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      // Thumbnail Box
       Box(
         modifier = Modifier
-          .size(width = 84.dp, height = 64.dp)
-          .clip(RoundedCornerShape(10.dp))
-          .background(
-            Brush.linearGradient(
-              listOf(
-                Color(0xFF1E293B),
-                Color(0xFF0F172A)
-              )
-            )
-          )
-          .border(1.dp, StudioBorder, RoundedCornerShape(10.dp)),
+          .size(52.dp)
+          .clip(RoundedCornerShape(12.dp))
+          .background(StudioSurfaceVariant),
         contentAlignment = Alignment.Center
       ) {
         Icon(
-          Icons.Default.Movie,
+          imageVector = Icons.Default.Movie,
           contentDescription = null,
-          tint = CyanAccent.copy(alpha = 0.7f),
-          modifier = Modifier.size(32.dp)
+          tint = CyanAccent,
+          modifier = Modifier.size(26.dp)
         )
-        // Aspect ratio tag
-        Box(
-          modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .padding(4.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.Black.copy(alpha = 0.8f))
-            .padding(horizontal = 4.dp, vertical = 2.dp)
-        ) {
-          Text(
-            text = project.aspectRatio,
-            style = MaterialTheme.typography.labelSmall.copy(
-              fontSize = 9.sp,
-              color = CyanAccent,
-              fontWeight = FontWeight.Bold
-            )
-          )
-        }
       }
-
       Spacer(modifier = Modifier.width(14.dp))
-
       Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = project.name,
-          style = MaterialTheme.typography.titleMedium.copy(
-            fontWeight = FontWeight.Bold,
-            color = TextPrimary,
-            fontSize = 16.sp
-          ),
-          maxLines = 1
-        )
-        Spacer(modifier = Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = formatDurationShort(project.durationMs),
-            style = MaterialTheme.typography.labelSmall.copy(
-              color = CyanAccent,
-              fontWeight = FontWeight.Bold
-            )
+            text = project.name,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 15.sp),
+            maxLines = 1
           )
-          Text(
-            text = " • ${project.resolution} • ${project.fps}fps",
-            style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary)
-          )
-        }
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-          text = formattedDate,
-          style = MaterialTheme.typography.bodySmall.copy(
-            color = TextTertiary,
-            fontSize = 11.sp
-          )
-        )
-        if (project.hasMissingMedia) {
-          Spacer(modifier = Modifier.height(4.dp))
-          Surface(
-            color = AmberAccent.copy(alpha = 0.2f),
-            shape = RoundedCornerShape(4.dp)
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-              verticalAlignment = Alignment.CenterVertically
+          if (project.isDraft) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+              shape = RoundedCornerShape(4.dp),
+              color = AmberAccent.copy(alpha = 0.2f)
             ) {
-              Icon(Icons.Default.Warning, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(11.dp))
-              Spacer(modifier = Modifier.width(3.dp))
               Text(
-                text = "Missing Media",
-                style = MaterialTheme.typography.labelSmall.copy(
-                  color = AmberAccent,
-                  fontSize = 10.sp,
-                  fontWeight = FontWeight.Bold
-                )
+                text = "Draft",
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall.copy(color = AmberAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
               )
             }
           }
         }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+          text = "${project.aspectRatio} • ${project.resolution} • $dateStr",
+          style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 12.sp)
+        )
       }
 
-      // Action Menu
       Box {
         IconButton(
           onClick = { showMenu = true },
-          modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .testTag("project_menu_${project.id}")
+          modifier = Modifier.testTag("project_menu_${project.id}")
         ) {
-          Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextSecondary)
+          Icon(Icons.Default.MoreVert, contentDescription = "More Options", tint = TextSecondary)
         }
-
         DropdownMenu(
           expanded = showMenu,
           onDismissRequest = { showMenu = false },
-          modifier = Modifier.background(StudioSurfaceVariant)
+          containerColor = StudioSurfaceVariant
         ) {
           DropdownMenuItem(
-            text = { Text("Edit Project", color = TextPrimary) },
-            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = CyanAccent) },
-            onClick = {
-              showMenu = false
-              onClick()
-            }
-          )
-          DropdownMenuItem(
             text = { Text("Rename", color = TextPrimary) },
-            leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, tint = TextSecondary) },
+            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = CyanAccent) },
             onClick = {
               showMenu = false
               onRename()
@@ -767,206 +702,4 @@ fun ProjectItemCard(
   }
 }
 
-@Composable
-fun NewProjectDialog(
-  onDismiss: () -> Unit,
-  onCreate: (name: String, aspect: AspectRatio, res: Resolution, fps: FrameRate) -> Unit
-) {
-  var projectName by remember { mutableStateOf("") }
-  var selectedAspect by remember { mutableStateOf(AspectRatio.RATIO_9_16) }
-  var selectedResolution by remember { mutableStateOf(Resolution.RES_1080P) }
-  var selectedFps by remember { mutableStateOf(FrameRate.FPS_30) }
 
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = {
-      Text(
-        text = "New Video Project",
-        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
-      )
-    },
-    text = {
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-      ) {
-        OutlinedTextField(
-          value = projectName,
-          onValueChange = { projectName = it },
-          label = { Text("Project Name") },
-          placeholder = { Text("e.g., Summer Roadtrip Reel") },
-          singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = CyanAccent,
-            unfocusedBorderColor = StudioBorder,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary
-          )
-        )
-
-        // Aspect Ratio Picker
-        Column {
-          Text("Aspect Ratio", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
-          Spacer(modifier = Modifier.height(8.dp))
-          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(AspectRatio.values()) { ratio ->
-              FilterChip(
-                selected = selectedAspect == ratio,
-                onClick = { selectedAspect = ratio },
-                label = { Text(ratio.label) },
-                colors = FilterChipDefaults.filterChipColors(
-                  selectedContainerColor = CyanAccent,
-                  selectedLabelColor = Color.Black,
-                  containerColor = StudioSurface,
-                  labelColor = TextPrimary
-                )
-              )
-            }
-          }
-        }
-
-        // Resolution Picker
-        Column {
-          Text("Resolution", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
-          Spacer(modifier = Modifier.height(8.dp))
-          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(Resolution.values()) { res ->
-              FilterChip(
-                selected = selectedResolution == res,
-                onClick = { selectedResolution = res },
-                label = { Text(res.label) },
-                colors = FilterChipDefaults.filterChipColors(
-                  selectedContainerColor = PurpleAccent,
-                  selectedLabelColor = Color.White,
-                  containerColor = StudioSurface,
-                  labelColor = TextPrimary
-                )
-              )
-            }
-          }
-        }
-
-        // Frame Rate Picker
-        Column {
-          Text("Frame Rate", style = MaterialTheme.typography.labelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold))
-          Spacer(modifier = Modifier.height(8.dp))
-          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(FrameRate.values()) { fps ->
-              FilterChip(
-                selected = selectedFps == fps,
-                onClick = { selectedFps = fps },
-                label = { Text("${fps.fps} FPS") },
-                colors = FilterChipDefaults.filterChipColors(
-                  selectedContainerColor = StudioBorder,
-                  selectedLabelColor = CyanAccent,
-                  containerColor = StudioSurface,
-                  labelColor = TextPrimary
-                )
-              )
-            }
-          }
-        }
-
-        // Clean Blank Timeline Guarantee Note
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = StudioSurface,
-          border = BorderStroke(1.dp, StudioBorder),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-          ) {
-            Icon(
-              imageVector = Icons.Default.CheckCircle,
-              contentDescription = null,
-              tint = CyanAccent,
-              modifier = Modifier.size(18.dp)
-            )
-            Column {
-              Text(
-                text = "Clean Blank Timeline",
-                style = MaterialTheme.typography.labelMedium.copy(
-                  color = TextPrimary,
-                  fontWeight = FontWeight.Bold
-                )
-              )
-              Text(
-                text = "Ready for your own video clips, audio tracks, and edits.",
-                style = MaterialTheme.typography.bodySmall.copy(
-                  color = TextSecondary,
-                  fontSize = 11.5.sp
-                )
-              )
-            }
-          }
-        }
-      }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          onCreate(projectName, selectedAspect, selectedResolution, selectedFps)
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent, contentColor = Color.Black),
-        shape = RoundedCornerShape(20.dp)
-      ) {
-        Text("Create Project", fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextSecondary)
-      }
-    },
-    containerColor = StudioSurfaceVariant,
-    shape = RoundedCornerShape(20.dp)
-  )
-}
-
-@Composable
-fun RenameProjectDialog(
-  currentName: String,
-  onDismiss: () -> Unit,
-  onConfirm: (String) -> Unit
-) {
-  var text by remember { mutableStateOf(currentName) }
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("Rename Project", color = TextPrimary, fontWeight = FontWeight.Bold) },
-    text = {
-      OutlinedTextField(
-        value = text,
-        onValueChange = { text = it },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-        colors = OutlinedTextFieldDefaults.colors(
-          focusedBorderColor = CyanAccent,
-          unfocusedBorderColor = StudioBorder,
-          focusedTextColor = TextPrimary,
-          unfocusedTextColor = TextPrimary
-        )
-      )
-    },
-    confirmButton = {
-      Button(
-        onClick = { if (text.isNotBlank()) onConfirm(text) },
-        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent, contentColor = Color.Black)
-      ) {
-        Text("Rename", fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextSecondary)
-      }
-    },
-    containerColor = StudioSurfaceVariant
-  )
-}

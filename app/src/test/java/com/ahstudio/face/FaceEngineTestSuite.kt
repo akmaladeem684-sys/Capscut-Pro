@@ -13,6 +13,8 @@ import com.ahstudio.face.timeline.FaceEffectSerializer
 import com.ahstudio.face.tracking.MultiFaceTracker
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
 private fun det(id: Int?, x: Float, y: Float) = RawFaceDetection(
     boundsPx = BoundsPx((x - 0.08f) * 1000, (y - 0.14f) * 1000, (x + 0.08f) * 1000, (y + 0.14f) * 1000),
@@ -22,6 +24,7 @@ private fun det(id: Int?, x: Float, y: Float) = RawFaceDetection(
     trackingId = id
 )
 
+@RunWith(RobolectricTestRunner::class)
 class FaceEngineTestSuite {
 
     @Test

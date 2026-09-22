@@ -1,102 +1,123 @@
 package com.ahstudio.editor.timeline.playback
 
-import android.os.Handler
-import android.os.Looper
 import android.view.Choreographer
-import com.ahstudio.editor.timeline.clock.MasterTimelineClock
-import com.ahstudio.editor.timeline.clock.SeekSource
-import com.ahstudio.editor.timeline.clock.TimelineSyncListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-interface FrameTicker {
-    fun start(tick: (frameTimeNanos: Long) -> Unit)
-    fun stop()
+/** All preview surfaces subscribe here. No competing sync loops. */
+interface PreviewSink {
+    fun onPlaybackStarted() {}
+    fun onPlaybackPaused() {}
+    fun onPlaybackEnded() {}
+    fun onSeek(targetMicros: Long) {}
+    fun onTimeChanged(micros: Long, playing: Boolean) {}
 }
 
-class ChoreographerTicker : FrameTicker {
+abstract class FrameDriver2 { abstract fun start(onFrame: (Long) -> Unit); abstract fun stop() }
+
+class ChoreographerFrameDriver : FrameDriver2() {
     private var running = false
-    private var callback: ((Long) -> Unit)? = null
-    private val frameCb = object : Choreographer.FrameCallback {
-        override fun doFrame(frameTimeNanos: Long) {
-            callback?.invoke(frameTimeNanos)
-            if (running) Choreographer.getInstance().postFrameCallback(this)
+    private var lastNanos = 0L
+    override fun start(onFrame: (Long) -> Unit) {
+        if (running) return; running = true; lastNanos = 0L
+        val cb = object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!running) return
+                val delta = if (lastNanos == 0L) 0L else frameTimeNanos - lastNanos
+                lastNanos = frameTimeNanos
+                onFrame(delta)
+                Choreographer.getInstance().postFrameCallback(this)
+            }
         }
+        Choreographer.getInstance().postFrameCallback(cb)
     }
-    override fun start(tick: (Long) -> Unit) {
-        callback = tick
-        if (!running) { running = true; Choreographer.getInstance().postFrameCallback(frameCb) }
-    }
-    override fun stop() {
-        running = false
-        Choreographer.getInstance().removeFrameCallback(frameCb)
-        callback = null
-    }
+    override fun stop() { running = false }
 }
 
-class ManualTicker : FrameTicker {
+/** Test driver — deterministic frames. */
+class ManualFrameDriver : FrameDriver2() {
     private var cb: ((Long) -> Unit)? = null
-    override fun start(tick: (Long) -> Unit) { cb = tick }
+    override fun start(onFrame: (Long) -> Unit) { cb = onFrame }
     override fun stop() { cb = null }
-    fun emit(nanos: Long) { cb?.invoke(nanos) }
+    fun emit(deltaNanos: Long) { cb?.invoke(deltaNanos) }
 }
 
 class PlaybackController(
     private val clock: MasterTimelineClock,
-    private val ticker: FrameTicker,
-) : TimelineSyncListener {
+    private val durationProvider: () -> Long,
+    private val driver: FrameDriver2,
+    private val scope: CoroutineScope,
+) {
+    @Volatile var speed: Float = 1f
+    @Volatile var isPlaying: Boolean = false; private set
+    var previewSink: PreviewSink? = null
+    private var pendingSeekMicros: Long? = null
+    private var seekJob: Job? = null
 
-    interface MediaBackend {
-        fun onPlaybackStarted() {}
-        fun onPlaybackPaused() {}
-        fun onSeekTo(us: Long, precise: Boolean) {}
-        fun onRateChanged(rate: Float) {}
+    fun play() {
+        if (isPlaying) return
+        val dur = durationProvider()
+        if (dur <= 0L) return
+        if (clock.timeMicros >= dur) clock.seekTo(0L)
+        isPlaying = true
+        previewSink?.onPlaybackStarted()
+        previewSink?.onSeek(clock.timeMicros)
+        startFrameLoop()
     }
 
-    var backend: MediaBackend? = null
-    var positionSource: (() -> Long?)? = null
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var lastFrameNanos: Long? = null
-    private var pendingSeekUs: Long? = null
-    private var pendingSeekPrecise = true
-    private var seekPosted = false
-
-    init { clock.addListener(this) }
-
-    fun play() = clock.play()
-    fun pause() = clock.pause()
-    fun togglePlay() = clock.toggle()
-    fun seekTo(us: Long, source: SeekSource = SeekSource.PROGRAMMATIC) = clock.seekTo(us, source)
-    fun seekByPx(deltaPxForward: Float, pxPerUs: Float) =
-        clock.seekTo(clock.positionUs.value + (deltaPxForward / pxPerUs).toLong(), SeekSource.PLAYHEAD)
-
-    fun onTimelineTouched() { if (clock.isPlaying.value) clock.pause() }
-
-    override fun onSeek(us: Long, source: SeekSource) {
-        pendingSeekUs = us
-        pendingSeekPrecise = source != SeekSource.USER_SCRUB && source != SeekSource.PLAYHEAD
-        postSeekFlush()
+    fun pause() {
+        if (!isPlaying) return
+        isPlaying = false
+        stopFrameLoop()
+        previewSink?.onPlaybackPaused()
     }
 
-    override fun onPlaybackStateChanged(playing: Boolean) {
-        if (playing) { lastFrameNanos = null; ticker.start(::onTick); backend?.onPlaybackStarted() }
-        else { ticker.stop(); backend?.onPlaybackPaused() }
+    fun togglePlay() = if (isPlaying) pause() else play()
+
+    /** Immediate, exact seek. */
+    fun seekTo(micros: Long) {
+        val dur = durationProvider()
+        val t = micros.coerceIn(0L, if (dur > 0) dur else micros.coerceAtLeast(0L))
+        clock.seekTo(t)
+        previewSink?.onSeek(t)
     }
 
-    private fun postSeekFlush() {
-        if (seekPosted) return
-        seekPosted = true
-        mainHandler.post {
-            seekPosted = false
-            pendingSeekUs?.let { backend?.onSeekTo(it, pendingSeekPrecise) }
-            pendingSeekUs = null
+    /** Scrub seeks: clock is immediate; player sink receives frame-aligned coalesced seeks. */
+    fun requestScrubSeek(micros: Long) {
+        clock.seekTo(micros)
+        pendingSeekMicros = micros
+        if (seekJob?.isActive != true) {
+            seekJob = scope.launch {
+                delay(16) // one display frame
+                val target = pendingSeekMicros
+                pendingSeekMicros = null
+                target?.let { previewSink?.onSeek(it) }
+            }
         }
     }
 
-    private fun onTick(frameNanos: Long) {
-        if (!clock.isPlaying.value) { lastFrameNanos = null; return }
-        val backendPos = positionSource?.invoke()
-        if (backendPos != null) clock.masterUpdate(backendPos)
-        else clock.onFrameTick(frameNanos, lastFrameNanos)
-        lastFrameNanos = frameNanos
+    private fun startFrameLoop() {
+        stopFrameLoop()
+        driver.start { deltaNanos ->
+            if (!isPlaying) return@start
+            val deltaMicros = (deltaNanos / 1000.0) * speed
+            val dur = durationProvider()
+            val next = clock.timeMicros + deltaMicros.toLong()
+            if (dur > 0 && next >= dur) {
+                clock.seekTo(dur)
+                stopFrameLoop()
+                isPlaying = false
+                previewSink?.onPlaybackEnded()
+            } else {
+                clock.advanceBy(deltaMicros.toLong(), playing = true)
+                previewSink?.onTimeChanged(clock.timeMicros, true)
+            }
+        }
+    }
+
+    private fun stopFrameLoop() {
+        driver.stop()
     }
 }

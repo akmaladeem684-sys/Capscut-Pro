@@ -269,8 +269,8 @@ fun NonLinearTimelineView(
   val safeTotalDurationMs = max(timelineState.totalDurationMs, 1000L)
   val safeCurrentPositionMs = timelineState.currentPositionMs.coerceIn(0L, safeTotalDurationMs)
 
-  // Fixed Playhead Horizontal Anchor Fraction (38% from left edge of screen)
-  val playheadAnchorFraction = 0.38f
+  // Fixed Playhead Horizontal Anchor Fraction (10% from left edge of screen)
+  val playheadAnchorFraction = 0.1f
 
   // Timecode formatting strings
   val formattedCurrentTimecode by remember(safeCurrentPositionMs, timelineState.fps) {
@@ -384,9 +384,9 @@ fun NonLinearTimelineView(
       // 1. Synchronize Playback -> Horizontal Scroll Offset (at 60 FPS)
       LaunchedEffect(safeCurrentPositionMs, timelineState.isPlaying, isUserScrubbing) {
         if (!isUserScrubbing) {
-          val targetScrollPx = (safeCurrentPositionMs * pixelsPerMs).roundToInt()
+          val targetScrollPx = ((safeCurrentPositionMs * pixelsPerMs) - playheadAnchorPx).roundToInt()
           if (kotlin.math.abs(horizontalScrollState.value - targetScrollPx) > 1) {
-            horizontalScrollState.scrollTo(targetScrollPx)
+            horizontalScrollState.scrollTo(targetScrollPx.coerceAtLeast(0))
           }
         }
       }
@@ -399,10 +399,8 @@ fun NonLinearTimelineView(
           .pointerInput(safeTotalDurationMs, pixelsPerMs, timelineState.isPlaying) {
             detectTapGestures(
               onPress = {
-                // If video is playing, touching anywhere on the timeline immediately pauses playback
-                if (timelineState.isPlaying) {
-                  currentOnPause?.invoke()
-                }
+                currentOnPause?.invoke()
+                tryAwaitRelease()
               }
             )
           }
@@ -423,7 +421,7 @@ fun NonLinearTimelineView(
                 change.consume()
                 // Scrolling moves content underneath the fixed playhead
                 val newScrollPx = (horizontalScrollState.value - dragAmount.x).coerceAtLeast(0f)
-                val targetMs = (newScrollPx / pixelsPerMs).toLong().coerceIn(0L, safeTotalDurationMs)
+                val targetMs = (((newScrollPx + playheadAnchorPx) / pixelsPerMs).toLong()).coerceIn(0L, safeTotalDurationMs)
                 currentOnSeek(targetMs)
               },
               onDragEnd = { isUserScrubbing = false },

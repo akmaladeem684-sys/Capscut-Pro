@@ -109,8 +109,8 @@ object FaceEffectSerializer {
         return FaceEffectClipData(
             effectId = obj.optString("effectId", ""),
             clipId = obj.optString("clipId", ""),
-            stickerId = if (obj.has("stickerId") && !obj.isNull("stickerId")) obj.optString("stickerId", null) else null,
-            filterId = if (obj.has("filterId") && !obj.isNull("filterId")) obj.optString("filterId", null) else null,
+            stickerId = if (obj.has("stickerId") && !obj.isNull("stickerId")) obj.optString("stickerId").ifEmpty { null } else null,
+            filterId = if (obj.has("filterId") && !obj.isNull("filterId")) obj.optString("filterId").ifEmpty { null } else null,
             filterIntensity = obj.optDouble("filterIntensity", 1.0).toFloat(),
             anchor = obj.optString("anchor", "FACE_CENTER"),
             offsetX = obj.optDouble("offsetX", 0.0).toFloat(),

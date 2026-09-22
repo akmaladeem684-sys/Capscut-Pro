@@ -37,6 +37,13 @@ import kotlinx.coroutines.withContext
 import com.example.data.local.CrashRecoveryEntity
 import com.example.engine.media.MediaPersistenceManager
 import com.example.engine.media.MediaRelinkManager
+import com.ahstudio.captions.android.CaptionsGraph
+import com.ahstudio.captions.engine.AutoCaptionOptions
+import com.ahstudio.captions.engine.CaptionGenerationState
+import com.ahstudio.captions.subtitle.SubtitleCue
+import com.ahstudio.captions.subtitle.SubtitleExporter
+import com.ahstudio.captions.subtitle.SubtitleFormat
+import com.ahstudio.captions.subtitle.SubtitleImporter
 
 enum class ProjectSaveStatus {
   SAVED,
@@ -93,6 +100,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   private val database: AppDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AppDatabase.getDatabase(application) }
   val repository: ProjectRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { ProjectRepository(database) }
   val timelineEngine = TimelineEngine()
+  private val _isCreatingProject = MutableStateFlow(false)
+  val isCreatingProject: StateFlow<Boolean> = _isCreatingProject.asStateFlow()
   // Keep heavyweight media/ML/GPU services lazy so the launcher can always reach HOME.
   // They are created on first real editor/playback/export use instead of during ViewModel construction.
   val audioEngine: AudioEngine by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { AudioEngine(application) }
@@ -345,6 +354,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     timelineEngine.loadTimeline(initialTimeline)
     saveCurrentProject()
+    _isCreatingProject.value = false
     navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
   }
@@ -435,6 +445,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     if (aspectRatio == null) {
       createProjectWithAutoAspect(uris = uris, name = name, isVideo = isVideo)
     } else {
+      _isCreatingProject.value = true
       viewModelScope.launch {
         val appContext = getApplication<Application>().applicationContext
         val clips = withContext(Dispatchers.IO) {
@@ -898,22 +909,93 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
   }
 
-  // --- AI Operations ---
+  // --- AI Operations & Auto Captions Engine ---
 
   fun runAIAutoCaptions(language: String = "English") {
     viewModelScope.launch {
       _isAIBusy.value = true
-      _aiStatusMessage.value = "AI analyzing actual imported audio & transcribing..."
+      _aiStatusMessage.value = "Captions Engine: Analyzing audio & transcribing..."
       try {
-        val result = aiTools.generateAutoCaptions(timelineEngine.timeline.value, language)
-        val captions = result.getOrThrow()
-        if (captions.isEmpty()) {
-          _aiStatusMessage.value = "No spoken words detected in imported audio."
-        } else {
-          val currentList = timelineEngine.timeline.value.textClips.toMutableList()
-          currentList.addAll(captions)
-          timelineEngine.loadTimeline(timelineEngine.timeline.value.copy(textClips = currentList))
-          _aiStatusMessage.value = "Generated ${captions.size} auto captions successfully!"
+        val timeline = timelineEngine.timeline.value
+        val mediaUriStr = timeline.audioClips.firstOrNull { it.uri.isNotBlank() }?.uri
+          ?: timeline.videoClips.firstOrNull { it.uri.isNotBlank() }?.uri
+
+        var generatedWithEngine = false
+        if (mediaUriStr != null) {
+          val mediaFile = File(mediaUriStr)
+          val mediaUri = if (mediaUriStr.startsWith("content://") || mediaUriStr.startsWith("file://")) {
+            android.net.Uri.parse(mediaUriStr)
+          } else if (mediaFile.exists()) {
+            android.net.Uri.fromFile(mediaFile)
+          } else null
+
+          if (mediaUri != null) {
+            try {
+              val langTag = when (language.lowercase()) {
+                "spanish" -> "es"
+                "french" -> "fr"
+                "german" -> "de"
+                "chinese" -> "zh"
+                "japanese" -> "ja"
+                "arabic" -> "ar"
+                "urdu" -> "ur"
+                "hindi" -> "hi"
+                else -> "en"
+              }
+              val captionsGraph = CaptionsGraph.get(getApplication())
+              val project = captionsGraph.autoEngine.generate(
+                mediaUri = mediaUri,
+                options = AutoCaptionOptions(languageTag = langTag)
+              ) { state ->
+                when (state) {
+                  is CaptionGenerationState.ExtractingAudio -> _aiStatusMessage.value = "Captions Engine: Extracting audio..."
+                  is CaptionGenerationState.Transcribing -> _aiStatusMessage.value = "Captions Engine: Transcribing speech (${(state.progress * 100).toInt()}%)..."
+                  is CaptionGenerationState.Diarizing -> _aiStatusMessage.value = "Captions Engine: Diarizing speakers..."
+                  is CaptionGenerationState.Segmenting -> _aiStatusMessage.value = "Captions Engine: Segmenting ${state.clipCount} clips..."
+                  else -> {}
+                }
+              }
+              val primaryTrack = project.tracks.firstOrNull()
+              if (primaryTrack != null && primaryTrack.clips.isNotEmpty()) {
+                val newClips = primaryTrack.clips.map { clip ->
+                  val startMs = (clip.timing.start.micros / 1000L).coerceAtLeast(0L)
+                  val durMs = ((clip.timing.end.micros - clip.timing.start.micros) / 1000L).coerceAtLeast(500L)
+                  val wordTimings = clip.words.map { w ->
+                    val wStartMs = ((w.start.micros - clip.timing.start.micros) / 1000L).coerceAtLeast(0L)
+                    val wDurMs = ((w.end.micros - w.start.micros) / 1000L).coerceAtLeast(100L)
+                    WordTiming(w.text, wStartMs, wDurMs)
+                  }
+                  TextClip(
+                    id = UUID.randomUUID().toString(),
+                    text = clip.displayText,
+                    timelineStartMs = startMs,
+                    durationMs = durMs,
+                    words = wordTimings
+                  )
+                }
+                val currentList = timelineEngine.timeline.value.textClips.toMutableList()
+                currentList.addAll(newClips)
+                timelineEngine.loadTimeline(timelineEngine.timeline.value.copy(textClips = currentList))
+                _aiStatusMessage.value = "Generated ${newClips.size} auto captions via Captions Engine!"
+                generatedWithEngine = true
+              }
+            } catch (e: Exception) {
+              // Fallback to aiTools if engine extraction encounters format discrepancy
+            }
+          }
+        }
+
+        if (!generatedWithEngine) {
+          val result = aiTools.generateAutoCaptions(timelineEngine.timeline.value, language)
+          val captions = result.getOrThrow()
+          if (captions.isEmpty()) {
+            _aiStatusMessage.value = "No spoken words detected in imported audio."
+          } else {
+            val currentList = timelineEngine.timeline.value.textClips.toMutableList()
+            currentList.addAll(captions)
+            timelineEngine.loadTimeline(timelineEngine.timeline.value.copy(textClips = currentList))
+            _aiStatusMessage.value = "Generated ${captions.size} auto captions successfully!"
+          }
         }
       } catch (e: Exception) {
         _aiStatusMessage.value = e.message ?: "AI Captions unavailable. Configure backend/API credentials."
@@ -923,6 +1005,57 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         _aiStatusMessage.value = ""
       }
     }
+  }
+
+  fun importSubtitlesFromText(subtitleText: String) {
+    val cues = SubtitleImporter.autoDetectAndParse(subtitleText)
+    if (cues.isEmpty()) return
+    val importedClips = cues.map { cue ->
+      val startMs = (cue.startUs / 1000L).coerceAtLeast(0L)
+      val durationMs = ((cue.endUs - cue.startUs) / 1000L).coerceAtLeast(500L)
+      val text = cue.lines.joinToString(" ")
+      val words = text.split(Regex("\\s+")).filter { it.isNotBlank() }
+      val wordTimings = if (words.isNotEmpty()) {
+        val perWord = durationMs / words.size
+        words.mapIndexed { idx, w ->
+          WordTiming(w, idx * perWord, perWord)
+        }
+      } else emptyList()
+      TextClip(
+        id = UUID.randomUUID().toString(),
+        text = text,
+        timelineStartMs = startMs,
+        durationMs = durationMs,
+        words = wordTimings
+      )
+    }
+    val current = timelineEngine.timeline.value.textClips.toMutableList()
+    current.addAll(importedClips)
+    timelineEngine.loadTimeline(timelineEngine.timeline.value.copy(textClips = current))
+    _aiStatusMessage.value = "Imported ${importedClips.size} subtitle cues!"
+  }
+
+  fun exportSubtitles(format: SubtitleFormat = SubtitleFormat.SRT): String {
+    val textClips = timelineEngine.timeline.value.textClips.sortedBy { it.timelineStartMs }
+    val cues = textClips.mapIndexed { idx, clip ->
+      val startUs = clip.timelineStartMs * 1000L
+      val endUs = (clip.timelineStartMs + clip.durationMs) * 1000L
+      SubtitleCue(idx + 1, startUs, endUs, listOf(clip.text))
+    }
+    return SubtitleExporter.export(cues, null, format)
+  }
+
+  fun exportSubtitlesToFile(format: SubtitleFormat = SubtitleFormat.SRT): File {
+    val ext = when (format) {
+      SubtitleFormat.SRT -> "srt"
+      SubtitleFormat.VTT -> "vtt"
+      SubtitleFormat.ASS -> "ass"
+      SubtitleFormat.TXT -> "txt"
+    }
+    val content = exportSubtitles(format)
+    val file = File(getApplication<Application>().cacheDir, "exported_subtitles_${System.currentTimeMillis()}.$ext")
+    file.writeText(content)
+    return file
   }
 
   fun runAITranslateCaptions(targetLanguage: String) {

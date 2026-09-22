@@ -613,14 +613,7 @@ fun EditorScreen(
                     .fillMaxWidth()
                     .weight(1f)
                 ) {
-                  val masterClock = remember { com.ahstudio.editor.timeline.clock.MasterTimelineClock() }
-                  val masterEngine = remember { com.ahstudio.editor.timeline.engine.TimelineEngine(masterClock) }
-                  val masterTicker = remember { com.ahstudio.editor.timeline.playback.ChoreographerTicker() }
-                  val masterPlaybackController = remember { com.ahstudio.editor.timeline.playback.PlaybackController(masterClock, masterTicker) }
-
                   com.ahstudio.editor.timeline.ui.MasterTimelineView(
-                    engine = masterEngine,
-                    playbackController = masterPlaybackController,
                     modifier = Modifier.fillMaxSize()
                   )
                 }
@@ -932,11 +925,11 @@ fun EditorScreen(
 
   // Rename Dialog
   if (showRenameDialog) {
-    RenameProjectDialog(
+    com.example.ui.components.RenameProjectDialog(
       currentName = projectName,
       onDismiss = { showRenameDialog = false },
-      onConfirm = {
-        viewModel.renameProject(viewModel.activeProjectId.value, it)
+      onConfirm = { newName ->
+        viewModel.renameProject(viewModel.activeProjectId.value, newName)
         showRenameDialog = false
       }
     )

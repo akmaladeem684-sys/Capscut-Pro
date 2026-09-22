@@ -2523,6 +2523,9 @@ fun CaptionsToolPanel(
   var showLanguageMenu by remember { mutableStateOf(false) }
 
   var activeTab by remember { mutableStateOf(0) } // 0: Auto-Captions & Editor, 1: Styling & Presets
+  var showImportSubtitleDialog by remember { mutableStateOf(false) }
+  var importTextValue by remember { mutableStateOf("") }
+  var showExportSubtitleDialog by remember { mutableStateOf(false) }
 
   Column(
     modifier = modifier
@@ -2689,6 +2692,42 @@ fun CaptionsToolPanel(
                 Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(16.dp), tint = PurpleAccent)
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Translate", fontSize = 11.sp, color = TextPrimary)
+              }
+            }
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              OutlinedButton(
+                onClick = { showImportSubtitleDialog = true },
+                modifier = Modifier
+                  .weight(1f)
+                  .height(36.dp)
+                  .testTag("import_subtitles_button"),
+                shape = RoundedCornerShape(8.dp)
+              ) {
+                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(14.dp), tint = CyanAccent)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Import Subtitles", fontSize = 11.sp, color = TextPrimary)
+              }
+
+              OutlinedButton(
+                onClick = {
+                  if (textClips.isNotEmpty()) {
+                    showExportSubtitleDialog = true
+                  }
+                },
+                enabled = textClips.isNotEmpty(),
+                modifier = Modifier
+                  .weight(1f)
+                  .height(36.dp)
+                  .testTag("export_subtitles_button"),
+                shape = RoundedCornerShape(8.dp)
+              ) {
+                Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp), tint = AmberAccent)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Export Subtitles", fontSize = 11.sp, color = TextPrimary)
               }
             }
           }
@@ -2895,6 +2934,83 @@ fun CaptionsToolPanel(
           }
         }
       }
+    }
+
+    if (showImportSubtitleDialog) {
+      AlertDialog(
+        onDismissRequest = { showImportSubtitleDialog = false },
+        title = { Text("Import Subtitles (SRT / VTT / ASS)", fontWeight = FontWeight.Bold) },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Paste raw SRT, WebVTT, ASS, or plain timestamps below:", fontSize = 12.sp, color = TextSecondary)
+            OutlinedTextField(
+              value = importTextValue,
+              onValueChange = { importTextValue = it },
+              modifier = Modifier.fillMaxWidth().height(150.dp).testTag("import_subtitles_input"),
+              placeholder = { Text("1\n00:00:01,000 --> 00:00:03,500\nHello World caption", fontSize = 11.sp) }
+            )
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              if (importTextValue.isNotBlank()) {
+                viewModel.importSubtitlesFromText(importTextValue)
+                Toast.makeText(context, "Subtitles imported to timeline", Toast.LENGTH_SHORT).show()
+                importTextValue = ""
+              }
+              showImportSubtitleDialog = false
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = CyanAccent, contentColor = Color.Black)
+          ) {
+            Text("Import")
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { showImportSubtitleDialog = false }) {
+            Text("Cancel")
+          }
+        }
+      )
+    }
+
+    if (showExportSubtitleDialog) {
+      AlertDialog(
+        onDismissRequest = { showExportSubtitleDialog = false },
+        title = { Text("Export Subtitles", fontWeight = FontWeight.Bold) },
+        text = {
+          Text("Choose subtitle export format for ${textClips.size} captions:", fontSize = 13.sp, color = TextSecondary)
+        },
+        confirmButton = {
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+              onClick = {
+                val f = viewModel.exportSubtitlesToFile(com.ahstudio.captions.subtitle.SubtitleFormat.SRT)
+                Toast.makeText(context, "Exported SRT: ${f.name}", Toast.LENGTH_LONG).show()
+                showExportSubtitleDialog = false
+              },
+              colors = ButtonDefaults.buttonColors(containerColor = CyanAccent, contentColor = Color.Black)
+            ) {
+              Text("SRT")
+            }
+            Button(
+              onClick = {
+                val f = viewModel.exportSubtitlesToFile(com.ahstudio.captions.subtitle.SubtitleFormat.VTT)
+                Toast.makeText(context, "Exported VTT: ${f.name}", Toast.LENGTH_LONG).show()
+                showExportSubtitleDialog = false
+              },
+              colors = ButtonDefaults.buttonColors(containerColor = PurpleAccent, contentColor = Color.White)
+            ) {
+              Text("VTT")
+            }
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { showExportSubtitleDialog = false }) {
+            Text("Close")
+          }
+        }
+      )
     }
   }
 }
