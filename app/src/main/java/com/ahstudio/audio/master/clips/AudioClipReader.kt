@@ -10,9 +10,9 @@ import kotlin.math.roundToInt
 
 class ClipRead(val offsetFrames: Int, val frames: Int)
 
-class AudioClipReader(private val cache: DecodedAudioCache) {
+class AudioClipReader(private val cache: DecodedAudioCache) : AudioClipSource {
 
-    fun readClip(clip: AudioClipModel, ctx: AudioRenderContext, out: AudioBuffer): ClipRead {
+    override fun readClip(clip: AudioClipModel, ctx: AudioRenderContext, out: AudioBuffer): ClipRead {
         val entry = cache.getForClip(clip) ?: return ClipRead(0, 0)
         val sr = entry.sampleRate
         val speed = clip.transform.speed.toDouble()

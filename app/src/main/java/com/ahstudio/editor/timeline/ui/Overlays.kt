@@ -13,9 +13,13 @@ import androidx.compose.ui.graphics.PathEffect
 fun PlayheadLine(ctrl: TimelineUiController, m: TimelineMetrics) {
     Canvas(Modifier.fillMaxSize()) {
         val x = ctrl.playheadXPx
-        drawLine(TimelineTokens.Playhead, Offset(x, 0f), Offset(x, size.height), 2f)
-        drawLine(TimelineTokens.Playhead.copy(alpha = 0.25f), Offset(x - 3f, 0f), Offset(x - 3f, size.height), 1f)
-        drawLine(TimelineTokens.Playhead.copy(alpha = 0.25f), Offset(x + 3f, 0f), Offset(x + 3f, size.height), 1f)
+        // High-contrast clean solid white playhead
+        drawLine(
+            color = Color.White,
+            start = Offset(x, 0f),
+            end = Offset(x, size.height),
+            strokeWidth = 2.5f * density
+        )
     }
 }
 

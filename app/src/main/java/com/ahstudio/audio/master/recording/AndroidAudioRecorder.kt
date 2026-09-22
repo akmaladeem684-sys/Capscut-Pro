@@ -7,8 +7,8 @@ import android.media.AudioFormat as AF
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import androidx.core.content.ContextCompat
-import com.ahstudio.audio.master.core.AudioEngineError
-import com.ahstudio.audio.master.core.AudioEngineResult
+import com.ahstudio.audio.master.AudioEngineError
+import com.ahstudio.audio.master.AudioEngineResult
 import com.ahstudio.audio.master.model.AudioClipModel
 import com.ahstudio.audio.master.model.AudioSourceKind
 import com.ahstudio.audio.master.model.AudioSourceModel

@@ -156,15 +156,15 @@ class MasterAudioEngineTestSuite {
     @Test
     fun testLoudnessMeter() {
         val meter = LoudnessMeter()
+        meter.configure(48000, 2)
         val buf = AudioBuffer(channels = 2, frames = 1024)
         for (i in 0 until buf.frames) {
             val sample = (0.5 * kotlin.math.sin(2.0 * Math.PI * 440.0 * i / 48000.0)).toFloat()
             buf.data[0][i] = sample
             buf.data[1][i] = sample
         }
-        val ctx = AudioRenderContext(format = AudioFormat(48000, 2), timelineStartSec = 0.0, frames = 1024, blockIndex = 0)
-        meter.process(buf, ctx)
-        val lufs = meter.lufs()
+        meter.process(buf, 1024)
+        val lufs = meter.integratedLufs()
         assertTrue("LUFS value calculated ($lufs)", lufs.isFinite())
     }
 

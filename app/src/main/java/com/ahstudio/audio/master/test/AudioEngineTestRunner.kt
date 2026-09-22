@@ -7,6 +7,7 @@ import com.ahstudio.audio.master.model.AudioClipModel
 import com.ahstudio.audio.master.model.AudioSourceModel
 import com.ahstudio.audio.master.model.AudioTrackModel
 import com.ahstudio.audio.master.model.MasterAudioProject
+import com.ahstudio.audio.master.persistence.AudioProjectDeserializer
 import com.ahstudio.audio.master.persistence.AudioProjectSerializer
 import com.ahstudio.audio.master.timeline.AudioTimelineController
 
@@ -23,6 +24,7 @@ object AudioEngineTestRunner {
             ctl.setProject(proj)
 
             val cmd = object : AudioEditCommand {
+                override val description = "split c1"
                 override fun apply(project: MasterAudioProject): MasterAudioProject {
                     val (split1, split2) = AudioClipOperations.split(clip1, 2.5)!!
                     val tr = project.trackById("t1")!!
@@ -32,11 +34,11 @@ object AudioEngineTestRunner {
             }
 
             val res = ctl.submit(cmd)
-            check(res is com.ahstudio.audio.master.core.AudioEngineResult.Success)
+            check(res is com.ahstudio.audio.master.AudioEngineResult.Success)
             check(ctl.current.trackById("t1")!!.clips.size == 2)
 
-            val json = AudioProjectSerializer.toJson(ctl.current)
-            val restored = AudioProjectSerializer.jsonToProject(json)
+            val json = AudioProjectSerializer().serialize(ctl.current)
+            val restored = AudioProjectDeserializer().deserialize(json)
             check(restored.tracks.size == 1)
             check(restored.tracks[0].clips.size == 2)
 

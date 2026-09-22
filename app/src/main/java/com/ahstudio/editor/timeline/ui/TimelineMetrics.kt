@@ -17,33 +17,35 @@ data class TimelineMetrics(
 
 object TimelineTokens {
     val RowHeight = 56.dp
-    val RulerHeight = 30.dp
+    val RulerHeight = 28.dp
     val HeaderWidth = 108.dp
     val TrimHandle = 20.dp
     val SnapHit = 10.dp
     val EdgeMargin = 56.dp
 
-    val PanelBg = Color(0xFF0E1116)
-    val RulerBg = Color(0xFF161B23)
-    val TrackBg = Color(0xFF131820)
+    val PanelBg = Color(0xFF121316)
+    val RulerBg = Color(0xFF121316)
+    val TrackBg = Color(0xFF1A1B20)
+    val HeaderBg = Color(0xFF121316)
     val ClipStroke = Color(0xFF2A3240)
     val Selection = Color(0xFFFFFFFF)
-    val Playhead = Color(0xFFFFC94D)
+    val Playhead = Color(0xFFFFFFFF) // Crisp solid white CTI
     val SnapLine = Color(0xFF7FE3A0)
-    val TextPrimary = Color(0xFFE8EDF4)
-    val TextDim = Color(0xFF8A94A6)
+    val TextPrimary = Color(0xFFFFFFFF)
+    val TextDim = Color(0xFF8E95A3)
+
+    val AudioColor = Color(0xFF1C6878)
+    val TextColor = Color(0xFFE67300)
+    val OverlayColor = Color(0xFF244430)
 
     fun trackColor(kind: TrackKind): Color = when (kind) {
-        TrackKind.VIDEO      -> Color(0xFF2C5CC5)
-        TrackKind.OVERLAY    -> Color(0xFF7A4FC9)
-        TrackKind.TEXT       -> Color(0xFFC9802C)
+        TrackKind.VIDEO      -> Color(0xFF141923)
+        TrackKind.OVERLAY    -> Color(0xFF1D5A34)
+        TrackKind.TEXT       -> Color(0xFFE67300)
         TrackKind.STICKER    -> Color(0xFF2FA36B)
-        TrackKind.EFFECT     -> Color(0xFFB0489A)
+        TrackKind.EFFECT     -> Color(0xFF7A4FC9)
         TrackKind.ADJUSTMENT -> Color(0xFF5A6472)
-        TrackKind.AUDIO      -> Color(0xFF2E8FB0)
-        TrackKind.MUSIC      -> Color(0xFF2E8FB0)
-        TrackKind.VOICE      -> Color(0xFF3BA07F)
-        TrackKind.SFX        -> Color(0xFF6E7FD1)
-        TrackKind.CAPTION    -> Color(0xFFC9802C)
+        TrackKind.AUDIO, TrackKind.MUSIC, TrackKind.VOICE, TrackKind.SFX -> Color(0xFF1C6878)
+        TrackKind.CAPTION    -> Color(0xFFE67300)
     }
 }

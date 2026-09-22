@@ -1,11 +1,11 @@
 package com.ahstudio.audio.master.timeline
 
+import com.ahstudio.audio.master.AudioEngineError
+import com.ahstudio.audio.master.AudioEngineResult
 import com.ahstudio.audio.master.clips.AudioClipOperations
 import com.ahstudio.audio.master.clips.AudioClipValidator
 import com.ahstudio.audio.master.commands.AudioEditCommand
 import com.ahstudio.audio.master.commands.AudioUndoRedoAdapter
-import com.ahstudio.audio.master.core.AudioEngineError
-import com.ahstudio.audio.master.core.AudioEngineResult
 import com.ahstudio.audio.master.model.AudioClipModel
 import com.ahstudio.audio.master.model.MasterAudioProject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -75,17 +75,17 @@ class AudioTimelineController(private val undoRedo: AudioUndoRedoAdapter) {
     }
 
     fun submit(command: AudioEditCommand, strategy: OverlapStrategy = OverlapStrategy.CROSSFADE): AudioEngineResult<MasterAudioProject> {
-        val next: MasterAudioProject
+        val next: MasterAudioProject; val previous: MasterAudioProject
         synchronized(lock) {
+            previous = current
             val applied = try { command.apply(current) } catch (e: Exception) {
                 return AudioEngineResult.Failure(AudioEngineError.INVALID_CLIP, e.message ?: "edit failed", e) }
             val resolved = AudioOverlapResolver.resolve(applied, command.affectedTrackId(), strategy)
-                ?: return AudioEngineResult.Failure(AudioEngineError.OVERLAP_REJECTED, "Overlap rejected on track ${command.affectedTrackId()}")
+                ?: return AudioEngineResult.Failure(AudioEngineError.OVERLAP_REJECTED, "overlap rejected on track ${command.affectedTrackId()}")
             val (fatal, _) = AudioTimelineValidator.validate(resolved)
             if (fatal.isNotEmpty()) return AudioEngineResult.Failure(AudioEngineError.INVALID_CLIP, fatal.joinToString("; "))
-            current = resolved
-            next = resolved
-            undoRedo.push(command)
+            current = resolved; next = resolved
+            undoRedo.push(command, previous, next)
         }
         listeners.forEach { it(next) }
         return AudioEngineResult.Success(next)

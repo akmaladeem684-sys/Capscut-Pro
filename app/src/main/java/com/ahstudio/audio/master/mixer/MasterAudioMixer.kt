@@ -3,7 +3,7 @@ package com.ahstudio.audio.master.mixer
 import com.ahstudio.audio.master.automation.AudioAutomationResolver
 import com.ahstudio.audio.master.automation.AudioEnvelopeGenerator
 import com.ahstudio.audio.master.model.AutomationParameter as AP
-import com.ahstudio.audio.master.clips.AudioClipReader
+import com.ahstudio.audio.master.clips.AudioClipSource
 import com.ahstudio.audio.master.core.AudioBuffer
 import com.ahstudio.audio.master.core.AudioFormat
 import com.ahstudio.audio.master.core.AudioRenderContext
@@ -32,7 +32,7 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
     private val clipChainCache = HashMap<String, AudioDspChain>()
 
     fun renderTrackClips(
-        track: AudioTrackModel, ctx: AudioRenderContext, reader: AudioClipReader,
+        track: AudioTrackModel, ctx: AudioRenderContext, reader: AudioClipSource,
         bus: AudioTrackBus, resolver: AudioAutomationResolver, xfades: List<CrossfadePair>,
     ) {
         bus.clear()
@@ -50,7 +50,7 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
             val g1 = clipAmplitude(clip, clipCtx.timelineEndSec, volAuto, resolver)
             val perFrameVol = volAuto != null && volAuto.enabled && volAuto.keyframes.isNotEmpty() &&
                 volAuto.keyframes.any { it.timeSec >= clipCtx.timelineStartSec && it.timeSec <= clipCtx.timelineEndSec }
-            applyGain(clipBuf, read.frames, g0, g1, perFrameVol) { t -> clipAmplitude(clip, t, volAuto, resolver) }
+            applyGain(clipBuf, read.frames, clipCtx.timelineStartSec, ctx.sampleRate, perFrameVol, g0, g1) { t -> clipAmplitude(clip, t, volAuto, resolver) }
 
             val x = xfadeFor(xfades, clip.id)
             if (x != null && x.endSec > x.startSec) {
@@ -88,19 +88,16 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
     private fun xfadeFor(xfades: List<CrossfadePair>, clipId: String): CrossfadePair? =
         xfades.firstOrNull { it.clipA == clipId || it.clipB == clipId }
 
-    private fun applyGain(buf: AudioBuffer, frames: Int, g0: Float, g1: Float, perFrame: Boolean, eval: (Double) -> Float) {
-        if (perFrame) {
-            for (c in 0 until buf.channels) {
-                val d = buf.data[c]
-                for (i in 0 until frames) d[i] *= g0
+    private fun applyGain(buf: AudioBuffer, frames: Int, t0: Double, sampleRate: Int,
+                          perFrame: Boolean, g0: Float, g1: Float, eval: (Double) -> Float) {
+        for (c in 0 until buf.channels) {
+            val d = buf.data[c]
+            when {
+                perFrame -> for (i in 0 until frames) d[i] *= eval(t0 + i.toDouble() / sampleRate)
+                g0 == g1 -> if (g0 != 1f) for (i in 0 until frames) d[i] *= g0
+                else -> { val step = (g1 - g0) / frames; var g = g0
+                    for (i in 0 until frames) { d[i] *= g; g += step } }
             }
-            return
-        }
-        if (g0 == g1) {
-            if (g0 != 1f) for (c in 0 until buf.channels) { val d = buf.data[c]; for (i in 0 until frames) d[i] *= g0 }
-        } else {
-            val step = (g1 - g0) / frames
-            for (c in 0 until buf.channels) { val d = buf.data[c]; var g = g0; for (i in 0 until frames) { d[i] *= g; g += step } }
         }
     }
 
@@ -199,7 +196,7 @@ class MasterAudioMixer(private val maxFrames: Int) {
         meter.reset()
     }
 
-    fun renderBlock(ctx: AudioRenderContext, reader: AudioClipReader): AudioBuffer {
+    fun renderBlock(ctx: AudioRenderContext, reader: AudioClipSource): AudioBuffer {
         val t0 = System.nanoTime()
         masterBuf.clear()
         val anySolo = project.tracks.any { it.settings.solo }

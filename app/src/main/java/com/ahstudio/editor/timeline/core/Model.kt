@@ -85,6 +85,6 @@ data class ProjectSettings(
 )
 
 object TimelineConstants {
-    const val PLAYHEAD_X_FRACTION = 0.10f     // Master CTI ≈ 10% from left. Single definition.
+    const val PLAYHEAD_X_FRACTION = 0.38f     // Master CTI centered in viewport area.
     const val MIN_CLIP_MICROS = 50_000L       // 50 ms
 }

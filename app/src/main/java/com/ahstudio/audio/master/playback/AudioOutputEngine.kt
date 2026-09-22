@@ -3,7 +3,7 @@ package com.ahstudio.audio.master.playback
 import android.media.AudioAttributes
 import android.media.AudioFormat as AndroidPcmFormat
 import android.media.AudioTrack
-import com.ahstudio.audio.master.clips.AudioClipReader
+import com.ahstudio.audio.master.clips.AudioClipSource
 import com.ahstudio.audio.master.core.AudioFormat
 import com.ahstudio.audio.master.core.AudioRenderContext
 import com.ahstudio.audio.master.diagnostics.AudioGlitchDetector
@@ -82,7 +82,7 @@ class AudioOutputEngine(
     @Volatile private var blockIndex = 0L
     private val interleaved = FloatArray(blockSize * format.channels)
 
-    fun play(startSec: Double, reader: AudioClipReader) {
+    fun play(startSec: Double, reader: AudioClipSource) {
         if (state == AudioPlaybackState.PLAYING) return
         if (output == null) { output = AndroidAudioTrackOutput(format).also { it.start(blockSize) } }
         synchronized(this) { resetAt(startSec, reader) }
@@ -103,7 +103,7 @@ class AudioOutputEngine(
         output?.pause()
     }
 
-    fun seekTo(sec: Double, reader: AudioClipReader) {
+    fun seekTo(sec: Double, reader: AudioClipSource) {
         if (!seekCtl.shouldSeek(sec)) return
         synchronized(this) {
             resetAt(sec, reader)
@@ -119,13 +119,13 @@ class AudioOutputEngine(
 
     fun currentPositionSec(): Double = nextBlockSec
 
-    private fun resetAt(sec: Double, reader: AudioClipReader) {
+    private fun resetAt(sec: Double, reader: AudioClipSource) {
         nextBlockSec = sec; blockIndex = 0
         mixer.reset()
         output?.flush()
     }
 
-    private fun renderLoop(reader: AudioClipReader) {
+    private fun renderLoop(reader: AudioClipSource) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
         while (running) {
             if (state != AudioPlaybackState.PLAYING) { Thread.sleep(15); continue }
