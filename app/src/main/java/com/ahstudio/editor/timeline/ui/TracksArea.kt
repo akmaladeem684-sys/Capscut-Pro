@@ -97,9 +97,12 @@ private fun TrackRow(
 
         // Floating/attached Track Head item at start of track (before time 0)
         // Moves dynamically along with the track as video plays or user scrubs!
+        val density = LocalDensity.current
         val headWidth = 98.dp
-        val headWidthPx = with(LocalDensity.current) { headWidth.toPx() }
-        val headStartPx = ctrl.viewport.contentPxAtTime(0L) - headWidthPx - 6.dp.value - ctrl.scrollX
+        val headWidthPx = with(density) { headWidth.toPx() }
+        val headGapPx = with(density) { 6.dp.toPx() }
+        val headContentX = -headWidthPx - headGapPx
+        val headStartPx = headContentX - ctrl.scrollX
 
         if (headStartPx + headWidthPx > -100f && headStartPx < ctrl.viewport.viewportWidthPx + 100f) {
             Box(
@@ -139,15 +142,19 @@ private fun TrackRow(
             }
         }
 
-        // Add Clip button [+] at the end of the video track
+        // Add Clip button [+] attached to the end of the media track
         if (track.kind == TrackKind.VIDEO) {
             val lastEndMicros = allClips.maxOfOrNull { it.endMicros } ?: 0L
-            val addBtnPx = ctrl.viewport.contentPxAtTime(lastEndMicros) - ctrl.scrollX + 16.dp.value
-            AddClipButton(
-                modifier = Modifier
-                    .offset { IntOffset(addBtnPx.roundToInt(), (m.rowHeightPx / 2f - 13.dp.toPx()).roundToInt()) }
-            ) {
-                // Add media action
+            val addBtnGapPx = with(density) { 16.dp.toPx() }
+            val addBtnContentX = ctrl.viewport.contentPxAtTime(lastEndMicros) + addBtnGapPx
+            val addBtnPx = addBtnContentX - ctrl.scrollX
+            if (addBtnPx in -60f..(ctrl.viewport.viewportWidthPx + 60f)) {
+                AddClipButton(
+                    modifier = Modifier
+                        .offset { IntOffset(addBtnPx.roundToInt(), (m.rowHeightPx / 2f - 14.dp.toPx()).roundToInt()) }
+                ) {
+                    ctrl.onAddMediaToTrack(track.id)
+                }
             }
         }
     }
@@ -565,7 +572,7 @@ private fun TransitionButton(modifier: Modifier = Modifier) {
 }
 
 /**
- * Add clip button [+] at the end of the video track.
+ * Add clip button [+] attached to the media track.
  */
 @Composable
 private fun AddClipButton(
@@ -574,10 +581,10 @@ private fun AddClipButton(
 ) {
     Box(
         modifier = modifier
-            .size(26.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF22252D))
-            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(6.dp))
+            .size(28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF282D37))
+            .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(8.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -585,7 +592,7 @@ private fun AddClipButton(
             imageVector = Icons.Default.Add,
             contentDescription = "Add Media",
             tint = Color.White,
-            modifier = Modifier.size(16.dp)
+            modifier = Modifier.size(17.dp)
         )
     }
 }

@@ -25,7 +25,7 @@ sealed class Hit {
     object None : Hit()
     data class Ruler(val timeMicros: Long) : Hit()
     object Empty : Hit()
-    data class ClipBody(val clipId: String) : Hit()
+    data class ClipBody(val clipId: String, val isBaseMedia: Boolean = false) : Hit()
     data class ClipHandle(val clipId: String, val side: Side) : Hit()
     enum class Side { START, END }
 }
@@ -115,18 +115,21 @@ class TimelineUiController(
 
     fun report(msg: String) { flashMessage = msg }
 
-    // ---------------- §7: touching the timeline ALWAYS pauses playback ----------------
+    // ---------------- §7: touching the timeline ALWAYS pauses playback immediately ----------------
     private var flingJob: Job? = null
 
     fun onTimelineTouchBegan() {
-        playback.pause()
+        if (isPlaying || playback.isPlaying) {
+            playback.pause()
+            isPlaying = false
+        }
         flingJob?.cancel(); flingJob = null
     }
 
     // ---------------- scroll plumbing ----------------
     private fun clampScrollX(v: Float): Float {
         if (viewport.viewportWidthPx <= 0f) return v
-        val min = -viewport.playheadXPx - 110f * densityScale
+        val min = -viewport.playheadXPx
         val max = viewport.contentPxAtTime(contentDurationMicros()) - viewport.playheadXPx
         return v.coerceIn(min, max)
     }
@@ -194,7 +197,12 @@ class TimelineUiController(
         playheadMicros = clock.timeMicros
     }
     fun scrubEnded() { isScrubbing = false }
-    fun tapSeek(timeMicros: Long) { playback.seekTo(quantizeFrame(timeMicros.coerceAtLeast(0L))) }
+    fun tapSeek(timeMicros: Long) {
+        val t = quantizeFrame(timeMicros.coerceAtLeast(0L))
+        playback.seekTo(t)
+        scrollToTime(t)
+        playheadMicros = t
+    }
 
     // ---------------- hit testing ----------------
     fun hitTest(screenX: Float, screenY: Float, m: TimelineMetrics): Hit {
@@ -214,7 +222,8 @@ class TimelineUiController(
             if (contentX - x0 <= m.handlePx) return Hit.ClipHandle(clip.id, Hit.Side.START)
             if (x1 - contentX <= m.handlePx) return Hit.ClipHandle(clip.id, Hit.Side.END)
         }
-        return Hit.ClipBody(clip.id)
+        val isBase = (row == 0 && track.kind == TrackKind.VIDEO)
+        return Hit.ClipBody(clip.id, isBaseMedia = isBase)
     }
 
     // ---------------- selection (§11 — never moves the playhead) ----------------
@@ -222,6 +231,34 @@ class TimelineUiController(
     fun onTapEmpty() { engine.clearSelection() }
     fun onLongPressClip(clipId: String) { engine.toggleSelection(clipId) }
     fun selectTrack(trackId: String) { engine.selectTrack(trackId) }
+
+    // ---------------- media addition ----------------
+    var onAddMediaHandler: ((String) -> Unit)? = null
+
+    fun onAddMediaToTrack(trackId: String) {
+        val handler = onAddMediaHandler
+        if (handler != null) {
+            handler(trackId)
+        } else {
+            val track = engine.trackById(trackId) ?: return
+            val lastEnd = engine.clipsOn(trackId).maxOfOrNull { it.endMicros } ?: 0L
+            val clipKind = track.kind.defaultClipKind()
+            val newClip = Clip(
+                id = "",
+                trackId = trackId,
+                kind = clipKind,
+                startMicros = lastEnd,
+                durationMicros = 3_000_000L,
+                label = "Media ${engine.clipsOn(trackId).size + 1}"
+            )
+            try {
+                engine.addClip(newClip)
+                report("Added clip at ${TimeFormatter.clock(TimelineTime(lastEnd), fps, false)}")
+            } catch (e: Exception) {
+                report(e.message ?: "Failed to add clip")
+            }
+        }
+    }
 
     // ---------------- clip drag (§6, §12) ----------------
     private var dragAnchor = 0L
@@ -261,10 +298,16 @@ class TimelineUiController(
         val p = dragPreview ?: return
         var delta = deltaMicros
         var snappedTo: List<Long> = emptyList()
+        // Ensure no clip is moved before timeline zero (0.000s)
+        val minDelta = -dragAnchor
+        if (delta < minDelta) delta = minDelta
         if (snapEnabled) {
             val target = dragAnchor + delta
             val r = snap.query(target, planner.snapThresholdMicros(snapThresholdPx), p.clipIds, playheadMicros)
-            if (r.snapped) { delta = r.micros - dragAnchor; snappedTo = r.matched }
+            if (r.snapped) {
+                delta = maxOf(r.micros - dragAnchor, minDelta)
+                snappedTo = r.matched
+            }
         }
         val shift = allowedTrackShift(p, rawShift)
         dragPreview = p.copy(deltaMicros = delta, trackShift = shift)
@@ -285,8 +328,9 @@ class TimelineUiController(
                 val targetTrack = snapshot.tracks[targetRow]
                 val desired = if (id == p.primaryId) primary.startMicros + p.deltaMicros
                               else c.startMicros + p.deltaMicros
+                val clampedDesired = desired.coerceAtLeast(0L)
                 val placement = planner.resolveMove(
-                    id, targetTrack.id, desired, p.clipIds,
+                    id, targetTrack.id, clampedDesired, p.clipIds,
                     snapEnabled = id == p.primaryId,
                 )
                 engine.moveClip(id, placement.startMicros, placement.trackId)

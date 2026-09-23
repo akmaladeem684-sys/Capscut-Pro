@@ -71,9 +71,14 @@ object AudioClipResampler {
 object PitchShifter {
     fun shift(input: Array<FloatArray>, channels: Int, semitones: Float, sampleRate: Int): Array<FloatArray> {
         if (abs(semitones) < 0.01f) return input
+        val targetLen = input[0].size
         val ratio = 2.0.pow(semitones / 12.0).toFloat()
         val stretched = WsolaTimeStretcher.stretch(input, channels, ratio, sampleRate)
-        return AudioClipResampler.resample(stretched, channels, ratio.toDouble())
+        val resampled = AudioClipResampler.resample(stretched, channels, ratio.toDouble())
+        return Array(channels) { ch ->
+            val src = resampled[ch]
+            if (src.size == targetLen) src else src.copyOf(targetLen)
+        }
     }
 }
 

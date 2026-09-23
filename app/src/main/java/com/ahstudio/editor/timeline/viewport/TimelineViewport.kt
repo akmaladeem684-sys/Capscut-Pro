@@ -4,8 +4,8 @@ import com.ahstudio.editor.timeline.core.TimelineConstants
 import kotlin.math.roundToLong
 
 /**
- * Pure math + zoom/scroll state. The Playhead (Master CTI) is FIXED at 10% of the
- * viewport width; ALL content scrolls underneath it. There is exactly ONE playhead X,
+ * Pure math + zoom/scroll state. The Playhead (Master CTI) is FIXED at 40% of the
+ * viewport width (LEFT 40% / RIGHT 60%); ALL content scrolls underneath it. There is exactly ONE playhead X,
  * derived here and consumed by every layer (ruler, tracks, overlays).
  */
 class TimelineViewport {

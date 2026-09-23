@@ -43,34 +43,36 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
             val read = reader.readClip(clip, ctx, clipBuf)
             if (read.frames <= 0) continue
 
-            val clipCtx = AudioRenderContext(ctx.format, ctx.timelineStartSec, read.frames, ctx.blockIndex, ctx.realtime)
+            val tClipStart = ctx.timelineStartSec + read.offsetFrames.toDouble() / ctx.sampleRate
+            val tClipEnd = tClipStart + read.frames.toDouble() / ctx.sampleRate
+            val clipCtx = AudioRenderContext(ctx.format, tClipStart, read.frames, ctx.blockIndex, ctx.realtime)
 
             val volAuto = resolver.automationFor(clip, AP.VOLUME)
-            val g0 = clipAmplitude(clip, clipCtx.timelineStartSec, volAuto, resolver)
-            val g1 = clipAmplitude(clip, clipCtx.timelineEndSec, volAuto, resolver)
+            val g0 = clipAmplitude(clip, tClipStart, volAuto, resolver)
+            val g1 = clipAmplitude(clip, tClipEnd, volAuto, resolver)
             val perFrameVol = volAuto != null && volAuto.enabled && volAuto.keyframes.isNotEmpty() &&
-                volAuto.keyframes.any { it.timeSec >= clipCtx.timelineStartSec && it.timeSec <= clipCtx.timelineEndSec }
-            applyGain(clipBuf, read.frames, clipCtx.timelineStartSec, ctx.sampleRate, perFrameVol, g0, g1) { t -> clipAmplitude(clip, t, volAuto, resolver) }
+                volAuto.keyframes.any { it.timeSec >= tClipStart && it.timeSec <= tClipEnd }
+            applyGain(clipBuf, read.offsetFrames, read.frames, tClipStart, ctx.sampleRate, perFrameVol, g0, g1) { t -> clipAmplitude(clip, t, volAuto, resolver) }
 
             val x = xfadeFor(xfades, clip.id)
             if (x != null && x.endSec > x.startSec) {
                 val isA = x.clipA == clip.id
-                val u0 = (clipCtx.timelineStartSec - x.startSec) / (x.endSec - x.startSec)
-                val u1 = (clipCtx.timelineEndSec - x.startSec) / (x.endSec - x.startSec)
-                applyCrossfade(clipBuf, read.frames, u0.toFloat().coerceIn(0f, 1f), u1.toFloat().coerceIn(0f, 1f), isA)
+                val u0 = (tClipStart - x.startSec) / (x.endSec - x.startSec)
+                val u1 = (tClipEnd - x.startSec) / (x.endSec - x.startSec)
+                applyCrossfade(clipBuf, read.offsetFrames, read.frames, u0.toFloat().coerceIn(0f, 1f), u1.toFloat().coerceIn(0f, 1f), isA)
             }
 
             val panAuto = resolver.automationFor(clip, AP.PAN)
-            val p0 = panAt(clip, clipCtx.timelineStartSec, panAuto, resolver)
-            val p1 = panAt(clip, clipCtx.timelineEndSec, panAuto, resolver)
-            applyPan(clipBuf, read.frames, p0, p1)
+            val p0 = panAt(clip, tClipStart, panAuto, resolver)
+            val p1 = panAt(clip, tClipEnd, panAuto, resolver)
+            applyPan(clipBuf, read.offsetFrames, read.frames, p0, p1)
 
             val chain = clipChainCache.getOrPut(clip.id) { AudioDspFactory.chain(clip.clipDsp) }
             if (chain !== AudioDspChain.EMPTY) chain.process(clipBuf, clipCtx)
 
             for (c in 0 until bus.buffer.channels) {
                 val dst = bus.buffer.data[c]; val src = clipBuf.data[c]
-                for (i in 0 until read.frames) dst[read.offsetFrames + i] += src[i]
+                for (i in 0 until read.frames) dst[read.offsetFrames + i] += src[read.offsetFrames + i]
             }
         }
     }
@@ -88,30 +90,30 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
     private fun xfadeFor(xfades: List<CrossfadePair>, clipId: String): CrossfadePair? =
         xfades.firstOrNull { it.clipA == clipId || it.clipB == clipId }
 
-    private fun applyGain(buf: AudioBuffer, frames: Int, t0: Double, sampleRate: Int,
+    private fun applyGain(buf: AudioBuffer, offset: Int, frames: Int, t0: Double, sampleRate: Int,
                           perFrame: Boolean, g0: Float, g1: Float, eval: (Double) -> Float) {
         for (c in 0 until buf.channels) {
             val d = buf.data[c]
             when {
-                perFrame -> for (i in 0 until frames) d[i] *= eval(t0 + i.toDouble() / sampleRate)
-                g0 == g1 -> if (g0 != 1f) for (i in 0 until frames) d[i] *= g0
+                perFrame -> for (i in 0 until frames) d[offset + i] *= eval(t0 + i.toDouble() / sampleRate)
+                g0 == g1 -> if (g0 != 1f) for (i in 0 until frames) d[offset + i] *= g0
                 else -> { val step = (g1 - g0) / frames; var g = g0
-                    for (i in 0 until frames) { d[i] *= g; g += step } }
+                    for (i in 0 until frames) { d[offset + i] *= g; g += step } }
             }
         }
     }
 
-    private fun applyCrossfade(buf: AudioBuffer, frames: Int, u0: Float, u1: Float, isFirst: Boolean) {
+    private fun applyCrossfade(buf: AudioBuffer, offset: Int, frames: Int, u0: Float, u1: Float, isFirst: Boolean) {
         val step = (u1 - u0) / frames
         var u = u0
         for (i in 0 until frames) {
             val g = if (isFirst) cos(u * (Math.PI / 2).toFloat()) else sin(u * (Math.PI / 2).toFloat())
-            for (c in 0 until buf.channels) buf.data[c][i] *= g
+            for (c in 0 until buf.channels) buf.data[c][offset + i] *= g
             u += step
         }
     }
 
-    private fun applyPan(buf: AudioBuffer, frames: Int, p0: Float, p1: Float) {
+    private fun applyPan(buf: AudioBuffer, offset: Int, frames: Int, p0: Float, p1: Float) {
         if (buf.channels < 2) return
         if (abs(p0 - p1) < 1e-6f && p0 == 0f) return
         val a0 = (p0 + 1f) * 0.25f * Math.PI.toFloat(); val a1 = (p1 + 1f) * 0.25f * Math.PI.toFloat()
@@ -120,7 +122,7 @@ class AudioTrackMixer(private val format: AudioFormat, private val maxFrames: In
         val l = buf.data[0]; val r = buf.data[1]
         for (i in 0 until frames) {
             val gl = cos(a); val gr = sin(a)
-            l[i] *= gl; r[i] *= gr
+            l[offset + i] *= gl; r[offset + i] *= gr
             a += dA
         }
     }

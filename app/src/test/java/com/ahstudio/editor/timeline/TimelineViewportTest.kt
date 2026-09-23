@@ -1,5 +1,6 @@
 package com.ahstudio.editor.timeline
 
+import com.ahstudio.editor.timeline.core.TimelineConstants
 import com.ahstudio.editor.timeline.viewport.TimelineViewport
 import org.junit.Assert.*
 import org.junit.Test
@@ -8,9 +9,9 @@ import kotlin.math.abs
 class TimelineViewportTest {
     private fun vp(w: Float = 1000f) = TimelineViewport().apply { viewportWidthPx = w }
 
-    @Test fun `playhead sits at 10 percent of viewport`() {
-        val v = vp(); assertEquals(100f, v.playheadXPx, 0.001f)
-        v.viewportWidthPx = 371f; assertEquals(37.1f, v.playheadXPx, 0.001f)
+    @Test fun `playhead sits at expected fraction of viewport`() {
+        val v = vp(); assertEquals(1000f * TimelineConstants.PLAYHEAD_X_FRACTION, v.playheadXPx, 0.001f)
+        v.viewportWidthPx = 371f; assertEquals(371f * TimelineConstants.PLAYHEAD_X_FRACTION, v.playheadXPx, 0.001f)
     }
 
     @Test fun `playhead x does not move when scrolling or zooming`() {

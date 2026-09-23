@@ -198,18 +198,28 @@ fun SecondaryTrackIconTile(track: Track) {
         else -> Icons.Default.Layers
     }
 
-    Box(
+    Row(
         modifier = Modifier
-            .size(36.dp)
+            .fillMaxSize()
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF202227)),
-        contentAlignment = Alignment.Center
+            .background(Color(0xFF202227))
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Icon(
             imageVector = icon,
             contentDescription = track.name,
             tint = TimelineTokens.TextDim,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = track.name.ifBlank { track.kind.name },
+            color = TimelineTokens.TextDim,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
     }
 }

@@ -44,21 +44,34 @@ data class RecordingResult(val session: RecordingSession, val source: AudioSourc
 class WavWriter(private val file: File, private val sampleRate: Int, private val channels: Int, private val floatPcm: Boolean) {
     private val raf = RandomAccessFile(file, "rw")
     private var frames = 0L
+
+    private fun writeLeInt(v: Int) {
+        raf.write(v and 0xFF)
+        raf.write((v ushr 8) and 0xFF)
+        raf.write((v ushr 16) and 0xFF)
+        raf.write((v ushr 24) and 0xFF)
+    }
+
+    private fun writeLeShort(v: Int) {
+        raf.write(v and 0xFF)
+        raf.write((v ushr 8) and 0xFF)
+    }
+
     init {
         raf.setLength(0)
         raf.write(byteArrayOf('R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte()))
-        raf.writeInt(0)
+        writeLeInt(0)
         raf.write(byteArrayOf('W'.code.toByte(), 'A'.code.toByte(), 'V'.code.toByte(), 'E'.code.toByte()))
         raf.write(byteArrayOf('f'.code.toByte(), 'm'.code.toByte(), 't'.code.toByte(), ' '.code.toByte()))
-        raf.writeInt(16)
-        raf.writeShort(if (floatPcm) 3 else 1)
-        raf.writeShort(channels)
-        raf.writeInt(sampleRate)
-        raf.writeInt(sampleRate * channels * if (floatPcm) 4 else 2)
-        raf.writeShort(channels * if (floatPcm) 4 else 2)
-        raf.writeShort(if (floatPcm) 32 else 16)
+        writeLeInt(16)
+        writeLeShort(if (floatPcm) 3 else 1)
+        writeLeShort(channels)
+        writeLeInt(sampleRate)
+        writeLeInt(sampleRate * channels * if (floatPcm) 4 else 2)
+        writeLeShort(channels * if (floatPcm) 4 else 2)
+        writeLeShort(if (floatPcm) 32 else 16)
         raf.write(byteArrayOf('d'.code.toByte(), 'a'.code.toByte(), 't'.code.toByte(), 'a'.code.toByte()))
-        raf.writeInt(0)
+        writeLeInt(0)
     }
     fun write(interleaved: FloatArray, framesToWrite: Int) {
         if (floatPcm) {
@@ -77,8 +90,8 @@ class WavWriter(private val file: File, private val sampleRate: Int, private val
     }
     fun close() {
         val dataLen = (frames * channels * if (floatPcm) 4 else 2).toInt()
-        raf.seek(4); raf.writeInt(36 + dataLen)
-        raf.seek(40); raf.writeInt(dataLen)
+        raf.seek(4); writeLeInt(36 + dataLen)
+        raf.seek(40); writeLeInt(dataLen)
         raf.close()
     }
 }

@@ -60,7 +60,7 @@ object AudioClipValidator {
         if (clip.timelineStartSec < 0) issues.add("negative timelineStart")
         if (clip.timelineDurationSec <= 0) issues.add("non-positive duration")
         val sd = sourceDurationSec ?: return issues
-        if (!clip.isValidAgainstSource(sd)) issues.add("source coverage exceeds source length")
+        if (sd > 0.0 && !clip.isValidAgainstSource(sd)) issues.add("source coverage exceeds source length")
         return issues
     }
 }

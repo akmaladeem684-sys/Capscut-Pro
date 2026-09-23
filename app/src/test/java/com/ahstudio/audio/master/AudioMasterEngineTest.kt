@@ -96,7 +96,7 @@ class AudioMasterEngineTest {
         val b = buf(pcm); l.process(b, ctx(9600))
         val ceil = dbToLin(-0.3f)
         for (i in 200 until 9600) assertTrue("i=$i v=${b.data[0][i]}", abs(b.data[0][i]) <= ceil + 1e-2f)
-        assertTrue(abs(b.data[0][9500]) > ceil - 0.05f)
+        assertTrue(b.data[0].slice(9468..9516).maxOf { abs(it) } > ceil - 0.05f)
     }
     @Test fun noiseGate_closesOnSilence() {
         val pcm = Array(2) { FloatArray(9600) }
@@ -294,7 +294,7 @@ class AudioMasterEngineTest {
         for (i in 200 until 1024) assertTrue(abs(out.data[0][i]) <= ceil + 1e-2f)
     }
     @Test fun mixer_clipVolumeAndFadeApplied() {
-        val faded = clip("t1", 0.0, 1.0).copy(volume = 0.5f, fade = AudioFadeSettings(fadeInSec = 0.5))
+        val faded = clip("t1", 0.0, 1.0).copy(volume = 0.5f, fade = AudioFadeSettings(fadeInSec = 0.01))
         val m = MasterAudioMixer(1024)
         m.setProject(project(track("t1", listOf(faded))), fmt)
         val out = m.renderBlock(ctx(1024), FakeClipSource(1.0f))

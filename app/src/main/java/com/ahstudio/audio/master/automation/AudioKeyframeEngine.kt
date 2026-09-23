@@ -23,7 +23,7 @@ object AudioKeyframeEngine {
         val span = b.timeSec - a.timeSec
         if (span <= 1e-9) return b.value
         val u = ((t - a.timeSec) / span).coerceIn(0.0, 1.0)
-        return when (b.curve) {
+        return when (a.curve) {
             KeyframeCurve.HOLD -> a.value
             KeyframeCurve.SINE -> (a.value + (b.value - a.value) * (0.5 - 0.5 * cos(PI * u))).toFloat()
             KeyframeCurve.LINEAR -> (a.value + (b.value - a.value) * u).toFloat()

@@ -16,12 +16,20 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+import kotlin.math.roundToLong
+
 private sealed class Mode {
     data class Undecided(val hit: Hit) : Mode()
     object Scrub : Mode()
     data class Trim(val clipId: String, val side: Hit.Side, val downX: Float) : Mode()
     data class ClipDrag(val primaryId: String, val downX: Float, val downY: Float) : Mode()
-    object Scroll : Mode()
+    data class Scroll(
+        val gestureStartTimeMicros: Long,
+        val gestureStartScrollX: Float,
+        val gestureStartScrollY: Float,
+        val downX: Float,
+        val downY: Float,
+    ) : Mode()
     data class Zoom(val anchorMicros: Long, val startZoom: Float) : Mode()
 }
 
@@ -85,9 +93,34 @@ suspend fun PointerInputScope.timelineGestures(
                             lpJob?.cancel(); moved = true
                             mode = when (hit) {
                                 is Hit.Ruler -> Mode.Scrub
-                                is Hit.ClipHandle -> { ctrl.beginTrim(hit.clipId, hit.side); Mode.Trim(hit.clipId, hit.side, downPos.x) }
-                                is Hit.ClipBody -> { ctrl.beginClipDrag(hit.clipId); Mode.ClipDrag(hit.clipId, downPos.x, downPos.y) }
-                                else -> Mode.Scroll
+                                is Hit.ClipHandle -> {
+                                    ctrl.beginTrim(hit.clipId, hit.side)
+                                    Mode.Trim(hit.clipId, hit.side, downPos.x)
+                                }
+                                is Hit.ClipBody -> {
+                                    if (hit.isBaseMedia && !longPressFired) {
+                                        // Base media is not accidentally dragged by normal touch interaction!
+                                        // Normal swipe on base media navigates the timeline!
+                                        Mode.Scroll(
+                                            gestureStartTimeMicros = ctrl.playheadMicros,
+                                            gestureStartScrollX = ctrl.scrollX,
+                                            gestureStartScrollY = ctrl.scrollY,
+                                            downX = downPos.x,
+                                            downY = downPos.y,
+                                        )
+                                    } else {
+                                        // Editable overlay clip or intentionally long-pressed base media
+                                        ctrl.beginClipDrag(hit.clipId)
+                                        Mode.ClipDrag(hit.clipId, downPos.x, downPos.y)
+                                    }
+                                }
+                                else -> Mode.Scroll(
+                                    gestureStartTimeMicros = ctrl.playheadMicros,
+                                    gestureStartScrollX = ctrl.scrollX,
+                                    gestureStartScrollY = ctrl.scrollY,
+                                    downX = downPos.x,
+                                    downY = downPos.y,
+                                )
                             }
                         }
                     }
@@ -109,11 +142,19 @@ suspend fun PointerInputScope.timelineGestures(
                         ctrl.updateClipDrag(deltaMicros, rawShift, snapEnabled = true, metrics.snapPx)
                     }
                     is Mode.Scroll -> {
-                        val dx = pos.x - lastPos.x; val dy = pos.y - lastPos.y
-                        ctrl.shiftScrollX(dx)
-                        ctrl.setScrollYRaw(ctrl.scrollY - dy)
-                        ctrl.playback.requestScrubSeek(ctrl.viewport.timeAtScrollPx(ctrl.scrollX))
-                        ctrl.playheadMicros = ctrl.clock.timeMicros
+                        val totalDeltaPx = (pos.x - m.downX).toDouble()
+                        // Moving left (swiping left, deltaPx < 0) advances timeline forward (0s -> 6s).
+                        // Moving right (swiping right, deltaPx > 0) rewinds timeline backwards (6s -> 3s).
+                        val deltaMicros = (-totalDeltaPx / ctrl.viewport.pxPerMicro).roundToLong()
+                        val targetMicros = (m.gestureStartTimeMicros + deltaMicros).coerceAtLeast(0L)
+
+                        val dy = pos.y - m.downY
+                        ctrl.setScrollYRaw(m.gestureStartScrollY - dy)
+
+                        ctrl.scrollToTime(targetMicros)
+                        ctrl.clock.seekTo(targetMicros)
+                        ctrl.playback.requestScrubSeek(targetMicros)
+                        ctrl.playheadMicros = targetMicros
                     }
                     is Mode.Zoom -> {
                         val z = ev.calculateZoom()
@@ -138,23 +179,26 @@ suspend fun PointerInputScope.timelineGestures(
         // ---------------- finalize (P4 fix applied) ----------------
         val v = tracker.calculateVelocity()
         when (val m = mode) {
-            is Mode.Undecided -> if (!longPressFired) onTap(ctrl, hit)
+            is Mode.Undecided -> if (!longPressFired) onTap(ctrl, hit, downPos)
             is Mode.Scrub -> ctrl.scrubEnded()
             is Mode.Trim -> ctrl.commitTrim()
-            is Mode.ClipDrag -> if (moved) ctrl.commitClipDrag() else onTap(ctrl, hit)
+            is Mode.ClipDrag -> if (moved) ctrl.commitClipDrag() else onTap(ctrl, hit, downPos)
             is Mode.Scroll -> {
-                if (!moved) onTap(ctrl, hit) else ctrl.fling(v.x, -v.y)
+                if (!moved) onTap(ctrl, hit, downPos) else ctrl.fling(v.x, -v.y)
             }
             is Mode.Zoom -> Unit
         }
     }
 }
 
-private fun onTap(ctrl: TimelineUiController, hit: Hit) {
+private fun onTap(ctrl: TimelineUiController, hit: Hit, pos: androidx.compose.ui.geometry.Offset) {
     when (hit) {
         is Hit.Ruler -> ctrl.tapSeek(hit.timeMicros)          // §8 tap-to-seek
         is Hit.ClipBody -> ctrl.onTapClip(hit.clipId)
         is Hit.ClipHandle -> ctrl.onTapClip(hit.clipId)
-        Hit.Empty, Hit.None -> ctrl.onTapEmpty()
+        Hit.Empty, Hit.None -> {
+            val t = ctrl.timeUnderPointer(pos.x)
+            ctrl.tapSeek(t)
+        }
     }
 }
