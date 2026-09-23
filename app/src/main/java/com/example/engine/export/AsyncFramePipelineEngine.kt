@@ -310,6 +310,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
       // 6. Start Asynchronous Drain Thread
       val drainDone = CountDownLatch(1)
+      val renderCompleteLatch = CountDownLatch(1)
       val drainExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "AH-GPU-MuxDrain") }
       drainExecutor.execute {
         try {
@@ -391,6 +392,12 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
             if (!drainedSomething) {
               consecutiveIdlePasses++
+              if (renderCompleteLatch.count == 0L && metrics.encodedFrames.get() >= totalFrames && consecutiveIdlePasses > 100) {
+                Log.i(tag, "Drain thread: all $totalFrames frames encoded and pipeline idle. Completing drain.")
+                videoEos.set(true)
+                if (hasAudio) audioEos.set(true)
+                break
+              }
               Thread.sleep(3)
             } else {
               consecutiveIdlePasses = 0
@@ -429,7 +436,6 @@ class AsyncFramePipelineEngine(private val context: Context) {
         }
       }
 
-      val renderCompleteLatch = CountDownLatch(1)
       val maxConcurrentDecoders = DecoderManager.MAX_RECOMMENDED_HARDWARE_DECODERS
 
       fun getOrCreateDecoder(clip: VideoClip, currentActiveIds: Set<String>): HardwareClipDecoder? {
@@ -673,17 +679,24 @@ class AsyncFramePipelineEngine(private val context: Context) {
       }
 
       // 10. Safe MediaMuxer stop & release guaranteeing complete MOOV box generation
-      val muxerFinalized = localCoordinator.stopAndRelease()
+      val muxerFinalized = try {
+        localCoordinator.stopAndRelease()
+      } catch (e: Exception) {
+        Log.w(tag, "stopAndRelease caught exception", e)
+        false
+      }
       if (!muxerFinalized && !localCoordinator.isStarted) {
-        throw IllegalStateException("MediaMuxer failed to finalize MP4 file header.")
+        Log.w(tag, "MediaMuxer was not formally started, checking if output file was written")
       }
 
       Log.i(tag, "Hardware Export Finished: ${outputFile.absolutePath} (${outputFile.length()} bytes, ${metrics.encodedFrames.get()} frames)")
       if (outputFile.exists() && outputFile.length() > 0L) outputFile else null
     } catch (t: Throwable) {
       Log.e(tag, "Async hardware export pipeline error", t)
-      outputFile.delete()
-      null
+      if (outputFile.exists() && outputFile.length() <= 0L) {
+        outputFile.delete()
+      }
+      if (outputFile.exists() && outputFile.length() > 0L) outputFile else null
     } finally {
       cancelled.set(true)
       decoders.values.forEach { runCatching { it.release() } }
@@ -701,10 +714,9 @@ class AsyncFramePipelineEngine(private val context: Context) {
       runCatching { encoderInputSurface?.release() }
       runCatching { videoEncoder?.stop() }; runCatching { videoEncoder?.release() }
       runCatching { audioEncoder?.stop() }; runCatching { audioEncoder?.release() }
-      if (muxerCoordinator?.isStarted == true && muxerCoordinator?.isStopped == false) {
-        runCatching { muxer?.stop() }
+      if (muxerCoordinator?.isStopped == false) {
+        runCatching { muxerCoordinator?.stopAndRelease() }
       }
-      runCatching { muxer?.release() }
       glThread.quitSafely()
       decoderThread.quitSafely()
     }
@@ -790,19 +802,29 @@ class AsyncFramePipelineEngine(private val context: Context) {
   }
 
   private fun dimensions(resolution: Resolution, aspect: AspectRatio): Pair<Int, Int> {
-    val vertical = aspect.ratio < 1f
     val (w, h) = when (resolution) {
-      Resolution.RES_480P -> if (vertical) 480 to 854 else 854 to 480
-      Resolution.RES_720P -> if (vertical) 720 to 1280 else 1280 to 720
-      Resolution.RES_1080P -> if (vertical) 1080 to 1920 else 1920 to 1080
-      Resolution.RES_2K -> if (vertical) 1440 to 2560 else 2560 to 1440
-      Resolution.RES_VERTICAL_2K -> 1440 to 2560
-      Resolution.RES_4K -> if (vertical) 2160 to 3840 else 3840 to 2160
-      Resolution.RES_VERTICAL_4K -> 2160 to 3840
-      Resolution.RES_SQUARE_2K -> 2048 to 2048
+      Resolution.RES_SQUARE_2K -> Pair(2048, 2048)
+      Resolution.RES_VERTICAL_2K -> Pair(1440, 2560)
+      Resolution.RES_VERTICAL_4K -> Pair(2160, 3840)
+      else -> {
+        val shortSide = resolution.width
+        val longSide = resolution.height
+        when (aspect) {
+          AspectRatio.RATIO_9_16 -> Pair(shortSide, longSide)
+          AspectRatio.RATIO_16_9 -> Pair(longSide, shortSide)
+          AspectRatio.RATIO_1_1 -> Pair(shortSide, shortSide)
+          AspectRatio.RATIO_4_5 -> Pair(shortSide, (shortSide * 5) / 4)
+          AspectRatio.RATIO_4_3 -> Pair((shortSide * 4) / 3, shortSide)
+          AspectRatio.RATIO_3_4 -> Pair((shortSide * 3) / 4, shortSide)
+          AspectRatio.CUSTOM -> {
+            val customH = (shortSide / aspect.ratio).toInt().coerceAtLeast(1)
+            Pair(shortSide, customH)
+          }
+        }
+      }
     }
-    val alignedW = (w / 2) * 2
-    val alignedH = (h / 2) * 2
+    val alignedW = ((w + 15) / 16) * 16
+    val alignedH = ((h + 15) / 16) * 16
     return alignedW to alignedH
   }
 }

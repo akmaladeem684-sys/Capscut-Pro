@@ -209,6 +209,8 @@ class MuxerCoordinator(
         set(info.offset, info.size, pts, info.flags)
       }
       try {
+        buffer.position(info.offset)
+        buffer.limit(info.offset + info.size)
         mediaMuxer.writeSampleData(videoTrackIndex, buffer, correctedInfo)
         lastVideoPtsUs = pts
       } catch (e: Exception) {
@@ -216,8 +218,13 @@ class MuxerCoordinator(
       }
     } else {
       val bytes = ByteArray(info.size)
+      val currentPos = buffer.position()
+      val currentLim = buffer.limit()
       buffer.position(info.offset)
+      buffer.limit(info.offset + info.size)
       buffer.get(bytes)
+      buffer.position(currentPos)
+      buffer.limit(currentLim)
       pendingQueue.add(QueuedPacket(false, bytes, info.presentationTimeUs, info.flags))
     }
   }
@@ -240,6 +247,8 @@ class MuxerCoordinator(
         set(info.offset, info.size, pts, info.flags)
       }
       try {
+        buffer.position(info.offset)
+        buffer.limit(info.offset + info.size)
         mediaMuxer.writeSampleData(audioTrackIndex, buffer, correctedInfo)
         lastAudioPtsUs = pts
       } catch (e: Exception) {
@@ -247,8 +256,13 @@ class MuxerCoordinator(
       }
     } else {
       val bytes = ByteArray(info.size)
+      val currentPos = buffer.position()
+      val currentLim = buffer.limit()
       buffer.position(info.offset)
+      buffer.limit(info.offset + info.size)
       buffer.get(bytes)
+      buffer.position(currentPos)
+      buffer.limit(currentLim)
       pendingQueue.add(QueuedPacket(true, bytes, info.presentationTimeUs, info.flags))
     }
   }
