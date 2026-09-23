@@ -696,16 +696,71 @@ class GpuCompositionRenderer(private val context: Context) {
 
     if (frame.activeTransition != null) {
       val tr = frame.activeTransition
+      val p = tr.progress.coerceIn(0f, 1f)
       when (tr.type) {
-        TransitionType.FADE -> {
-          finalOpacity = (finalOpacity * (1.0f - tr.progress)).coerceIn(0f, 1f)
+        TransitionType.FADE, TransitionType.DISSOLVE -> {
+          finalOpacity = (finalOpacity * (1.0f - p)).coerceIn(0f, 1f)
         }
         TransitionType.SLIDE_LEFT -> {
-          Matrix.translateM(mvpMatrix, 0, -tr.progress * 2.0f, 0f, 0f)
+          Matrix.translateM(mvpMatrix, 0, -p * 2.0f, 0f, 0f)
+        }
+        TransitionType.SLIDE_RIGHT -> {
+          Matrix.translateM(mvpMatrix, 0, p * 2.0f, 0f, 0f)
+        }
+        TransitionType.PUSH_UP -> {
+          Matrix.translateM(mvpMatrix, 0, 0f, p * 2.0f, 0f)
         }
         TransitionType.ZOOM_IN -> {
-          val zoom = 1.0f + tr.progress * 0.5f
+          val zoom = 1.0f + p * 0.6f
           Matrix.scaleM(mvpMatrix, 0, zoom, zoom, 1f)
+          finalOpacity = (finalOpacity * (1.0f - p * 0.4f)).coerceIn(0f, 1f)
+        }
+        TransitionType.ZOOM_OUT -> {
+          val zoom = (1.0f - p * 0.4f).coerceAtLeast(0.1f)
+          Matrix.scaleM(mvpMatrix, 0, zoom, zoom, 1f)
+          finalOpacity = (finalOpacity * (1.0f - p * 0.4f)).coerceIn(0f, 1f)
+        }
+        TransitionType.SPIN -> {
+          Matrix.rotateM(mvpMatrix, 0, p * 360f, 0f, 0f, 1f)
+          val zoom = (1.0f - p * 0.5f).coerceAtLeast(0.1f)
+          Matrix.scaleM(mvpMatrix, 0, zoom, zoom, 1f)
+          finalOpacity = (finalOpacity * (1.0f - p)).coerceIn(0f, 1f)
+        }
+        TransitionType.BLUR, TransitionType.ZOOM_BLUR -> {
+          keyframeBlur = (keyframeBlur + (1.0f - kotlin.math.abs(p - 0.5f) * 2.0f) * 0.04f).coerceIn(0f, 1f)
+          finalOpacity = (finalOpacity * (1.0f - p)).coerceIn(0f, 1f)
+        }
+        TransitionType.FLASH -> {
+          val flashIntensity = (1.0f - kotlin.math.abs(p - 0.5f) * 2.0f).coerceIn(0f, 1f)
+          finalAdjustments = finalAdjustments.copy(
+            brightness = (finalAdjustments.brightness + flashIntensity * 0.8f).coerceIn(-1f, 1f),
+            exposure = (finalAdjustments.exposure + flashIntensity * 0.6f).coerceIn(-1f, 1f)
+          )
+          if (p >= 0.5f) finalOpacity = (finalOpacity * (1.0f - (p - 0.5f) * 2f)).coerceIn(0f, 1f)
+        }
+        TransitionType.GLITCH, TransitionType.GLITCH_WIPE -> {
+          if (p in 0.15f..0.85f) {
+            val jitterX = ((Math.random() - 0.5) * 0.1).toFloat()
+            val jitterY = ((Math.random() - 0.5) * 0.05).toFloat()
+            Matrix.translateM(mvpMatrix, 0, jitterX, jitterY, 0f)
+          }
+          finalOpacity = (finalOpacity * (1.0f - p)).coerceIn(0f, 1f)
+        }
+        TransitionType.WHIP_PAN -> {
+          Matrix.translateM(mvpMatrix, 0, -p * 2.5f, 0f, 0f)
+          keyframeBlur = (keyframeBlur + kotlin.math.sin(p * 3.14159f) * 0.03f).coerceIn(0f, 1f)
+        }
+        TransitionType.WIPE -> {
+          Matrix.translateM(mvpMatrix, 0, -p * 1.5f, 0f, 0f)
+          finalOpacity = (finalOpacity * (1.0f - p * 0.5f)).coerceIn(0f, 1f)
+        }
+        TransitionType.LIGHT_LEAK -> {
+          val flare = kotlin.math.sin(p * 3.14159f).coerceIn(0f, 1f)
+          finalAdjustments = finalAdjustments.copy(
+            brightness = (finalAdjustments.brightness + flare * 0.4f).coerceIn(-1f, 1f),
+            temperature = (finalAdjustments.temperature + flare * 0.5f).coerceIn(-1f, 1f)
+          )
+          finalOpacity = (finalOpacity * (1.0f - p)).coerceIn(0f, 1f)
         }
         else -> {}
       }

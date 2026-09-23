@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -42,6 +41,7 @@ import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Transform
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.VolumeUp
@@ -61,7 +61,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,7 +70,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -80,7 +78,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.domain.model.Transition
+import com.ahstudio.transition.core.Easing
+import com.ahstudio.transition.integration.TransitionAppBridge
 import com.example.domain.model.TransitionType
 import com.example.ui.StudioViewModel
 import com.example.ui.theme.AmberAccent
@@ -117,7 +116,7 @@ val TRANSITION_ITEMS = listOf(
   TransitionItemData(
     type = TransitionType.DISSOLVE,
     category = TransitionCategory.DISSOLVES,
-    description = "Smooth alpha cross-dissolve between clips",
+    description = "Smooth alpha cross-dissolve",
     gradient = listOf(Color(0xFF6366F1), Color(0xFFA855F7)),
     icon = Icons.Default.Transform
   ),
@@ -173,7 +172,7 @@ val TRANSITION_ITEMS = listOf(
   TransitionItemData(
     type = TransitionType.SPIN,
     category = TransitionCategory.DYNAMIC,
-    description = "360-degree rotational spin transition",
+    description = "360-degree rotational spin",
     gradient = listOf(Color(0xFF8B5CF6), Color(0xFF6366F1)),
     icon = Icons.Default.Refresh
   ),
@@ -208,7 +207,7 @@ val TRANSITION_ITEMS = listOf(
   TransitionItemData(
     type = TransitionType.ZOOM_BLUR,
     category = TransitionCategory.DYNAMIC,
-    description = "Explosive directional zoom blur burst",
+    description = "Directional zoom blur burst",
     gradient = listOf(Color(0xFFF43F5E), Color(0xFF8B5CF6)),
     icon = Icons.Default.AutoAwesome
   ),
@@ -222,11 +221,19 @@ val TRANSITION_ITEMS = listOf(
   TransitionItemData(
     type = TransitionType.LIGHT_LEAK,
     category = TransitionCategory.DISSOLVES,
-    description = "Vintage anamorphic warm light leak burst",
+    description = "Warm anamorphic light leak flare",
     gradient = listOf(Color(0xFFF97316), Color(0xFFFACC15)),
     icon = Icons.Default.FlashOn
   )
 )
+
+enum class EasingPreset(val label: String, val type: Easing.Type) {
+  EASE_IN_OUT("Smooth", Easing.Type.EASE_IN_OUT),
+  LINEAR("Linear", Easing.Type.LINEAR),
+  CUBIC("Cubic", Easing.Type.CUBIC_IN_OUT),
+  BOUNCE("Bounce", Easing.Type.BOUNCE_OUT),
+  ELASTIC("Elastic", Easing.Type.ELASTIC_OUT)
+}
 
 @Composable
 fun TransitionsPanel(
@@ -244,6 +251,7 @@ fun TransitionsPanel(
   val currentTransition = timeline.transitions.find { it.clipIndexBefore == currentCutIndex }
 
   var selectedCategory by remember { mutableStateOf(TransitionCategory.ALL) }
+  var selectedEasing by remember { mutableStateOf(EasingPreset.EASE_IN_OUT) }
   var durationMs by remember(currentTransition) {
     mutableLongStateOf(currentTransition?.durationMs ?: 500L)
   }
@@ -255,10 +263,10 @@ fun TransitionsPanel(
       .fillMaxWidth()
       .background(StudioSurface)
       .border(1.dp, StudioBorder)
-      .padding(12.dp)
+      .padding(10.dp)
       .testTag("transitions_panel")
   ) {
-    // Top Bar: Header, Badge, and Close
+    // 1. Top Bar: Header, Live Preview simulation badge & Close
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
@@ -267,32 +275,46 @@ fun TransitionsPanel(
       Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
           modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(PurpleAccent.copy(alpha = 0.2f)),
+            .size(28.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(PurpleAccent.copy(alpha = 0.25f)),
           contentAlignment = Alignment.Center
         ) {
-          Icon(Icons.Default.Transform, contentDescription = "Transitions", tint = PurpleAccent, modifier = Modifier.size(18.dp))
+          Icon(Icons.Default.Transform, contentDescription = "Transitions", tint = PurpleAccent, modifier = Modifier.size(16.dp))
         }
         Spacer(modifier = Modifier.width(8.dp))
         Column {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+              text = "Transitions Engine",
+              style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 13.sp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(CyanAccent.copy(alpha = 0.15f))
+                .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+              Text("GPU Accelerated", color = CyanAccent, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+            }
+          }
           Text(
-            text = "Video Transitions",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
-          )
-          Text(
-            text = if (totalCuts > 0) "Drag onto timeline cuts or tap to apply" else "Add at least 2 video clips to apply transitions",
-            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp)
+            text = if (totalCuts > 0) "Tap any transition or drag to cut" else "Add 2+ clips on track to apply transitions",
+            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 10.sp)
           )
         }
       }
 
-      IconButton(onClick = { viewModel.setActiveToolbarTab(null) }) {
-        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
+      IconButton(
+        onClick = { viewModel.setActiveToolbarTab(null) },
+        modifier = Modifier.size(28.dp).testTag("close_transitions_panel_btn")
+      ) {
+        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary, modifier = Modifier.size(16.dp))
       }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(6.dp))
 
     if (totalCuts == 0) {
       // Empty state when only 0 or 1 clip is on timeline
@@ -301,47 +323,45 @@ fun TransitionsPanel(
           .fillMaxWidth()
           .clip(RoundedCornerShape(8.dp))
           .background(StudioSurfaceVariant)
-          .padding(16.dp),
+          .padding(14.dp),
         contentAlignment = Alignment.Center
       ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-          Icon(Icons.Default.Info, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(28.dp))
-          Spacer(modifier = Modifier.height(6.dp))
+          Icon(Icons.Default.Info, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(24.dp))
+          Spacer(modifier = Modifier.height(4.dp))
           Text(
-            text = "Transitions require 2 or more video clips on the main track.",
+            text = "Transitions require 2 or more video clips.",
             style = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary, fontWeight = FontWeight.Medium),
             fontSize = 12.sp
           )
-          Spacer(modifier = Modifier.height(4.dp))
           Text(
-            text = "Split a clip or import additional media to connect cuts with transitions.",
+            text = "Split a clip or import more media to place seamless transitions.",
             style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
-            fontSize = 11.sp
+            fontSize = 10.sp
           )
         }
       }
       return
     }
 
-    // Cut Junction Target Selector & Current Status Bar
+    // 2. Cut Junction Selector Bar
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(8.dp))
+        .clip(RoundedCornerShape(6.dp))
         .background(StudioDarkBg)
-        .padding(horizontal = 8.dp, vertical = 6.dp),
+        .padding(horizontal = 6.dp, vertical = 4.dp),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically
     ) {
-      // Cut selector chips
       Row(
         modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
         Text(
-          text = "Cut Target:",
-          style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+          text = "Cut:",
+          style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         )
 
         for (cutIdx in 0 until totalCuts) {
@@ -350,27 +370,27 @@ fun TransitionsPanel(
 
           Box(
             modifier = Modifier
-              .clip(RoundedCornerShape(6.dp))
+              .clip(RoundedCornerShape(4.dp))
               .background(if (isSelectedCut) PurpleAccent else StudioSurfaceVariant)
-              .border(1.dp, if (isSelectedCut) Color.White else StudioBorder, RoundedCornerShape(6.dp))
+              .border(1.dp, if (isSelectedCut) Color.White else StudioBorder, RoundedCornerShape(4.dp))
               .clickable { viewModel.timelineEngine.setSelectedTransitionCutIndex(cutIdx) }
-              .padding(horizontal = 8.dp, vertical = 4.dp)
+              .padding(horizontal = 6.dp, vertical = 3.dp)
               .testTag("cut_target_chip_$cutIdx")
           ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
               Text(
-                text = "Cut ${cutIdx + 1} (#${cutIdx + 1}➔#${cutIdx + 2})",
+                text = "Cut #${cutIdx + 1}",
                 style = MaterialTheme.typography.bodySmall.copy(
                   color = if (isSelectedCut) Color.White else TextPrimary,
-                  fontSize = 10.sp,
+                  fontSize = 9.sp,
                   fontWeight = if (isSelectedCut) FontWeight.Bold else FontWeight.Normal
                 )
               )
               if (trAtCut != null) {
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(3.dp))
                 Box(
                   modifier = Modifier
-                    .size(6.dp)
+                    .size(5.dp)
                     .clip(CircleShape)
                     .background(CyanAccent)
                 )
@@ -384,16 +404,16 @@ fun TransitionsPanel(
       if (currentTransition != null) {
         IconButton(
           onClick = { viewModel.timelineEngine.removeTransition(currentCutIndex) },
-          modifier = Modifier.size(28.dp).testTag("delete_transition_btn")
+          modifier = Modifier.size(24.dp).testTag("delete_transition_btn")
         ) {
-          Icon(Icons.Default.Delete, contentDescription = "Remove Transition", tint = RedAccent, modifier = Modifier.size(15.dp))
+          Icon(Icons.Default.Delete, contentDescription = "Remove Transition", tint = RedAccent, modifier = Modifier.size(13.dp))
         }
       }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(6.dp))
 
-    // Active Transition Summary & Duration Scrubber
+    // 3. Compact Controls: Duration slider + Easing chips
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
@@ -401,32 +421,29 @@ fun TransitionsPanel(
     ) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-          text = "Selected: ",
-          style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp)
+          text = "Active: ",
+          style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 10.sp)
         )
         Text(
-          text = currentTransition?.type?.displayName ?: "None (Hard Cut)",
+          text = currentTransition?.type?.displayName ?: "None (Cut)",
           style = MaterialTheme.typography.bodySmall.copy(
             color = if (currentTransition != null) CyanAccent else TextTertiary,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp
+            fontSize = 10.sp
           )
         )
       }
 
-      // Duration readout & preset chips
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          text = String.format(Locale.US, "Duration: %.1fs", durationMs / 1000f),
-          style = MaterialTheme.typography.bodySmall.copy(color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-        )
-      }
+      Text(
+        text = String.format(Locale.US, "%.1fs (%d ms)", durationMs / 1000f, durationMs),
+        style = MaterialTheme.typography.bodySmall.copy(color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+      )
     }
 
     // Duration slider + Quick chips
     Row(
       modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
       Slider(
@@ -443,14 +460,14 @@ fun TransitionsPanel(
           activeTrackColor = PurpleAccent,
           inactiveTrackColor = StudioBorder
         ),
-        modifier = Modifier.weight(1f).height(24.dp)
+        modifier = Modifier.weight(1f).height(20.dp)
       )
 
-      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         listOf(300L, 500L, 800L, 1000L).forEach { presetMs ->
           Box(
             modifier = Modifier
-              .clip(RoundedCornerShape(4.dp))
+              .clip(RoundedCornerShape(3.dp))
               .background(if (durationMs == presetMs) PurpleAccent else StudioSurfaceVariant)
               .clickable {
                 durationMs = presetMs
@@ -458,13 +475,13 @@ fun TransitionsPanel(
                   viewModel.timelineEngine.setTransitionDuration(currentCutIndex, presetMs)
                 }
               }
-              .padding(horizontal = 6.dp, vertical = 2.dp)
+              .padding(horizontal = 4.dp, vertical = 2.dp)
           ) {
             Text(
               text = "${presetMs / 1000f}s",
               style = MaterialTheme.typography.bodySmall.copy(
                 color = if (durationMs == presetMs) Color.White else TextSecondary,
-                fontSize = 9.sp,
+                fontSize = 8.sp,
                 fontWeight = FontWeight.Bold
               )
             )
@@ -473,9 +490,43 @@ fun TransitionsPanel(
       }
     }
 
-    Spacer(modifier = Modifier.height(6.dp))
+    // Easing Presets Row
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Text(
+        text = "Curve:",
+        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+      )
+      EasingPreset.values().forEach { preset ->
+        val isSelected = selectedEasing == preset
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (isSelected) CyanAccent.copy(alpha = 0.2f) else StudioSurfaceVariant)
+            .border(1.dp, if (isSelected) CyanAccent else Color.Transparent, RoundedCornerShape(4.dp))
+            .clickable { selectedEasing = preset }
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+        ) {
+          Text(
+            text = preset.label,
+            style = MaterialTheme.typography.bodySmall.copy(
+              color = if (isSelected) CyanAccent else TextSecondary,
+              fontSize = 9.sp,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
+          )
+        }
+      }
+    }
 
-    // Transition Category Tabs
+    Spacer(modifier = Modifier.height(4.dp))
+
+    // 4. Category Tabs
     Row(
       modifier = Modifier
         .fillMaxWidth()
@@ -486,17 +537,17 @@ fun TransitionsPanel(
         val isCatSelected = selectedCategory == cat
         Box(
           modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(4.dp))
             .background(if (isCatSelected) StudioSurfaceVariant else Color.Transparent)
-            .border(1.dp, if (isCatSelected) CyanAccent else Color.Transparent, RoundedCornerShape(6.dp))
+            .border(1.dp, if (isCatSelected) CyanAccent else Color.Transparent, RoundedCornerShape(4.dp))
             .clickable { selectedCategory = cat }
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 6.dp, vertical = 3.dp)
         ) {
           Text(
             text = cat.title,
             style = MaterialTheme.typography.bodySmall.copy(
               color = if (isCatSelected) CyanAccent else TextSecondary,
-              fontSize = 11.sp,
+              fontSize = 10.sp,
               fontWeight = if (isCatSelected) FontWeight.Bold else FontWeight.Normal
             )
           )
@@ -504,9 +555,9 @@ fun TransitionsPanel(
       }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(6.dp))
 
-    // Filtered Transition Cards Grid
+    // 5. Transition Cards Grid (Lightweight & Smooth)
     val filteredItems = remember(selectedCategory) {
       if (selectedCategory == TransitionCategory.ALL) TRANSITION_ITEMS
       else TRANSITION_ITEMS.filter { it.category == selectedCategory }
@@ -515,12 +566,12 @@ fun TransitionsPanel(
     Box(
       modifier = Modifier
         .fillMaxWidth()
-        .height(180.dp)
+        .height(160.dp)
     ) {
       LazyVerticalGrid(
         columns = GridCells.Fixed(3),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxSize()
       ) {
         items(filteredItems) { item ->
@@ -543,9 +594,9 @@ fun TransitionsPanel(
       }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(6.dp))
 
-    // Bottom Action Row: Apply To All Cuts & Auto SFX Whoosh Switch
+    // 6. Bottom Actions: Apply to All & Sound Effect Toggle
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
@@ -553,10 +604,10 @@ fun TransitionsPanel(
     ) {
       // Auto Whoosh SFX Switch
       Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(4.dp))
-        Text("Whoosh SFX", style = MaterialTheme.typography.bodySmall.copy(color = TextPrimary, fontSize = 11.sp))
-        Spacer(modifier = Modifier.width(4.dp))
+        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(3.dp))
+        Text("Whoosh SFX", style = MaterialTheme.typography.bodySmall.copy(color = TextPrimary, fontSize = 10.sp))
+        Spacer(modifier = Modifier.width(2.dp))
         Switch(
           checked = autoWhooshSfx,
           onCheckedChange = { autoWhooshSfx = it },
@@ -565,7 +616,7 @@ fun TransitionsPanel(
             checkedTrackColor = CyanAccent.copy(alpha = 0.4f),
             uncheckedTrackColor = StudioBorder
           ),
-          modifier = Modifier.scale(0.7f)
+          modifier = Modifier.scale(0.65f)
         )
       }
 
@@ -580,13 +631,13 @@ fun TransitionsPanel(
           containerColor = PurpleAccent,
           contentColor = Color.White
         ),
-        modifier = Modifier.height(30.dp).testTag("apply_all_transitions_btn")
+        modifier = Modifier.height(28.dp).testTag("apply_all_transitions_btn")
       ) {
-        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(13.dp))
-        Spacer(modifier = Modifier.width(4.dp))
+        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(12.dp))
+        Spacer(modifier = Modifier.width(3.dp))
         Text(
           text = if (showApplyAllSuccess) "Applied to All!" else "Apply to All Cuts",
-          fontSize = 10.sp,
+          fontSize = 9.sp,
           fontWeight = FontWeight.Bold
         )
       }
@@ -601,33 +652,22 @@ private fun TransitionCard(
   onApply: () -> Unit,
   onStartDrag: () -> Unit
 ) {
-  var isDraggingThis by remember { mutableStateOf(false) }
-
   Card(
     modifier = Modifier
       .fillMaxWidth()
-      .height(80.dp)
-      .clip(RoundedCornerShape(8.dp))
+      .height(72.dp)
+      .clip(RoundedCornerShape(6.dp))
       .border(
         width = if (isApplied) 2.dp else 1.dp,
         color = if (isApplied) CyanAccent else StudioBorder,
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(6.dp)
       )
       .pointerInput(item.type) {
         detectDragGestures(
-          onDragStart = {
-            isDraggingThis = true
-            onStartDrag()
-          },
-          onDragEnd = {
-            isDraggingThis = false
-          },
-          onDragCancel = {
-            isDraggingThis = false
-          },
-          onDrag = { change, _ ->
-            change.consume()
-          }
+          onDragStart = { onStartDrag() },
+          onDragEnd = {},
+          onDragCancel = {},
+          onDrag = { change, _ -> change.consume() }
         )
       }
       .clickable { onApply() }
@@ -635,18 +675,18 @@ private fun TransitionCard(
     colors = CardDefaults.cardColors(containerColor = StudioSurfaceVariant)
   ) {
     Box(modifier = Modifier.fillMaxSize()) {
-      // Top Gradient Accent
+      // Top Gradient Stripe
       Box(
         modifier = Modifier
           .fillMaxWidth()
-          .height(4.dp)
+          .height(3.dp)
           .background(Brush.horizontalGradient(item.gradient))
       )
 
       Column(
         modifier = Modifier
           .fillMaxSize()
-          .padding(6.dp),
+          .padding(5.dp),
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
@@ -659,19 +699,19 @@ private fun TransitionCard(
             imageVector = item.icon,
             contentDescription = item.type.displayName,
             tint = if (isApplied) CyanAccent else TextPrimary,
-            modifier = Modifier.size(18.dp)
+            modifier = Modifier.size(15.dp)
           )
 
           // Drag Indicator pill
           Row(
             modifier = Modifier
-              .clip(RoundedCornerShape(3.dp))
+              .clip(RoundedCornerShape(2.dp))
               .background(StudioDarkBg)
-              .padding(horizontal = 3.dp, vertical = 1.dp),
+              .padding(horizontal = 2.dp, vertical = 1.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Icon(Icons.Default.DragIndicator, contentDescription = "Drag", tint = TextTertiary, modifier = Modifier.size(10.dp))
-            Text("DRAG", fontSize = 7.sp, color = TextTertiary, fontWeight = FontWeight.Bold)
+            Icon(Icons.Default.DragIndicator, contentDescription = "Drag", tint = TextTertiary, modifier = Modifier.size(8.dp))
+            Text("DRAG", fontSize = 6.sp, color = TextTertiary, fontWeight = FontWeight.Bold)
           }
         }
 
@@ -680,20 +720,20 @@ private fun TransitionCard(
           style = MaterialTheme.typography.bodySmall.copy(
             color = if (isApplied) CyanAccent else TextPrimary,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp
+            fontSize = 10.sp
           ),
           maxLines = 1
         )
 
         if (isApplied) {
           Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Check, contentDescription = "Applied", tint = CyanAccent, modifier = Modifier.size(10.dp))
+            Icon(Icons.Default.Check, contentDescription = "Applied", tint = CyanAccent, modifier = Modifier.size(9.dp))
             Spacer(modifier = Modifier.width(2.dp))
             Text("Active", fontSize = 8.sp, color = CyanAccent, fontWeight = FontWeight.Bold)
           }
         } else {
           Text(
-            text = "Tap or Drag",
+            text = "Tap / Drag",
             style = MaterialTheme.typography.bodySmall.copy(color = TextTertiary, fontSize = 8.sp)
           )
         }
