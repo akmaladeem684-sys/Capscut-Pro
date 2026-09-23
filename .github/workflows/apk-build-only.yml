@@ -44,14 +44,16 @@ jobs:
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: ah-studio-debug-apk
           path: "**/build/outputs/apk/debug/*.apk"
-          retention-days: 7
+          retention-days: 1
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: ah-studio-release-apk
           path: "**/build/outputs/apk/release/*.apk"
-          retention-days: 7
+          retention-days: 1
