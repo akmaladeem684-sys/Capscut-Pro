@@ -42,17 +42,24 @@ object CubicBezierEvaluator {
 
   /**
    * Evaluates y given x in [0, 1] and Bézier control handles (x1, y1), (x2, y2).
-   * Guaranteed zero-allocation loop.
+   * Guaranteed zero-allocation loop with safety clamping against NaN / Infinity.
    */
   fun evaluate(x1: Float, y1: Float, x2: Float, y2: Float, x: Float): Float {
-    if (x <= 0.0f) return 0.0f
+    if (x.isNaN() || x <= 0.0f) return 0.0f
     if (x >= 1.0f) return 1.0f
 
-    // Linear speed-up if control points form linear curve
-    if (x1 == y1 && x2 == y2) return x
+    // Robust control point clamping to prevent NaN/Infinity
+    val cx1 = if (x1.isNaN()) 0f else x1.coerceIn(0.0f, 1.0f)
+    val cx2 = if (x2.isNaN()) 1f else x2.coerceIn(0.0f, 1.0f)
+    val cy1 = if (y1.isNaN()) 0f else y1.coerceIn(-100.0f, 100.0f)
+    val cy2 = if (y2.isNaN()) 1f else y2.coerceIn(-100.0f, 100.0f)
 
-    val t = solveCurveX(x, x1, x2)
-    return sampleY(t, y1, y2)
+    // Linear speed-up if control points form linear curve
+    if (cx1 == cy1 && cx2 == cy2) return x
+
+    val t = solveCurveX(x, cx1, cx2)
+    val y = sampleY(t, cy1, cy2)
+    return if (y.isNaN() || y.isInfinite()) x else y
   }
 
   private fun solveCurveX(x: Float, x1: Float, x2: Float): Float {
@@ -67,7 +74,7 @@ object CubicBezierEvaluator {
       if (abs(dX) < NEWTON_MIN_SLOPE) {
         break
       }
-      t -= currentX / dX
+      t = (t - currentX / dX).coerceIn(0.0f, 1.0f)
     }
 
     // Fallback to binary subdivision if Newton-Raphson didn't converge or hit zero slope

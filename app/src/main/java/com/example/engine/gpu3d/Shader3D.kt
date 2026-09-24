@@ -19,6 +19,7 @@ layout(location = 2) in vec3 aNormal;
 uniform mat4 uModelMatrix;
 uniform mat4 uViewMatrix;
 uniform mat4 uProjMatrix;
+uniform mat3 uNormalMatrix;
 
 out vec2 vTexCoord;
 out vec3 vNormal;
@@ -27,7 +28,7 @@ out vec3 vFragPos;
 void main() {
     vTexCoord = aTexCoord;
     vFragPos = vec3(uModelMatrix * vec4(aPosition, 1.0));
-    vNormal = mat3(transpose(inverse(uModelMatrix))) * aNormal;
+    vNormal = normalize(uNormalMatrix * aNormal);
     gl_Position = uProjMatrix * uViewMatrix * vec4(vFragPos, 1.0);
 }
 """.trimIndent()
@@ -103,6 +104,7 @@ void main() {
     private var uModelMatrixLoc = -1
     private var uViewMatrixLoc = -1
     private var uProjMatrixLoc = -1
+    private var uNormalMatrixLoc = -1
     private var uTextureLoc = -1
     private var uCameraPosLoc = -1
     private var uLightPosLoc = -1
@@ -138,6 +140,7 @@ void main() {
         uModelMatrixLoc = GLES30.glGetUniformLocation(programId, "uModelMatrix")
         uViewMatrixLoc = GLES30.glGetUniformLocation(programId, "uViewMatrix")
         uProjMatrixLoc = GLES30.glGetUniformLocation(programId, "uProjMatrix")
+        uNormalMatrixLoc = GLES30.glGetUniformLocation(programId, "uNormalMatrix")
         uTextureLoc = GLES30.glGetUniformLocation(programId, "uTexture")
         uCameraPosLoc = GLES30.glGetUniformLocation(programId, "uCameraPos")
         uLightPosLoc = GLES30.glGetUniformLocation(programId, "uLightPos")
@@ -157,10 +160,13 @@ void main() {
         GLES30.glUseProgram(programId)
     }
 
-    fun setMatrices(model: FloatArray, view: FloatArray, proj: FloatArray) {
+    fun setMatrices(model: FloatArray, view: FloatArray, proj: FloatArray, normalMatrix: FloatArray? = null) {
         GLES30.glUniformMatrix4fv(uModelMatrixLoc, 1, false, model, 0)
         GLES30.glUniformMatrix4fv(uViewMatrixLoc, 1, false, view, 0)
         GLES30.glUniformMatrix4fv(uProjMatrixLoc, 1, false, proj, 0)
+        if (normalMatrix != null && uNormalMatrixLoc != -1) {
+            GLES30.glUniformMatrix3fv(uNormalMatrixLoc, 1, false, normalMatrix, 0)
+        }
     }
 
     fun setLighting(

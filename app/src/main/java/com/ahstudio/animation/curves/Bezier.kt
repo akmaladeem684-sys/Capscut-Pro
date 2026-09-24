@@ -10,22 +10,20 @@ import kotlin.math.abs
  * Thread-safe (immutable).
  */
 class CubicBezierTiming(
-    val x1: Double, val y1: Double,
-    val x2: Double, val y2: Double
+    x1: Double, val y1: Double,
+    x2: Double, val y2: Double
 ) {
-    init {
-        require(x1.isFinite() && x2.isFinite() && y1.isFinite() && y2.isFinite()) { "Non-finite bezier handles" }
-        require(x1 in 0.0..1.0 && x2 in 0.0..1.0) { "Bezier x handles must be in [0,1]" }
-    }
+    val x1: Double = if (!x1.isFinite()) 0.0 else x1.coerceIn(0.0, 1.0)
+    val x2: Double = if (!x2.isFinite()) 1.0 else x2.coerceIn(0.0, 1.0)
 
-    fun x1() = x1
+    fun x1() = this.x1
     fun y1() = y1
-    fun x2() = x2
+    fun x2() = this.x2
     fun y2() = y2
 
     private fun sampleX(t: Double): Double {
         val mt = 1.0 - t
-        return 3.0 * mt * mt * t * x1 + 3.0 * mt * t * t * x2 + t * t * t
+        return 3.0 * mt * mt * t * this.x1 + 3.0 * mt * t * t * this.x2 + t * t * t
     }
     private fun sampleY(t: Double): Double {
         val mt = 1.0 - t
@@ -33,7 +31,7 @@ class CubicBezierTiming(
     }
     private fun sampleDX(t: Double): Double {
         val mt = 1.0 - t
-        return 3.0 * mt * mt * x1 + 6.0 * mt * t * (x2 - x1) + 3.0 * t * t * (1.0 - x2)
+        return 3.0 * mt * mt * this.x1 + 6.0 * mt * t * (this.x2 - this.x1) + 3.0 * t * t * (1.0 - this.x2)
     }
     private fun sampleDY(t: Double): Double {
         val mt = 1.0 - t
@@ -49,8 +47,7 @@ class CubicBezierTiming(
             if (abs(err) < 1e-7) return t
             val d = sampleDX(t)
             if (abs(d) < 1e-9) break
-            t -= err / d
-            if (t < 0.0) t = 0.0 else if (t > 1.0) t = 1.0
+            t = (t - err / d).coerceIn(0.0, 1.0)
         }
         var lo = 0.0; var hi = 1.0; t = u            // bisection fallback
         repeat(48) {
@@ -66,13 +63,21 @@ class CubicBezierTiming(
     }
 
     /** Progress y at normalized time u. Exact at endpoints (0->0, 1->1). */
-    fun progress(u: Double): Double = sampleY(solveT(u.coerceIn(0.0, 1.0)))
+    fun progress(u: Double): Double {
+        if (!u.isFinite()) return 0.0
+        val clampedU = u.coerceIn(0.0, 1.0)
+        val res = sampleY(solveT(clampedU))
+        return if (!res.isFinite()) clampedU else res
+    }
 
     /** dy/dx at normalized time u -- used for exact velocity. */
     fun slope(u: Double): Double {
+        if (!u.isFinite()) return 0.0
         val t = solveT(u.coerceIn(0.0, 1.0))
         val dx = sampleDX(t); val dy = sampleDY(t)
-        return if (abs(dx) < 1e-12) 0.0 else dy / dx
+        if (abs(dx) < 1e-12 || !dx.isFinite() || !dy.isFinite()) return 0.0
+        val slp = dy / dx
+        return if (!slp.isFinite()) 0.0 else slp.coerceIn(-1000.0, 1000.0)
     }
 }
 

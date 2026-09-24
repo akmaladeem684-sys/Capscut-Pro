@@ -47,6 +47,23 @@ data class Transform3D(
         return model
     }
 
+    /**
+     * Precomputes 3x3 normal matrix on CPU: transpose(inverse(modelMatrix)).
+     * Avoids runtime GLSL inverse() driver crashes on older Mali/Adreno GPUs.
+     */
+    fun getNormalMatrix(modelMatrix: FloatArray = getModelMatrix()): FloatArray {
+        val inv = FloatArray(16)
+        if (!Matrix.invertM(inv, 0, modelMatrix, 0)) {
+            Matrix.setIdentityM(inv, 0)
+        }
+        val normalMatrix = FloatArray(9)
+        // Transpose of the upper-left 3x3 of the inverse matrix
+        normalMatrix[0] = inv[0]; normalMatrix[1] = inv[4]; normalMatrix[2] = inv[8]
+        normalMatrix[3] = inv[1]; normalMatrix[4] = inv[5]; normalMatrix[5] = inv[9]
+        normalMatrix[6] = inv[2]; normalMatrix[7] = inv[6]; normalMatrix[8] = inv[10]
+        return normalMatrix
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false

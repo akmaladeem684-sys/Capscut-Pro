@@ -1184,6 +1184,7 @@ class VideoExporter(private val context: Context) {
       }
 
       // 5. Main Interleaved Video & Audio Encoding Loop
+      var lastEglPtsNs = -1L
       for (frameIndex in 0 until totalFrames) {
         while (isPaused && !isCancelled) {
           _exportState.value = (_exportState.value as? ExportState.Rendering)?.copy(
@@ -1256,7 +1257,11 @@ class VideoExporter(private val context: Context) {
             Log.w(tag, "GL error before encoder swap at frame $frameIndex: 0x" + Integer.toHexString(glError))
           }
 
-          val ptsNs = ptsUs * 1000L
+          var ptsNs = ptsUs * 1000L
+          if (ptsNs <= lastEglPtsNs) {
+            ptsNs = lastEglPtsNs + 1000L // Strictly monotonic nanoseconds to avoid video freeze
+          }
+          lastEglPtsNs = ptsNs
           windowSurface.setPresentationTime(ptsNs)
           if (!windowSurface.swapBuffers()) {
             throw IllegalStateException("Encoder input surface swapBuffers() failed at frame $frameIndex")

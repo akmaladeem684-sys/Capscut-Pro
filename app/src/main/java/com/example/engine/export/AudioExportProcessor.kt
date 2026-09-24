@@ -601,19 +601,24 @@ class AudioExportProcessor(
                     }
                 } else if (outIndex >= 0) {
                     val encoded = encoder.getOutputBuffer(outIndex)
+                    val isEos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                     if (encoded != null && bufferInfo.size > 0) {
                         while (!isMuxerStarted()) {
                             Thread.sleep(5)
                         }
                         synchronized(muxerLock) {
                             val trackIdx = getAudioTrackIndex()
-                            if (trackIdx >= 0) {
-                                muxer.writeSampleData(trackIdx, encoded, bufferInfo)
+                            if (trackIdx >= 0 && isMuxerStarted()) {
+                                try {
+                                    muxer.writeSampleData(trackIdx, encoded, bufferInfo)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Safe catch during audio muxer writeSampleData: ${e.message}")
+                                }
                             }
                         }
                     }
                     encoder.releaseOutputBuffer(outIndex, false)
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
+                    if (isEos) break
                 }
                 outIndex = encoder.dequeueOutputBuffer(bufferInfo, 0)
             }

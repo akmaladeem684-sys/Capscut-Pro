@@ -41,10 +41,11 @@ class Engine3DController {
         shader.use()
 
         val modelMatrix = transform.getModelMatrix()
+        val normalMatrix = transform.getNormalMatrix(modelMatrix)
         val viewMatrix = camera.getViewMatrix()
         val projMatrix = camera.getProjectionMatrix(aspectRatio)
 
-        shader.setMatrices(modelMatrix, viewMatrix, projMatrix)
+        shader.setMatrices(modelMatrix, viewMatrix, projMatrix, normalMatrix)
         shader.setLighting(camera.position, enabled = enableLighting)
         shader.setMaterial(opacity)
         shader.setVolumetricFog(enabled = enableFog)

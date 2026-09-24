@@ -43,16 +43,11 @@ class Gl3DFramebuffer {
             GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null
         )
 
-        // 2. Depth + Stencil Renderbuffer Attachment (GL_DEPTH24_STENCIL8)
+        // 2. Depth + Stencil Renderbuffer Attachment (GL_DEPTH24_STENCIL8 with GL_DEPTH_COMPONENT16 fallback)
         val rbos = IntArray(1)
         GLES30.glGenRenderbuffers(1, rbos, 0)
         depthStencilRboId = rbos[0]
         GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, depthStencilRboId)
-        GLES30.glRenderbufferStorage(
-            GLES30.GL_RENDERBUFFER,
-            GLES30.GL_DEPTH24_STENCIL8,
-            width, height
-        )
 
         // 3. Create & Bind FBO
         val fbos = IntArray(1)
@@ -69,13 +64,40 @@ class Gl3DFramebuffer {
             0
         )
 
-        // Attach Depth + Stencil Renderbuffer
-        GLES30.glFramebufferRenderbuffer(
-            GLES30.GL_FRAMEBUFFER,
-            GLES30.GL_DEPTH_STENCIL_ATTACHMENT,
-            GLES30.GL_RENDERBUFFER,
-            depthStencilRboId
-        )
+        // Try packed depth24 stencil8 first
+        var depthAttached = false
+        try {
+            GLES30.glRenderbufferStorage(
+                GLES30.GL_RENDERBUFFER,
+                GLES30.GL_DEPTH24_STENCIL8,
+                width, height
+            )
+            GLES30.glFramebufferRenderbuffer(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_DEPTH_STENCIL_ATTACHMENT,
+                GLES30.GL_RENDERBUFFER,
+                depthStencilRboId
+            )
+            if (GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE) {
+                depthAttached = true
+            }
+        } catch (_: Throwable) {}
+
+        // Fallback to standard 16-bit depth buffer if packed depth-stencil is unsupported
+        if (!depthAttached) {
+            GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, depthStencilRboId)
+            GLES30.glRenderbufferStorage(
+                GLES30.GL_RENDERBUFFER,
+                GLES30.GL_DEPTH_COMPONENT16,
+                width, height
+            )
+            GLES30.glFramebufferRenderbuffer(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_DEPTH_ATTACHMENT,
+                GLES30.GL_RENDERBUFFER,
+                depthStencilRboId
+            )
+        }
 
         val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
         if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {

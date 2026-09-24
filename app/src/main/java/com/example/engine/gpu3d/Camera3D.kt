@@ -19,11 +19,18 @@ class Camera3D(
 ) {
     /**
      * Computes the 4x4 Perspective Projection Matrix based on the viewport aspect ratio.
+     * Supports dynamic near and far planes to prevent z-clipping during close zoom or long depth.
      */
-    fun getProjectionMatrix(aspectRatio: Float): FloatArray {
+    fun getProjectionMatrix(
+        aspectRatio: Float,
+        dynamicNear: Float? = null,
+        dynamicFar: Float? = null
+    ): FloatArray {
         val proj = FloatArray(16)
         val validAspect = if (aspectRatio <= 0f) 1.0f else aspectRatio
-        Matrix.perspectiveM(proj, 0, fov, validAspect, near, far)
+        val effectiveNear = (dynamicNear ?: near).coerceAtLeast(0.005f)
+        val effectiveFar = (dynamicFar ?: far).coerceAtLeast(effectiveNear + 1.0f)
+        Matrix.perspectiveM(proj, 0, fov, validAspect, effectiveNear, effectiveFar)
         return proj
     }
 

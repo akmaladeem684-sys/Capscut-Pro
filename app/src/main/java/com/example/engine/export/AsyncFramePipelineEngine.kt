@@ -463,6 +463,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
 
       glHandler.post {
         try {
+          var lastEglPtsNs = -1L
           for (frameIndex in 0 until totalFrames) {
             if (cancelled.get()) break
 
@@ -565,7 +566,12 @@ class AsyncFramePipelineEngine(private val context: Context) {
               chromaKey = timeline.chromaKey
             )
             GLES20.glFlush()
-            windowSurface?.setPresentationTime(ptsUs * 1000L)
+            var targetPtsNs = ptsUs * 1000L
+            if (targetPtsNs <= lastEglPtsNs) {
+              targetPtsNs = lastEglPtsNs + 1000L
+            }
+            lastEglPtsNs = targetPtsNs
+            windowSurface?.setPresentationTime(targetPtsNs)
             windowSurface?.swapBuffers()
             metrics.gpuRenderTimeNs.addAndGet(System.nanoTime() - renderStart)
             metrics.gpuFrames.incrementAndGet()

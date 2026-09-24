@@ -53,6 +53,15 @@ object TimelineTimeMath {
   }
 
   /**
+   * Exact frame-boundary quantization to prevent 1-frame gaps due to floating point drift.
+   */
+  @JvmStatic
+  fun snapToFrameBoundary(timestampUs: Long, fps: Float = DEFAULT_FPS): Long {
+    val frame = microsToFrames(timestampUs, fps)
+    return framesToMicros(frame, fps)
+  }
+
+  /**
    * Formats a microsecond timestamp into standard SMPTE timecode (HH:MM:SS:FF).
    */
   fun formatTimecode(timestampUs: Long, fps: Float = DEFAULT_FPS): String {

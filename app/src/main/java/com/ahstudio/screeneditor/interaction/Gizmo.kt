@@ -93,4 +93,56 @@ object Gizmo {
         }
         return (intersects % 2) != 0
     }
+
+    /**
+     * Unprojects a 2D touch point (screenX, screenY) into 3D world space using inverse MVP matrix,
+     * intersecting the layer's 3D plane (z = planeZ).
+     * Eliminates 3D rotation flip and inversion under perspective projection.
+     */
+    fun unprojectTo3DPlane(
+        screenX: Float,
+        screenY: Float,
+        viewportWidth: Float,
+        viewportHeight: Float,
+        invMvp: FloatArray,
+        planeZ: Float = 0f
+    ): PointF {
+        if (viewportWidth <= 0f || viewportHeight <= 0f) return PointF(screenX, screenY)
+
+        // Convert screen coordinates to Normalized Device Coordinates (NDC: -1 to 1)
+        val ndcX = (2.0f * screenX / viewportWidth) - 1.0f
+        val ndcY = 1.0f - (2.0f * screenY / viewportHeight)
+
+        // Near plane ray point (z = -1)
+        val nearVec = floatArrayOf(ndcX, ndcY, -1.0f, 1.0f)
+        val nearWorld = FloatArray(4)
+        android.opengl.Matrix.multiplyMV(nearWorld, 0, invMvp, 0, nearVec, 0)
+        if (nearWorld[3] != 0f) {
+            nearWorld[0] /= nearWorld[3]
+            nearWorld[1] /= nearWorld[3]
+            nearWorld[2] /= nearWorld[3]
+        }
+
+        // Far plane ray point (z = 1)
+        val farVec = floatArrayOf(ndcX, ndcY, 1.0f, 1.0f)
+        val farWorld = FloatArray(4)
+        android.opengl.Matrix.multiplyMV(farWorld, 0, invMvp, 0, farVec, 0)
+        if (farWorld[3] != 0f) {
+            farWorld[0] /= farWorld[3]
+            farWorld[1] /= farWorld[3]
+            farWorld[2] /= farWorld[3]
+        }
+
+        // Ray direction
+        val dirX = farWorld[0] - nearWorld[0]
+        val dirY = farWorld[1] - nearWorld[1]
+        val dirZ = farWorld[2] - nearWorld[2]
+
+        // Intersect plane z = planeZ: nearWorld[2] + t * dirZ = planeZ
+        val t = if (kotlin.math.abs(dirZ) > 1e-6f) (planeZ - nearWorld[2]) / dirZ else 0f
+        val hitX = nearWorld[0] + t * dirX
+        val hitY = nearWorld[1] + t * dirY
+
+        return PointF(hitX, hitY)
+    }
 }
