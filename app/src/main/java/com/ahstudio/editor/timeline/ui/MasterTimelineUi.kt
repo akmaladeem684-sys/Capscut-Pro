@@ -14,19 +14,24 @@ import com.ahstudio.editor.timeline.playback.PlaybackController
 import com.ahstudio.editor.timeline.snap.SnapEngine
 import com.ahstudio.editor.timeline.viewport.TimelineViewport
 import com.example.ui.StudioViewModel
-import kotlinx.coroutines.flow.collectLatest
+import kotlin.math.abs
 
 @Composable
 fun MasterTimelineView(
     modifier: Modifier = Modifier,
     viewModel: StudioViewModel? = null,
     controller: TimelineUiController? = null,
+    onAddMedia: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val activeCtrl = controller ?: remember {
         val clock = MasterTimelineClock()
         val engine = TimelineEngine()
-        DemoProjectFactory.seed(engine)
+        if (viewModel == null) {
+            DemoProjectFactory.seed(engine)
+        } else {
+            engine.addTrack(TrackKind.VIDEO, "Main Video")
+        }
         val viewport = TimelineViewport()
         val snap = SnapEngine(engine)
         val planner = ClipPlanner(engine, snap, viewport) { clock.timeMicros }
@@ -34,21 +39,60 @@ fun MasterTimelineView(
         TimelineUiController(engine, clock, playback, viewport, snap, planner, engine.history, scope)
     }
 
+    LaunchedEffect(onAddMedia) {
+        if (onAddMedia != null) {
+            activeCtrl.onAddMediaHandler = { onAddMedia() }
+        }
+    }
+
     // Bidirectional sync with StudioViewModel
     if (viewModel != null) {
         val timelineState by viewModel.timelineEngine.timeline.collectAsState()
         val currentPosMs by viewModel.timelineEngine.currentPositionMs.collectAsState()
         val isPlaying by viewModel.timelineEngine.isPlaying.collectAsState()
+        val selectedClipIds by viewModel.timelineEngine.selectedClipIds.collectAsState()
+
+        // Wire controller callbacks to StudioViewModel
+        DisposableEffect(viewModel) {
+            activeCtrl.onTimelinePauseRequested = {
+                viewModel.timelineEngine.pause()
+                viewModel.playbackEngine.pause()
+            }
+            activeCtrl.onPlayheadChanged = { posMs ->
+                viewModel.timelineEngine.setPosition(posMs, snap = false)
+                viewModel.playbackEngine.seekTo(posMs)
+            }
+            activeCtrl.onClipSelected = { clipId ->
+                if (clipId != null) {
+                    viewModel.timelineEngine.selectClip(clipId)
+                } else {
+                    viewModel.timelineEngine.clearSelection()
+                }
+            }
+            activeCtrl.onClipTrimCommitted = { clipId, startMs, durMs ->
+                viewModel.timelineEngine.trimClip(clipId, startMs, durMs)
+            }
+            activeCtrl.onClipMoveCommitted = { clipId, startMs ->
+                viewModel.timelineEngine.moveClip(clipId, startMs, snap = false)
+            }
+            onDispose {
+                activeCtrl.onTimelinePauseRequested = null
+                activeCtrl.onPlayheadChanged = null
+                activeCtrl.onClipSelected = null
+                activeCtrl.onClipTrimCommitted = null
+                activeCtrl.onClipMoveCommitted = null
+            }
+        }
 
         // Sync Playback state
         LaunchedEffect(isPlaying) {
             activeCtrl.isPlaying = isPlaying
         }
 
-        // Sync Current Position from View Model
+        // Sync Current Position from ViewModel
         LaunchedEffect(currentPosMs) {
             val targetMicros = currentPosMs * 1000L
-            if (kotlin.math.abs(activeCtrl.playheadMicros - targetMicros) > 15_000L) {
+            if (abs(activeCtrl.playheadMicros - targetMicros) > 15_000L) {
                 activeCtrl.clock.seekTo(targetMicros)
                 if (!activeCtrl.isScrubbing) {
                     activeCtrl.scrollToTime(targetMicros)
@@ -56,69 +100,56 @@ fun MasterTimelineView(
             }
         }
 
-        // Sync Clips & Tracks if VideoClips exist in StudioViewModel
+        // Sync Selection state from ViewModel
+        LaunchedEffect(selectedClipIds) {
+            if (activeCtrl.selection != selectedClipIds) {
+                activeCtrl.engine.setSelection(selectedClipIds)
+            }
+        }
+
+        // Dynamic Tracks & Clips Synchronization (Multi-Track Dynamic Lane Allocation)
         LaunchedEffect(timelineState) {
-            if (timelineState.videoClips.isNotEmpty() || timelineState.audioClips.isNotEmpty()) {
-                activeCtrl.engine.reset()
-                val vTrack = activeCtrl.engine.addTrack(TrackKind.VIDEO, "Main Video")
-                val ovTrack = activeCtrl.engine.addTrack(TrackKind.OVERLAY, "Overlay")
-                val aTrack = activeCtrl.engine.addTrack(TrackKind.VOICE, "Audio")
-                val tTrack = activeCtrl.engine.addTrack(TrackKind.TEXT, "Text")
+            activeCtrl.engine.reset()
+            val lanes = com.example.ui.components.timeline.TrackLaneManager.computeLanes(timelineState)
 
-                timelineState.videoClips.forEach { c ->
+            for (lane in lanes) {
+                val trackKind = when (lane.kind) {
+                    com.example.ui.components.timeline.LaneKind.MAIN_VIDEO -> TrackKind.VIDEO
+                    com.example.ui.components.timeline.LaneKind.OVERLAY -> TrackKind.OVERLAY
+                    com.example.ui.components.timeline.LaneKind.TEXT -> TrackKind.TEXT
+                    com.example.ui.components.timeline.LaneKind.AUDIO -> TrackKind.VOICE
+                    com.example.ui.components.timeline.LaneKind.STICKER -> TrackKind.STICKER
+                    com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER -> TrackKind.EFFECT
+                }
+
+                val track = activeCtrl.engine.addTrack(trackKind, lane.label)
+
+                for (clip in lane.clips) {
+                    val clipKind = when (lane.kind) {
+                        com.example.ui.components.timeline.LaneKind.MAIN_VIDEO, com.example.ui.components.timeline.LaneKind.OVERLAY -> ClipKind.VIDEO
+                        com.example.ui.components.timeline.LaneKind.TEXT -> ClipKind.TEXT
+                        com.example.ui.components.timeline.LaneKind.AUDIO -> ClipKind.AUDIO
+                        com.example.ui.components.timeline.LaneKind.STICKER -> ClipKind.STICKER
+                        com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER -> ClipKind.EFFECT
+                    }
+
                     activeCtrl.engine.addClip(
                         Clip(
-                            id = c.id,
-                            trackId = vTrack.id,
-                            kind = ClipKind.VIDEO,
-                            startMicros = c.timelineStartMs * 1000L,
-                            durationMicros = c.durationMs * 1000L,
-                            label = c.name,
-                            mediaUri = c.uri
+                            id = clip.id,
+                            trackId = track.id,
+                            kind = clipKind,
+                            startMicros = clip.startMs * 1000L,
+                            durationMicros = clip.durationMs * 1000L,
+                            label = clip.title,
+                            mediaUri = clip.uri
                         )
                     )
                 }
+            }
 
-                timelineState.overlayClips.forEach { c ->
-                    activeCtrl.engine.addClip(
-                        Clip(
-                            id = c.id,
-                            trackId = ovTrack.id,
-                            kind = ClipKind.VIDEO,
-                            startMicros = c.timelineStartMs * 1000L,
-                            durationMicros = c.durationMs * 1000L,
-                            label = c.name,
-                            mediaUri = c.uri
-                        )
-                    )
-                }
-
-                timelineState.audioClips.forEach { c ->
-                    activeCtrl.engine.addClip(
-                        Clip(
-                            id = c.id,
-                            trackId = aTrack.id,
-                            kind = ClipKind.AUDIO,
-                            startMicros = c.timelineStartMs * 1000L,
-                            durationMicros = c.durationMs * 1000L,
-                            label = c.title,
-                            mediaUri = c.uri
-                        )
-                    )
-                }
-
-                timelineState.textClips.forEach { c ->
-                    activeCtrl.engine.addClip(
-                        Clip(
-                            id = c.id,
-                            trackId = tTrack.id,
-                            kind = ClipKind.TEXT,
-                            startMicros = c.timelineStartMs * 1000L,
-                            durationMicros = c.durationMs * 1000L,
-                            label = c.text
-                        )
-                    )
-                }
+            // Restore selection if any
+            if (selectedClipIds.isNotEmpty()) {
+                activeCtrl.engine.setSelection(selectedClipIds)
             }
         }
     }

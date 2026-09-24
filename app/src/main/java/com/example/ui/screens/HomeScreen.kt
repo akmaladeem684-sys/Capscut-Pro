@@ -48,6 +48,7 @@ fun HomeScreen(
   modifier: Modifier = Modifier
 ) {
   val projects by viewModel.allProjects.collectAsState()
+  val settings by viewModel.settings.collectAsState()
   val isCreating by viewModel.isCreatingProject.collectAsState()
   val activeRecovery by viewModel.activeRecoverySession.collectAsState()
   var searchQuery by remember { mutableStateOf("") }
@@ -61,6 +62,22 @@ fun HomeScreen(
   ) { uris: List<Uri> ->
     if (uris.isNotEmpty()) {
       viewModel.createProjectWithMedia("Video Project", uris.map { it.toString() }, isVideo = true)
+    }
+  }
+
+  val startNewProject = {
+    if (settings.openEditorDirectlyOnNewProject) {
+      viewModel.createNewProject(
+        name = "New Project",
+        aspectRatio = AspectRatio.RATIO_16_9,
+        resolution = Resolution.RES_1080P,
+        fps = FrameRate.FPS_30,
+        initialMediaClips = emptyList()
+      )
+    } else {
+      instantNewProjectVideoPickerLauncher.launch(
+        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+      )
     }
   }
 
@@ -235,11 +252,7 @@ fun HomeScreen(
           modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .clickable {
-              instantNewProjectVideoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-              )
-            }
+            .clickable { startNewProject() }
             .testTag("hero_new_project_card"),
           colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
@@ -290,7 +303,7 @@ fun HomeScreen(
                       )
                     )
                     Text(
-                      text = "Instant video picker • Auto aspect ratio • 4K HDR",
+                      text = "Clean empty timeline • Add media in editor • 4K HDR",
                       style = MaterialTheme.typography.bodySmall.copy(
                         color = CyanAccent,
                         fontSize = 12.sp
@@ -320,6 +333,14 @@ fun HomeScreen(
                 contentPadding = PaddingValues(vertical = 2.dp)
               ) {
                 item {
+                  QuickActionChip(icon = Icons.Default.Add, label = "New Project") {
+                    startNewProject()
+                  }
+                }
+                item {
+                  QuickActionChip(icon = Icons.Default.Tune, label = "Blank Canvas") { showNewProjectDialog = true }
+                }
+                item {
                   QuickActionChip(icon = Icons.Default.VideoLibrary, label = "Instant Video") {
                     instantNewProjectVideoPickerLauncher.launch(
                       PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
@@ -339,9 +360,6 @@ fun HomeScreen(
                       PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                   }
-                }
-                item {
-                  QuickActionChip(icon = Icons.Default.Tune, label = "Blank Canvas") { showNewProjectDialog = true }
                 }
                 item {
                   QuickActionChip(icon = Icons.Default.AutoFixHigh, label = "AI Edit") { viewModel.navigateTo(AppScreen.AI_SUITE) }
@@ -476,11 +494,7 @@ fun HomeScreen(
               PrimaryPillButton(
                 text = "Start Editing",
                 icon = Icons.Default.Add,
-                onClick = {
-                  instantNewProjectVideoPickerLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                  )
-                }
+                onClick = { startNewProject() }
               )
             }
           }

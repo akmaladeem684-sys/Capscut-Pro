@@ -4,7 +4,144 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.Build
 import android.util.Log
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+/**
+ * Leased decoder wrapper with lifecycle tracking.
+ */
+data class LeasedDecoder(
+  val clipId: String,
+  val codec: MediaCodec,
+  val isHardware: Boolean,
+  val mimeType: String,
+  var priority: Int,
+  val creationTimeMs: Long = System.currentTimeMillis()
+)
+
+/**
+ * Production Hardware Decoder Pooler.
+ * Enforces per-device concurrent decoder limits to avoid MediaCodec 0xfffffc0e (NO_MEMORY / codec exhaustion).
+ * Supports priority leasing (Main track > visible overlays > background pre-buffering).
+ */
+class HardwareDecoderPool(private val decoderManager: DecoderManager) {
+  companion object {
+    private const val TAG = "HardwareDecoderPool"
+  }
+
+  private val lock = ReentrantLock()
+  private val activeLeases = ConcurrentHashMap<String, LeasedDecoder>()
+
+  fun getMaxHardwareDecoders(mimeType: String = MediaFormat.MIMETYPE_VIDEO_AVC): Int {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      try {
+        val hwName = decoderManager.findHardwareDecoderName(mimeType)
+        if (hwName != null) {
+          val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+          val info = list.codecInfos.firstOrNull { it.name == hwName }
+          val caps = info?.getCapabilitiesForType(mimeType)
+          val maxInstances = caps?.maxSupportedInstances ?: 0
+          if (maxInstances > 0) {
+            return (maxInstances - 1).coerceIn(2, 8) // Leave headroom for system
+          }
+        }
+      } catch (e: Throwable) {
+        Log.w(TAG, "Failed querying maxSupportedInstances: ${e.message}")
+      }
+    }
+    return DecoderManager.MAX_RECOMMENDED_HARDWARE_DECODERS
+  }
+
+  /**
+   * Acquires a decoder for the specified clip.
+   * If hardware limit is reached, preempts lower priority decoders or provides software fallback.
+   */
+  fun acquireDecoder(
+    clipId: String,
+    mimeType: String,
+    priority: Int = 10,
+    preferHardware: Boolean = true
+  ): LeasedDecoder = lock.withLock {
+    // Release any existing codec for this clipId first
+    releaseDecoder(clipId)
+
+    val maxHw = getMaxHardwareDecoders(mimeType)
+    val activeHwCount = activeLeases.values.count { it.isHardware }
+
+    val shouldTryHw = preferHardware && !decoderManager.isFallbackActive()
+
+    var createdHw = false
+    var codec: MediaCodec? = null
+
+    if (shouldTryHw) {
+      if (activeHwCount >= maxHw) {
+        // Check if we can preempt a lower-priority lease
+        val lowestPriorityHw = activeLeases.values
+          .filter { it.isHardware && it.priority < priority }
+          .minByOrNull { it.priority }
+
+        if (lowestPriorityHw != null) {
+          Log.i(TAG, "Preempting lower-priority hardware decoder (${lowestPriorityHw.clipId}, prio=${lowestPriorityHw.priority}) for clip $clipId (prio=$priority)")
+          releaseDecoder(lowestPriorityHw.clipId)
+          val (hwCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = true)
+          codec = hwCodec
+          createdHw = isHw
+        }
+      } else {
+        val (hwCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = true)
+        codec = hwCodec
+        createdHw = isHw
+      }
+    }
+
+    // Fallback to software decoder if hardware was not acquired
+    if (codec == null) {
+      val (swCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = false)
+      codec = swCodec
+      createdHw = isHw
+    }
+
+    val lease = LeasedDecoder(
+      clipId = clipId,
+      codec = codec,
+      isHardware = createdHw,
+      mimeType = mimeType,
+      priority = priority
+    )
+    activeLeases[clipId] = lease
+    Log.d(TAG, "Acquired decoder for clip $clipId (hw=$createdHw, priority=$priority, activeTotal=${activeLeases.size})")
+    return lease
+  }
+
+  fun releaseDecoder(clipId: String) = lock.withLock {
+    val lease = activeLeases.remove(clipId) ?: return
+    safeReleaseCodec(lease.codec, clipId)
+  }
+
+  fun releaseAll() = lock.withLock {
+    val items = activeLeases.values.toList()
+    activeLeases.clear()
+    for (item in items) {
+      safeReleaseCodec(item.codec, item.clipId)
+    }
+  }
+
+  private fun safeReleaseCodec(codec: MediaCodec, clipId: String) {
+    try {
+      try { codec.flush() } catch (_: Throwable) {}
+      try { codec.stop() } catch (_: Throwable) {}
+      codec.release()
+      Log.d(TAG, "Safely released decoder for clip $clipId")
+    } catch (e: Throwable) {
+      Log.w(TAG, "Error during MediaCodec release for $clipId: ${e.message}")
+    }
+  }
+
+  fun getActiveLease(clipId: String): LeasedDecoder? = activeLeases[clipId]
+}
 
 /**
  * Manages MediaCodec hardware capability detection, profiling for 1080p/2K/4K media,
@@ -27,6 +164,8 @@ class DecoderManager {
      */
     const val MAX_RECOMMENDED_HARDWARE_DECODERS = 4
   }
+
+  val pool: HardwareDecoderPool by lazy { HardwareDecoderPool(this) }
 
   private var _decoderState: DecoderState = DecoderState.UNINITIALIZED
   val decoderState: DecoderState get() = _decoderState
@@ -320,8 +459,10 @@ class DecoderManager {
   fun getLastErrorMessage(): String? = lastErrorMessage
 
   fun reset() {
+    pool.releaseAll()
     fallbackTriggered = false
     lastErrorMessage = null
     detectCapabilities()
   }
 }
+

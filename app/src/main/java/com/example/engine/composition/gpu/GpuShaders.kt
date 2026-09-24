@@ -25,9 +25,9 @@ object GpuShaders {
 
   fun buildFragmentShader(isOes: Boolean): String {
     val extensionHeader = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val samplerType = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -264,7 +264,7 @@ object GpuShaders {
   }
 
   const val TRANSITION_FRAGMENT_SHADER = """
-    precision mediump float;
+    precision highp float;
     varying vec2 vTextureCoord;
     uniform sampler2D uTextureFrom;
     uniform sampler2D uTextureTo;

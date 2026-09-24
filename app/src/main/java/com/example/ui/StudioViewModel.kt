@@ -264,6 +264,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     viewModelScope.launch {
       timelineEngine.isPlaying.collectLatest { isPlaying ->
         if (isPlaying) {
+          playbackEngine.seekTo(timelineEngine.currentPositionMs.value)
           playbackEngine.play()
         } else {
           playbackEngine.pause()

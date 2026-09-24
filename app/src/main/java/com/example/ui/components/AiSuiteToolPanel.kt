@@ -168,13 +168,15 @@ fun AiSuiteToolPanel(
                     "motion" -> {
                       val activeClip = viewModel.getSelectedVideoClip()
                       if (activeClip != null) {
-                        MotionTrackerEngine.trackObjectMotion(
+                        val keyframes = MotionTrackerEngine.trackObjectMotion(
                           clipId = activeClip.id,
                           startMs = activeClip.timelineStartMs,
                           durationMs = activeClip.durationMs,
                           initialX = 0f,
-                          initialY = 0f
+                          initialY = 0f,
+                          videoPath = activeClip.uri
                         ) { _, msg -> statusMessage = msg }
+                        viewModel.timelineEngine.updateClipKeyframes(activeClip.id, keyframes)
                       }
                     }
                     "matting" -> {

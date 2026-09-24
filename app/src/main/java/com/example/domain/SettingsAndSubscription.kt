@@ -14,12 +14,17 @@ data class UserSettings(
   val userEmail: String = "creator@ahvideostudio.com",
   val userName: String = "Pro Creator",
   val isProSubscriber: Boolean = true,
-  val cloudSyncEnabled: Boolean = false
+  val cloudSyncEnabled: Boolean = false,
+  val openEditorDirectlyOnNewProject: Boolean = true
 )
 
 object StudioPreferencesManager {
   private val _settings = MutableStateFlow(UserSettings())
   val settings: StateFlow<UserSettings> = _settings.asStateFlow()
+
+  fun updateOpenEditorDirectly(enabled: Boolean) {
+    _settings.value = _settings.value.copy(openEditorDirectlyOnNewProject = enabled)
+  }
 
   fun updateLanguage(lang: String) {
     _settings.value = _settings.value.copy(language = lang)

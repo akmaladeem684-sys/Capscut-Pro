@@ -88,6 +88,53 @@ object GlShaderUtil {
     return texId
   }
 
+  private val FULLSCREEN_QUAD_BUFFER: java.nio.FloatBuffer by lazy {
+    val data = floatArrayOf(
+      // X, Y, U, V
+      -1.0f, -1.0f, 0.0f, 0.0f,
+       1.0f, -1.0f, 1.0f, 0.0f,
+      -1.0f,  1.0f, 0.0f, 1.0f,
+       1.0f,  1.0f, 1.0f, 1.0f
+    )
+    java.nio.ByteBuffer.allocateDirect(data.size * 4)
+      .order(java.nio.ByteOrder.nativeOrder())
+      .asFloatBuffer()
+      .apply {
+        put(data)
+        position(0)
+      }
+  }
+
+  fun drawFullscreenQuad(program: Int = 0) {
+    GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
+    val aPositionHandle = if (program != 0) {
+      val pos = GLES20.glGetAttribLocation(program, "a_Position")
+      if (pos >= 0) pos else GLES20.glGetAttribLocation(program, "aPosition")
+    } else 0
+
+    val aTextureCoordHandle = if (program != 0) {
+      val tex = GLES20.glGetAttribLocation(program, "a_TexCoord")
+      if (tex >= 0) tex else GLES20.glGetAttribLocation(program, "aTextureCoord")
+    } else 1
+
+    FULLSCREEN_QUAD_BUFFER.position(0)
+    if (aPositionHandle >= 0) {
+      GLES20.glVertexAttribPointer(aPositionHandle, 2, GLES20.GL_FLOAT, false, 16, FULLSCREEN_QUAD_BUFFER)
+      GLES20.glEnableVertexAttribArray(aPositionHandle)
+    }
+
+    FULLSCREEN_QUAD_BUFFER.position(2)
+    if (aTextureCoordHandle >= 0) {
+      GLES20.glVertexAttribPointer(aTextureCoordHandle, 2, GLES20.GL_FLOAT, false, 16, FULLSCREEN_QUAD_BUFFER)
+      GLES20.glEnableVertexAttribArray(aTextureCoordHandle)
+    }
+
+    GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+
+    if (aPositionHandle >= 0) GLES20.glDisableVertexAttribArray(aPositionHandle)
+    if (aTextureCoordHandle >= 0) GLES20.glDisableVertexAttribArray(aTextureCoordHandle)
+  }
+
   fun checkGlError(op: String) {
     val error = GLES20.glGetError()
     if (error != GLES20.GL_NO_ERROR) {

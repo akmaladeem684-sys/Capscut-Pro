@@ -345,6 +345,181 @@ class VideoExporter(private val context: Context) {
   @Volatile
   private var isPaused = false
 
+  private val directMuxerLock = Any()
+  @Volatile private var isDirectMuxerStarted = false
+  private var directVideoTrackIndex = -1
+  private var directAudioTrackIndex = -1
+
+  suspend fun exportVideo(
+    inputFilePath: String,
+    outputFilePath: String,
+    targetWidth: Int = 1080,
+    targetHeight: Int = 1920,
+    clipStartOffsetUs: Long = 0L,
+    clipDurationUs: Long = Long.MAX_VALUE,
+    onProgress: (Float) -> Unit
+  ): Boolean = withContext(Dispatchers.IO) {
+    val outputFile = File(outputFilePath)
+    if (outputFile.exists()) outputFile.delete()
+
+    val muxer = MediaMuxer(outputFilePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    isDirectMuxerStarted = false
+    directVideoTrackIndex = -1
+    directAudioTrackIndex = -1
+
+    val extractor = MediaExtractor()
+    var videoEncoder: MediaCodec? = null
+
+    try {
+      extractor.setDataSource(inputFilePath)
+      val videoTrack = selectVideoTrack(extractor)
+      if (videoTrack == -1) {
+        Log.e(tag, "Source contains no video track")
+        return@withContext false
+      }
+
+      extractor.selectTrack(videoTrack)
+      val srcFormat = extractor.getTrackFormat(videoTrack)
+
+      // Dynamic Frame Rate aur Bitrate
+      val dynamicFps = if (srcFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+        srcFormat.getInteger(MediaFormat.KEY_FRAME_RATE).coerceIn(24, 60)
+      } else 30
+
+      // Dynamic Bitrate calculation per pixel resolution
+      val calculatedBitrate = (targetWidth * targetHeight * dynamicFps * 0.15f).toInt().coerceIn(3_000_000, 20_000_000)
+
+      // Setup Video Output Format
+      val outputVideoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, targetWidth, targetHeight).apply {
+        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+        setInteger(MediaFormat.KEY_BIT_RATE, calculatedBitrate)
+        setInteger(MediaFormat.KEY_FRAME_RATE, dynamicFps)
+        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // 1 keyframe per sec
+      }
+
+      videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+      videoEncoder.configure(outputVideoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+      val inputSurface = videoEncoder.createInputSurface()
+      videoEncoder.start()
+
+      // Setup Audio Processor asynchronously
+      val singleAudioProcessor = AudioExportProcessor(
+        muxer = muxer,
+        muxerLock = directMuxerLock,
+        isMuxerStarted = { isDirectMuxerStarted },
+        onTrackReady = { trackIdx ->
+          directAudioTrackIndex = trackIdx
+          checkAndStartDirectMuxer(muxer)
+        }
+      )
+
+      // Start Audio Processing on background coroutine
+      val audioJob = async(Dispatchers.IO) {
+        singleAudioProcessor.processAudioTrack(inputFilePath, clipStartOffsetUs, clipDurationUs)
+      }
+
+      // Seek extractor to clip start offset
+      extractor.seekTo(clipStartOffsetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+
+      val bufferInfo = MediaCodec.BufferInfo()
+      var isEncoderEOS = false
+      var firstVideoPtsUs = -1L
+      val clipEndUs = clipStartOffsetUs + clipDurationUs
+
+      // Render loop setup
+      var renderedFrameCount = 0L
+      val frameIntervalUs = (1_000_000L / dynamicFps)
+
+      while (!isEncoderEOS) {
+        // Drain Encoder output to Muxer
+        val encoderStatus = videoEncoder.dequeueOutputBuffer(bufferInfo, 10_000L)
+        when {
+          encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+            synchronized(directMuxerLock) {
+              directVideoTrackIndex = muxer.addTrack(videoEncoder.outputFormat)
+              checkAndStartDirectMuxer(muxer)
+            }
+          }
+          encoderStatus >= 0 -> {
+            val encodedData = videoEncoder.getOutputBuffer(encoderStatus)
+            if (encodedData != null && (bufferInfo.size != 0)) {
+              if (firstVideoPtsUs == -1L) {
+                firstVideoPtsUs = bufferInfo.presentationTimeUs
+              }
+
+              // ZERO-POINT PTS NORMALIZATION FOR VIDEO:
+              bufferInfo.presentationTimeUs = (renderedFrameCount * frameIntervalUs)
+
+              synchronized(directMuxerLock) {
+                if (isDirectMuxerStarted) {
+                  muxer.writeSampleData(directVideoTrackIndex, encodedData, bufferInfo)
+                }
+              }
+              renderedFrameCount++
+            }
+
+            videoEncoder.releaseOutputBuffer(encoderStatus, false)
+
+            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+              isEncoderEOS = true
+            }
+          }
+        }
+
+        // Check Extractor input bounds
+        if (extractor.sampleTime < 0 || extractor.sampleTime > clipEndUs) {
+          videoEncoder.signalEndOfInputStream()
+        } else {
+          extractor.advance()
+        }
+
+        val currentProgress = if (clipDurationUs > 0) {
+          ((renderedFrameCount * frameIntervalUs).toFloat() / clipDurationUs).coerceIn(0f, 1f)
+        } else 0f
+        onProgress(currentProgress)
+      }
+
+      audioJob.await()
+      true
+    } catch (e: Exception) {
+      Log.e(tag, "Video export failed: ${e.message}", e)
+      false
+    } finally {
+      try {
+        extractor.release()
+        videoEncoder?.stop()
+        videoEncoder?.release()
+        synchronized(directMuxerLock) {
+          if (isDirectMuxerStarted) {
+            muxer.stop()
+            muxer.release()
+          }
+        }
+      } catch (ignored: Exception) {}
+    }
+  }
+
+  private fun checkAndStartDirectMuxer(muxer: MediaMuxer) {
+    synchronized(directMuxerLock) {
+      if (!isDirectMuxerStarted && directVideoTrackIndex != -1 && directAudioTrackIndex != -1) {
+        muxer.start()
+        isDirectMuxerStarted = true
+        Log.d(tag, "MediaMuxer started with Video [$directVideoTrackIndex] and Audio [$directAudioTrackIndex]")
+      }
+    }
+  }
+
+  private fun selectVideoTrack(extractor: MediaExtractor): Int {
+    for (i in 0 until extractor.trackCount) {
+      val format = extractor.getTrackFormat(i)
+      val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+      if (mime.startsWith("video/")) {
+        return i
+      }
+    }
+    return -1
+  }
+
   fun pauseExport() {
     isPaused = true
   }
@@ -794,18 +969,27 @@ class VideoExporter(private val context: Context) {
       val hasAudioSources = audioProcessor.hasActiveAudio(timeline)
       var masterPcm: ShortArray = ShortArray(0)
       var hasAudio = false
+      val audioFormat = if (hasAudioSources) audioProcessor.detectTimelineAudioFormat(timeline) else TimelineAudioFormat()
+      val audioSampleRate = audioFormat.sampleRate
+      val audioChannels = audioFormat.channelCount
+      val audioBitrate = audioFormat.bitrate
 
       if (hasAudioSources) {
         _exportState.value = ExportState.Rendering(
           progressPercent = 0.05f,
           currentFrame = 0,
           totalFrames = totalFrames,
-          status = "Mixing multi-track audio...",
+          status = "Mixing multi-track audio (${audioSampleRate}Hz)...",
           resolution = config.resolution,
           renderEngine = if (useGpuSurface) "Hardware GPU Engine (OpenGL ES)" else "Software Canvas Engine"
         )
         try {
-          masterPcm = audioProcessor.mixTimelineAudio(timeline, totalDurationMs) { isCancelled }
+          masterPcm = audioProcessor.mixTimelineAudio(
+            timeline = timeline,
+            totalDurationMs = totalDurationMs,
+            targetSampleRate = audioSampleRate,
+            targetChannelCount = audioChannels
+          ) { isCancelled }
         } catch (e: Exception) {
           Log.w(tag, "Audio mixing encountered error: ${e.message}. Continuing with fallback audio.", e)
           masterPcm = ShortArray(0)
@@ -935,13 +1119,11 @@ class VideoExporter(private val context: Context) {
       }
 
       // 3. Initialize Audio Encoder (AAC) if audio is present
-      val audioSampleRate = audioProcessor.sampleRate
-      val audioChannels = audioProcessor.channelCount
       if (hasAudio) {
         try {
           val audioMime = MediaFormat.MIMETYPE_AUDIO_AAC
           val aacFormat = MediaFormat.createAudioFormat(audioMime, audioSampleRate, audioChannels).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 192_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate)
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
           }

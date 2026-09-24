@@ -615,7 +615,12 @@ fun EditorScreen(
                 ) {
                   com.ahstudio.editor.timeline.ui.MasterTimelineView(
                     modifier = Modifier.fillMaxSize(),
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    onAddMedia = {
+                      timelineMediaPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                      )
+                    }
                   )
                 }
               }

@@ -234,8 +234,11 @@ class TimelinePreviewCoordinator(
   // ==========================================
 
   fun play() {
-    if (_state.value.playheadUs >= currentTimeline.totalDurationUs && currentTimeline.totalDurationUs > 0L) {
+    val playhead = _state.value.playheadUs
+    if (playhead >= currentTimeline.totalDurationUs && currentTimeline.totalDurationUs > 0L) {
       seekToExact(0L)
+    } else {
+      seekToExact(playhead)
     }
     exoPlayer.play()
   }

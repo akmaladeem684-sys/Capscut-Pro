@@ -32,18 +32,31 @@ fun AhTimelineEditor(ctrl: TimelineUiController, modifier: Modifier = Modifier) 
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val metrics = TimelineMetrics(
-        rowHeightPx = with(density) { TimelineTokens.RowHeight.toPx() },
+        mainRowHeightPx = with(density) { TimelineTokens.MainRowHeight.toPx() },
+        subRowHeightPx = with(density) { TimelineTokens.SubRowHeight.toPx() },
+        mainToSubGapPx = with(density) { TimelineTokens.MainToSubGap.toPx() },
+        subTrackGapPx = with(density) { TimelineTokens.SubTrackGap.toPx() },
         rulerHeightPx = with(density) { TimelineTokens.RulerHeight.toPx() },
         headerWidthPx = with(density) { TimelineTokens.HeaderWidth.toPx() },
         handlePx = with(density) { TimelineTokens.TrimHandle.toPx() },
         snapPx = with(density) { TimelineTokens.SnapHit.toPx() },
         edgeMarginPx = with(density) { TimelineTokens.EdgeMargin.toPx() },
-        density,
+        density = density,
     )
     LaunchedEffect(Unit) { ctrl.densityScale = density.density }
     LaunchedEffect(ctrl.isPlaying) { while (ctrl.isPlaying) { ctrl.followPlayhead(); withFrameNanos { } } }
 
-    Column(modifier.fillMaxWidth().height(260.dp).background(TimelineTokens.PanelBg)) {
+    // Dynamic track auto-sizing: expand naturally as tracks are added, but fit content height when few tracks exist
+    val activeTrackCount = ctrl.snapshot.tracks.size.coerceAtLeast(1)
+    val totalHeightPx = metrics.totalTracksHeightPx(activeTrackCount) + metrics.rulerHeightPx + with(density) { 34.dp.toPx() }
+    val dynamicPanelHeight = with(density) { totalHeightPx.toDp() }.coerceIn(120.dp, 280.dp)
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .height(dynamicPanelHeight)
+            .background(TimelineTokens.PanelBg)
+    ) {
         // 1. Top Bar: Master Timecode on Left + Undo/Redo on Right
         Row(
             modifier = Modifier
@@ -125,7 +138,7 @@ fun AhTimelineEditor(ctrl: TimelineUiController, modifier: Modifier = Modifier) 
                 ) {
                     TracksArea(ctrl, metrics)
                     SnapLinesOverlay(ctrl, metrics)
-                    PlayheadLine(ctrl, metrics)   // Master authoritative CTI
+                    PlayheadLine(ctrl, metrics)   // Master authoritative CTI needle
                     ReorderIndicator(ctrl, metrics)
                 }
             }

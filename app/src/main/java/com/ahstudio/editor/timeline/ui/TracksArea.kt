@@ -1,23 +1,21 @@
 package com.ahstudio.editor.timeline.ui
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
@@ -25,28 +23,27 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.ahstudio.editor.timeline.core.Clip
 import com.ahstudio.editor.timeline.core.ClipKind
 import com.ahstudio.editor.timeline.core.Track
 import com.ahstudio.editor.timeline.core.TrackKind
-import com.ahstudio.editor.timeline.core.isAudioLike
-import com.example.engine.media.VideoThumbnailManager
-import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 @Composable
 fun TracksArea(ctrl: TimelineUiController, m: TimelineMetrics) {
@@ -55,17 +52,31 @@ fun TracksArea(ctrl: TimelineUiController, m: TimelineMetrics) {
             val tracks = ctrl.snapshot.tracks
             val dragged = ctrl.dragPreview
             val shift = dragged?.trackShift ?: 0
-            tracks.indices.forEach { row -> TrackRow(ctrl, row, tracks, dragged, shift, m) }
+
+            tracks.forEachIndexed { row, _ ->
+                if (row == 1) {
+                    Spacer(Modifier.height(TimelineTokens.MainToSubGap))
+                } else if (row > 1) {
+                    Spacer(Modifier.height(TimelineTokens.SubTrackGap))
+                }
+                TrackRow(ctrl, row, tracks, dragged, shift, m)
+            }
         }
     }
 }
 
 @Composable
 private fun TrackRow(
-    ctrl: TimelineUiController, row: Int, tracks: List<Track>,
-    dragged: DragPreview?, shift: Int, m: TimelineMetrics,
+    ctrl: TimelineUiController,
+    row: Int,
+    tracks: List<Track>,
+    dragged: DragPreview?,
+    shift: Int,
+    m: TimelineMetrics,
 ) {
-    val rowDp = with(LocalDensity.current) { m.rowHeightPx.toDp() }
+    val density = LocalDensity.current
+    val rowHeightPx = m.rowHeightPx(row)
+    val rowDp = with(density) { rowHeightPx.toDp() }
     val fromT = ctrl.viewport.timeAtContentPx(ctrl.scrollX - 400f)
     val toT = ctrl.viewport.timeAtContentPx(ctrl.scrollX + ctrl.viewport.viewportWidthPx + 400f)
     val dragIds = dragged?.clipIds ?: emptySet()
@@ -86,7 +97,7 @@ private fun TrackRow(
             .height(rowDp)
             .background(if (row % 2 == 0) TimelineTokens.TrackBg else TimelineTokens.TrackBgAlt)
     ) {
-        // Continuous lane bottom boundary divider line
+        // Continuous lane bottom divider line
         Box(
             Modifier
                 .fillMaxWidth()
@@ -95,9 +106,7 @@ private fun TrackRow(
                 .background(TimelineTokens.TrackLaneDivider)
         )
 
-        // Floating/attached Track Head item at start of track (before time 0)
-        // Moves dynamically along with the track as video plays or user scrubs!
-        val density = LocalDensity.current
+        // Floating Track Header item on the left (scrolling synchronously with track content before t=0)
         val headWidth = 98.dp
         val headWidthPx = with(density) { headWidth.toPx() }
         val headGapPx = with(density) { 6.dp.toPx() }
@@ -127,7 +136,7 @@ private fun TrackRow(
         }
 
         allClips.forEachIndexed { idx, clip ->
-            ClipBox(ctrl, clip, track, m)
+            ClipBox(ctrl, clip, track, m, rowHeightPx)
 
             // For primary video track, render transition marker [ | ] between adjacent clips
             if (track.kind == TrackKind.VIDEO && idx < allClips.size - 1) {
@@ -136,13 +145,13 @@ private fun TrackRow(
                     val splitPx = ctrl.viewport.contentPxAtTime(clip.endMicros) - ctrl.scrollX
                     TransitionButton(
                         modifier = Modifier
-                            .offset { IntOffset((splitPx - 10.dp.toPx()).roundToInt(), (m.rowHeightPx / 2f - 11.dp.toPx()).roundToInt()) }
+                            .offset { IntOffset((splitPx - 10.dp.toPx()).roundToInt(), (rowHeightPx / 2f - 11.dp.toPx()).roundToInt()) }
                     )
                 }
             }
         }
 
-        // Add Clip button [+] attached to the end of the media track
+        // Add Clip button [+] attached to the end of the primary video track
         if (track.kind == TrackKind.VIDEO) {
             val lastEndMicros = allClips.maxOfOrNull { it.endMicros } ?: 0L
             val addBtnGapPx = with(density) { 16.dp.toPx() }
@@ -151,7 +160,7 @@ private fun TrackRow(
             if (addBtnPx in -60f..(ctrl.viewport.viewportWidthPx + 60f)) {
                 AddClipButton(
                     modifier = Modifier
-                        .offset { IntOffset(addBtnPx.roundToInt(), (m.rowHeightPx / 2f - 14.dp.toPx()).roundToInt()) }
+                        .offset { IntOffset(addBtnPx.roundToInt(), (rowHeightPx / 2f - 14.dp.toPx()).roundToInt()) }
                 ) {
                     ctrl.onAddMediaToTrack(track.id)
                 }
@@ -161,366 +170,199 @@ private fun TrackRow(
 }
 
 @Composable
-fun ClipBox(ctrl: TimelineUiController, clip: Clip, track: Track, m: TimelineMetrics) {
-    val shown = ctrl.effectiveTrim(clip) ?: clip
-    val selected = clip.id in ctrl.selection
-    val dragging = ctrl.dragPreview?.clipIds?.contains(clip.id) == true
-    val startPx = ctrl.viewport.contentPxAtTime(ctrl.effectiveClipStart(shown)) - ctrl.scrollX
-    val widthPx = ctrl.viewport.contentPxAtTime(shown.durationMicros).coerceAtLeast(2f)
-    val wI = widthPx.roundToInt().coerceAtLeast(1)
-
-    val isVideo = track.kind == TrackKind.VIDEO || track.kind == TrackKind.OVERLAY || clip.kind == ClipKind.VIDEO
-    val isAudio = track.kind.isAudioLike() || clip.kind == ClipKind.AUDIO
-    val isText = track.kind == TrackKind.TEXT || clip.kind == ClipKind.TEXT || track.kind == TrackKind.CAPTION
-
-    Box(
-        Modifier
-            .offset { IntOffset(startPx.roundToInt(), 0) }
-            .layout { measurable, _ ->
-                val p = measurable.measure(Constraints(minWidth = wI, maxWidth = wI))
-                layout(wI, p.height) { p.place(0, 0) }
-            }
-            .fillMaxHeight()
-            .padding(horizontal = 1.dp, vertical = 2.dp)
-            .alpha(if (track.visible) 1f else 0.3f)
-            .graphicsLayer { if (dragging) { scaleX = 1.02f; scaleY = 1.02f } }
-            .clip(RoundedCornerShape(4.dp))
-    ) {
-        when {
-            isVideo -> {
-                VideoFilmstripClipView(
-                    clip = shown,
-                    widthPx = widthPx,
-                    selected = selected,
-                    m = m
-                )
-            }
-            isAudio -> {
-                AudioWaveformClipView(
-                    clip = shown,
-                    selected = selected,
-                    ctrl = ctrl,
-                    m = m
-                )
-            }
-            isText -> {
-                TextClipView(
-                    clip = shown,
-                    selected = selected,
-                    m = m
-                )
-            }
-            else -> {
-                GenericClipView(
-                    clip = shown,
-                    track = track,
-                    selected = selected,
-                    m = m
-                )
-            }
-        }
-
-        // Selection border & handles
-        if (selected) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawRoundRect(
-                    color = TimelineTokens.Selection,
-                    cornerRadius = CornerRadius(4.dp.toPx()),
-                    style = Stroke(width = 2.dp.toPx())
-                )
-                // Left grab handle
-                drawRoundRect(
-                    color = TimelineTokens.Selection,
-                    topLeft = Offset(0f, size.height * 0.2f),
-                    size = Size(4.dp.toPx(), size.height * 0.6f),
-                    cornerRadius = CornerRadius(2.dp.toPx())
-                )
-                // Right grab handle
-                drawRoundRect(
-                    color = TimelineTokens.Selection,
-                    topLeft = Offset(size.width - 4.dp.toPx(), size.height * 0.2f),
-                    size = Size(4.dp.toPx(), size.height * 0.6f),
-                    cornerRadius = CornerRadius(2.dp.toPx())
-                )
-            }
-        }
-    }
-}
-
-/**
- * Continuous video thumbnail strip for video clips.
- */
-@Composable
-private fun VideoFilmstripClipView(
-    clip: Clip,
-    widthPx: Float,
-    selected: Boolean,
-    m: TimelineMetrics
-) {
-    val context = LocalContext.current
-    val tileWidthPx = 48.dp.value * m.density.density
-    val tileCount = maxOf(1, ceil(widthPx / tileWidthPx).toInt())
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF10141C))
-    ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            for (i in 0 until tileCount) {
-                VideoThumbnailFrameTile(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    context = context,
-                    mediaUri = clip.mediaUri,
-                    frameIndex = i,
-                    totalFrames = tileCount,
-                    clipId = clip.id
-                )
-            }
-        }
-
-        // Subtle frame vertical dividers
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            if (tileCount > 1) {
-                val step = size.width / tileCount
-                for (i in 1 until tileCount) {
-                    val x = i * step
-                    drawLine(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                }
-            }
-        }
-
-        // Clip label overlay at bottom
-        if (clip.label.isNotBlank()) {
-            Text(
-                text = clip.label,
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 9.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun VideoThumbnailFrameTile(
-    modifier: Modifier,
-    context: android.content.Context,
-    mediaUri: String?,
-    frameIndex: Int,
-    totalFrames: Int,
-    clipId: String
-) {
-    var bitmap by remember(mediaUri, frameIndex) {
-        mutableStateOf<Bitmap?>(null)
-    }
-
-    LaunchedEffect(mediaUri, frameIndex) {
-        if (!mediaUri.isNullOrBlank()) {
-            val key = VideoThumbnailManager.makeKey(mediaUri, frameIndex * 1000L, 100, 100)
-            val cached = VideoThumbnailManager.getCachedThumbnail(key)
-            if (cached != null) {
-                bitmap = cached
-            } else {
-                val loaded = VideoThumbnailManager.getThumbnail(
-                    context = context,
-                    uri = mediaUri,
-                    sourceTimeMs = frameIndex * 1000L,
-                    targetWidth = 100,
-                    targetHeight = 100,
-                    isVideo = true
-                )
-                if (loaded != null && !loaded.isRecycled) {
-                    bitmap = loaded
-                }
-            }
-        }
-    }
-
-    val currentBmp = bitmap
-    if (currentBmp != null && !currentBmp.isRecycled) {
-        Image(
-            bitmap = currentBmp.asImageBitmap(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = modifier
-        )
-    } else {
-        // High-tech cyber / cinematic frame thumbnail pattern (matching screenshot)
-        Canvas(modifier = modifier) {
-            val w = size.width
-            val h = size.height
-            val shift = (frameIndex.toFloat() / totalFrames.coerceAtLeast(1))
-
-            // Cinematic room background gradient
-            drawRect(
-                brush = Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF0C1322),
-                        Color(0xFF1B283E),
-                        Color(0xFF141F32),
-                        Color(0xFF080D17)
-                    )
-                )
-            )
-
-            // Glowing cyan/blue perspective room grid lines
-            val cx = w * (0.45f + shift * 0.1f)
-            val cy = h * 0.48f
-
-            // Perspective lines
-            drawLine(Color(0x334DD0E1), Offset(cx, cy), Offset(0f, 0f), 0.8f)
-            drawLine(Color(0x334DD0E1), Offset(cx, cy), Offset(w, 0f), 0.8f)
-            drawLine(Color(0x444DD0E1), Offset(cx, cy), Offset(0f, h), 1f)
-            drawLine(Color(0x444DD0E1), Offset(cx, cy), Offset(w, h), 1f)
-
-            // Futuristic server/monitor tech rectangles
-            drawRect(
-                color = Color(0x3300E5FF),
-                topLeft = Offset(cx - w * 0.18f, cy - h * 0.22f),
-                size = Size(w * 0.36f, h * 0.44f),
-                style = Stroke(width = 0.8f)
-            )
-
-            // Neon horizontal floor glow
-            drawLine(
-                color = Color(0x5500B0FF),
-                start = Offset(0f, h * 0.72f),
-                end = Offset(w, h * 0.72f),
-                strokeWidth = 1f
-            )
-        }
-    }
-}
-
-/**
- * Audio waveform clip view with Teal background.
- */
-@Composable
-private fun AudioWaveformClipView(
-    clip: Clip,
-    selected: Boolean,
+fun ClipBox(
     ctrl: TimelineUiController,
-    m: TimelineMetrics
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(TimelineTokens.AudioColor)
-            .padding(horizontal = 4.dp, vertical = 2.dp)
-    ) {
-        // Audio wave rendering
-        Canvas(Modifier.fillMaxSize()) {
-            val wf = ctrl.visualProvider?.waveformFor(clip)
-            val stepX = 2.5.dp.toPx()
-            val bars = (size.width / stepX).toInt().coerceAtLeast(1)
-            val midY = size.height / 2f
-
-            if (wf != null && wf.isNotEmpty()) {
-                val stepWf = wf.size.toFloat() / bars
-                for (i in 0 until bars) {
-                    val v = wf[(i * stepWf).toInt().coerceIn(0, wf.size - 1)].coerceIn(0f, 1f)
-                    val bh = (size.height * 0.65f * v).coerceAtLeast(2f)
-                    drawLine(
-                        color = Color.White.copy(alpha = 0.92f),
-                        start = Offset(i * stepX, midY - bh / 2f),
-                        end = Offset(i * stepX, midY + bh / 2f),
-                        strokeWidth = 1.2.dp.toPx()
-                    )
-                }
-            } else {
-                // Procedural crisp audio waveform
-                for (i in 0 until bars) {
-                    val norm = i.toFloat() / bars
-                    val amp = sin(norm * 28.0f) * 0.5f + sin(norm * 8.0f) * 0.3f + 0.2f
-                    val v = amp.coerceIn(0.15f, 0.95f)
-                    val bh = size.height * 0.55f * v
-                    drawLine(
-                        color = Color.White.copy(alpha = 0.9f),
-                        start = Offset(i * stepX, midY - bh / 2f),
-                        end = Offset(i * stepX, midY + bh / 2f),
-                        strokeWidth = 1.2.dp.toPx()
-                    )
-                }
-            }
-        }
-
-        // Audio clip title (e.g. Voiceover 5, Energetic Tech)
-        Text(
-            text = clip.label.ifBlank { "Audio" },
-            color = Color.White,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 2.dp, top = 1.dp)
-        )
-    }
-}
-
-/**
- * Text clip view with vibrant Orange background.
- */
-@Composable
-private fun TextClipView(
-    clip: Clip,
-    selected: Boolean,
-    m: TimelineMetrics
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(3.dp))
-            .background(TimelineTokens.TextColor)
-            .padding(horizontal = 6.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Text(
-            text = clip.label.ifBlank { "Enter text..." },
-            color = Color.White,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-/**
- * Generic clip view.
- */
-@Composable
-private fun GenericClipView(
     clip: Clip,
     track: Track,
-    selected: Boolean,
-    m: TimelineMetrics
+    m: TimelineMetrics,
+    rowHeightPx: Float
 ) {
-    val color = clip.colorArgb?.let { Color(it) } ?: TimelineTokens.trackColor(track.kind)
+    val shown = ctrl.effectiveTrim(clip) ?: clip
+    val startT = ctrl.effectiveClipStart(shown)
+    val endT = startT + shown.durationMicros
+
+    val x0 = ctrl.viewport.contentPxAtTime(startT) - ctrl.scrollX
+    val x1 = ctrl.viewport.contentPxAtTime(endT) - ctrl.scrollX
+    val widthPx = max(4f, x1 - x0)
+
+    val selected = clip.id in ctrl.selection
+    val density = LocalDensity.current
+
     Box(
         modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(3.dp))
-            .background(color)
-            .padding(horizontal = 6.dp),
-        contentAlignment = Alignment.CenterStart
+            .offset { IntOffset(x0.roundToInt(), 0) }
+            .width(with(density) { widthPx.toDp() })
+            .height(with(density) { rowHeightPx.toDp() })
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(4.dp))
     ) {
+        when (shown.kind) {
+            ClipKind.VIDEO -> VideoFilmstripClipView(ctrl, shown, track)
+            ClipKind.AUDIO -> AudioWaveformClipView(ctrl, shown, track)
+            ClipKind.TEXT -> TextClipView(ctrl, shown, track)
+            ClipKind.STICKER -> StickerClipView(ctrl, shown, track)
+            ClipKind.EFFECT, ClipKind.ADJUSTMENT -> EffectClipView(ctrl, shown, track)
+        }
+
+        // Selection boundary & grab handles
+        if (selected) {
+            Canvas(Modifier.fillMaxSize()) {
+                val strokeW = 2.dp.toPx()
+                val handleW = 6.dp.toPx()
+                val handleH = size.height * 0.72f
+                val handleY = (size.height - handleH) / 2f
+
+                // Outer selection border
+                drawRoundRect(
+                    color = Color.White,
+                    cornerRadius = CornerRadius(4.dp.toPx()),
+                    style = Stroke(width = strokeW)
+                )
+
+                // Left grab handle
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(0f, handleY),
+                    size = Size(handleW, handleH),
+                    cornerRadius = CornerRadius(2.5.dp.toPx())
+                )
+                drawLine(
+                    color = Color(0xFF1E242B),
+                    start = Offset(handleW / 2f, handleY + handleH * 0.25f),
+                    end = Offset(handleW / 2f, handleY + handleH * 0.75f),
+                    strokeWidth = 1.2.dp.toPx()
+                )
+
+                // Right grab handle
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(size.width - handleW, handleY),
+                    size = Size(handleW, handleH),
+                    cornerRadius = CornerRadius(2.5.dp.toPx())
+                )
+                drawLine(
+                    color = Color(0xFF1E242B),
+                    start = Offset(size.width - handleW / 2f, handleY + handleH * 0.25f),
+                    end = Offset(size.width - handleW / 2f, handleY + handleH * 0.75f),
+                    strokeWidth = 1.2.dp.toPx()
+                )
+            }
+        }
+    }
+}
+
+// ---------------- Primary Video Track Header (Mute Button & Cover Thumbnail) ----------------
+@Composable
+fun PrimaryVideoHeaderRow(
+    track: Track,
+    onToggleMute: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxSize(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        // Mute Clip Audio Pill Button
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF202227))
+                .clickable { onToggleMute() }
+                .padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = if (track.muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    contentDescription = if (track.muted) "Unmute clip" else "Mute clip",
+                    tint = if (track.muted) Color(0xFFFF5252) else Color.White,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = if (track.muted) "Muted" else "Mute clip",
+                    color = Color.White,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Cover Thumbnail Card
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF202227)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CropPortrait,
+                    contentDescription = "Cover",
+                    tint = Color.White,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = "Cover",
+                    color = Color.White,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+// ---------------- Secondary Sub-Tracks Dynamic Header Tile ----------------
+@Composable
+fun SecondaryTrackIconTile(track: Track) {
+    val (iconVector, labelText, iconColor) = when (track.kind) {
+        TrackKind.OVERLAY -> Triple(Icons.Default.Layers, "Overlay", Color(0xFF66BB6A))
+        TrackKind.AUDIO, TrackKind.VOICE, TrackKind.MUSIC, TrackKind.SFX -> Triple(Icons.Default.MusicNote, "Audio", Color(0xFF26C6DA))
+        TrackKind.TEXT, TrackKind.CAPTION -> Triple(Icons.Default.Title, "Text", Color(0xFFFFA726))
+        TrackKind.STICKER -> Triple(Icons.Default.AutoAwesome, "Sticker", Color(0xFFAB47BC))
+        TrackKind.EFFECT -> Triple(Icons.Default.AutoFixHigh, "Effect", Color(0xFF7E57C2))
+        else -> Triple(Icons.Default.Audiotrack, track.name, Color.White)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFF202227))
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(iconColor.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = iconVector,
+                contentDescription = labelText,
+                tint = iconColor,
+                modifier = Modifier.size(12.dp)
+            )
+        }
         Text(
-            text = clip.label.ifBlank { track.name },
+            text = labelText,
             color = Color.White,
             fontSize = 9.5.sp,
             fontWeight = FontWeight.Medium,
@@ -530,69 +372,207 @@ private fun GenericClipView(
     }
 }
 
-/**
- * Transition separator button between adjacent video clips.
- */
+// ---------------- Add Clip Button ----------------
 @Composable
-private fun TransitionButton(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(width = 20.dp, height = 22.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(TimelineTokens.TransitionBadgeBg)
-            .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(4.dp))
-            .clickable { /* Transition picker action */ },
-        contentAlignment = Alignment.Center
-    ) {
-        // Vertical transition split glyph
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(1.5.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .height(10.dp)
-                    .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(1.dp))
-            )
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(12.dp)
-                    .background(Color.White.copy(alpha = 0.5f))
-            )
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .height(10.dp)
-                    .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(1.dp))
-            )
-        }
-    }
-}
-
-/**
- * Add clip button [+] attached to the media track.
- */
-@Composable
-private fun AddClipButton(
+fun AddClipButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Box(
         modifier = modifier
             .size(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF282D37))
-            .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(8.dp))
+            .clip(CircleShape)
+            .background(Color(0xFFFFFFFF))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = Icons.Default.Add,
             contentDescription = "Add Media",
-            tint = Color.White,
-            modifier = Modifier.size(17.dp)
+            tint = Color(0xFF141519),
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+// ---------------- Transition Cut Button ----------------
+@Composable
+fun TransitionButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {}
+) {
+    Box(
+        modifier = modifier
+            .size(20.dp, 22.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(TimelineTokens.TransitionBadgeBg)
+            .border(1.dp, Color(0xFF3B404E), RoundedCornerShape(3.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .height(10.dp)
+                .background(Color.White)
+        )
+    }
+}
+
+// ---------------- Video Filmstrip Clip Composable ----------------
+@Composable
+fun VideoFilmstripClipView(ctrl: TimelineUiController, clip: Clip, track: Track) {
+    val context = LocalContext.current
+    val uri = clip.mediaUri
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF141923))
+    ) {
+        if (!uri.isNullOrBlank()) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                val thumbCount = max(1, (clip.durationMicros / 2_000_000L).toInt().coerceAtMost(10))
+                for (i in 0 until thumbCount) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(uri)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                }
+            }
+        } else {
+            // Cyber fallback background
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(Color(0xFF161B26), Color(0xFF1D2638))
+                        )
+                    )
+            )
+        }
+
+        // Clip label
+        Text(
+            text = clip.label,
+            color = Color.White,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+// ---------------- Audio Waveform Clip Composable ----------------
+@Composable
+fun AudioWaveformClipView(ctrl: TimelineUiController, clip: Clip, track: Track) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TimelineTokens.AudioColor)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.size(13.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = clip.label,
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ---------------- Text Clip Composable ----------------
+@Composable
+fun TextClipView(ctrl: TimelineUiController, clip: Clip, track: Track) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TimelineTokens.TextColor)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.Title,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.size(13.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = clip.label.ifBlank { "Text" },
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ---------------- Sticker Clip Composable ----------------
+@Composable
+fun StickerClipView(ctrl: TimelineUiController, clip: Clip, track: Track) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF2FA36B))
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = clip.label.ifBlank { "Sticker" },
+            color = Color.White,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+// ---------------- Effect Clip Composable ----------------
+@Composable
+fun EffectClipView(ctrl: TimelineUiController, clip: Clip, track: Track) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF7A4FC9))
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = clip.label.ifBlank { "Effect" },
+            color = Color.White,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

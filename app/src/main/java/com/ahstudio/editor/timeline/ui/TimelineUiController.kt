@@ -41,7 +41,7 @@ data class DragPreview(
 data class TrimPreview(val clipId: String, val startMicros: Long, val durationMicros: Long)
 data class ReorderPreview(val fromIndex: Int, val insertionIndex: Int)
 
-/** Optional visual bridge — plug your real thumbnail/waveform decoders here. */
+/** Optional visual bridge — waveform and thumbnail providers. */
 interface ClipVisualProvider {
     fun waveformFor(clip: Clip): FloatArray? = null
     fun thumbnailCount(clip: Clip): Int = 0
@@ -59,7 +59,7 @@ class TimelineUiController(
     var visualProvider: ClipVisualProvider? = null,
 ) : EngineListener {
 
-    // ---- Compose-observed state (bridged from the engines — never duplicated) ----
+    // ---- Compose-observed state ----
     var snapshot by mutableStateOf(engine.snapshot); private set
     var selection by mutableStateOf<Set<String>>(emptySet()); private set
     var playheadMicros by mutableStateOf(0L)
@@ -77,6 +77,14 @@ class TimelineUiController(
     var isScrubbing by mutableStateOf(false); private set
     var reorderPreview by mutableStateOf<ReorderPreview?>(null); private set
     var flashMessage by mutableStateOf<String?>(null)
+
+    // Bridge callbacks to outer architecture (StudioViewModel)
+    var onTimelinePauseRequested: (() -> Unit)? = null
+    var onClipTrimCommitted: ((clipId: String, startMs: Long, durationMs: Long) -> Unit)? = null
+    var onClipMoveCommitted: ((clipId: String, startMs: Long) -> Unit)? = null
+    var onClipSelected: ((clipId: String?) -> Unit)? = null
+    var onPlayheadChanged: ((posMs: Long) -> Unit)? = null
+    var onAddMediaHandler: ((String) -> Unit)? = null
 
     val playheadXPx: Float get() = viewport.playheadXPx
     val fps: Double get() = snapshot.settings.fps
@@ -110,12 +118,13 @@ class TimelineUiController(
     }
 
     override fun onChanged(s: com.ahstudio.editor.timeline.engine.TimelineSnapshot, sel: Set<String>) {
-        snapshot = s; selection = sel
+        snapshot = s
+        selection = sel
     }
 
     fun report(msg: String) { flashMessage = msg }
 
-    // ---------------- §7: touching the timeline ALWAYS pauses playback immediately ----------------
+    // ---------------- Instant Pause on Tap Interaction ----------------
     private var flingJob: Job? = null
 
     fun onTimelineTouchBegan() {
@@ -123,10 +132,12 @@ class TimelineUiController(
             playback.pause()
             isPlaying = false
         }
-        flingJob?.cancel(); flingJob = null
+        onTimelinePauseRequested?.invoke()
+        flingJob?.cancel()
+        flingJob = null
     }
 
-    // ---------------- scroll plumbing ----------------
+    // ---------------- Scroll Plumbing ----------------
     private fun clampScrollX(v: Float): Float {
         if (viewport.viewportWidthPx <= 0f) return v
         val min = -viewport.playheadXPx
@@ -134,25 +145,45 @@ class TimelineUiController(
         return v.coerceIn(min, max)
     }
 
-    fun setScrollYRaw(v: Float) { scrollY = v.coerceIn(0f, maxOf(0f, tracksContentHeightPx() - tracksAreaHeightPx)) }
-    fun tracksContentHeightPx(): Float = snapshot.tracks.size * rowHeightPxCompat
-    private val rowHeightPxCompat: Float get() = 56f * densityScale
+    fun setScrollYRaw(v: Float) {
+        scrollY = v.coerceIn(0f, maxOf(0f, tracksContentHeightPx() - tracksAreaHeightPx))
+    }
+
+    fun tracksContentHeightPx(): Float {
+        val n = snapshot.tracks.size
+        if (n <= 0) return 0f
+        val mainH = 58f * densityScale
+        val subH = 36f * densityScale
+        val mainGap = 8f * densityScale
+        val subGap = 4f * densityScale
+        if (n == 1) return mainH
+        return mainH + mainGap + (n - 1) * subH + ((n - 2).coerceAtLeast(0)) * subGap
+    }
+
     var densityScale: Float = 1f
 
     fun shiftScrollX(dx: Float): Float {
-        val old = scrollX; scrollX = clampScrollX(old + dx); return scrollX - old
+        val old = scrollX
+        scrollX = clampScrollX(old + dx)
+        return scrollX - old
     }
-    fun scrollToTime(micros: Long) { scrollX = clampScrollX(viewport.scrollPxForTime(micros)) }
 
-    /** §5 auto-scroll: playhead fixed, content moves. Called once per frame while playing. */
-    fun followPlayhead() { if (isPlaying) scrollToTime(playheadMicros) }
+    fun scrollToTime(micros: Long) {
+        scrollX = clampScrollX(viewport.scrollPxForTime(micros))
+    }
+
+    /** Auto-scroll: playhead fixed at center, content moves. */
+    fun followPlayhead() {
+        if (isPlaying) scrollToTime(playheadMicros)
+    }
 
     fun fling(vx: Float, vy: Float) {
         flingJob?.cancel()
         if (abs(vx) < 60f && abs(vy) < 60f) { setScrollYRaw(scrollY); return }
         flingJob = scope.launch {
             val decay = exponentialDecay<Float>(frictionMultiplier = 1.6f)
-            val ax = Animatable(0f); val ay = Animatable(0f)
+            val ax = Animatable(0f)
+            val ay = Animatable(0f)
             var lastX = 0f
             val jx = launch {
                 if (abs(vx) > 60f) {
@@ -177,7 +208,7 @@ class TimelineUiController(
         }
     }
 
-    // ---------------- coordinate → time → snap → engine (§9 pipeline) ----------------
+    // ---------------- Coordinate → Time → Snap Pipeline ----------------
     fun timeUnderPointer(screenX: Float): Long =
         viewport.timeAtContentPx(screenX + scrollX)
 
@@ -188,28 +219,35 @@ class TimelineUiController(
 
     private fun quantizeFrame(t: Long): Long = TimelineTime(t).quantizeToFrame(fps).micros
 
-    // ---------------- scrubbing (§8) ----------------
+    // ---------------- Scrubbing & Precise Seeking ----------------
     fun scrubTo(timeMicros: Long, snapEnabled: Boolean = true) {
         isScrubbing = true
         var t = quantizeFrame(timeMicros.coerceAtLeast(0L))
         if (snapEnabled) t = snapTime(t).first
-        playback.requestScrubSeek(t)   // clock immediate, sink frame-aligned
+        playback.requestScrubSeek(t)
         playheadMicros = clock.timeMicros
+        onPlayheadChanged?.invoke(t / 1000L)
     }
-    fun scrubEnded() { isScrubbing = false }
+
+    fun scrubEnded() {
+        isScrubbing = false
+        onPlayheadChanged?.invoke(playheadMicros / 1000L)
+    }
+
     fun tapSeek(timeMicros: Long) {
         val t = quantizeFrame(timeMicros.coerceAtLeast(0L))
         playback.seekTo(t)
         scrollToTime(t)
         playheadMicros = t
+        onPlayheadChanged?.invoke(t / 1000L)
     }
 
-    // ---------------- hit testing ----------------
+    // ---------------- Hit Testing with Dynamic Row Heights & Generous Trim Handles ----------------
     fun hitTest(screenX: Float, screenY: Float, m: TimelineMetrics): Hit {
         if (screenY < m.rulerHeightPx) return Hit.Ruler(timeUnderPointer(screenX))
         val contentY = screenY - m.rulerHeightPx + scrollY
-        val row = (contentY / m.rowHeightPx).toInt()
         val tracks = snapshot.tracks
+        val row = m.trackIndexAtY(contentY, tracks.size)
         if (row < 0 || row >= tracks.size) return Hit.Empty
         val track = tracks[row]
         if (!track.visible || track.locked) return Hit.Empty
@@ -218,23 +256,39 @@ class TimelineUiController(
         val contentX = screenX + scrollX
         val x0 = viewport.contentPxAtTime(clip.startMicros)
         val x1 = viewport.contentPxAtTime(clip.endMicros)
+
+        // If the clip is selected, allow left/right handle grabbing for resizing
         if (clip.id in selection) {
-            if (contentX - x0 <= m.handlePx) return Hit.ClipHandle(clip.id, Hit.Side.START)
-            if (x1 - contentX <= m.handlePx) return Hit.ClipHandle(clip.id, Hit.Side.END)
+            val handleHitPx = maxOf(m.handlePx, 22f * m.density.density)
+            if (contentX - x0 <= handleHitPx) return Hit.ClipHandle(clip.id, Hit.Side.START)
+            if (x1 - contentX <= handleHitPx) return Hit.ClipHandle(clip.id, Hit.Side.END)
         }
         val isBase = (row == 0 && track.kind == TrackKind.VIDEO)
         return Hit.ClipBody(clip.id, isBaseMedia = isBase)
     }
 
-    // ---------------- selection (§11 — never moves the playhead) ----------------
-    fun onTapClip(clipId: String) { engine.setSelection(setOf(clipId)) }
-    fun onTapEmpty() { engine.clearSelection() }
-    fun onLongPressClip(clipId: String) { engine.toggleSelection(clipId) }
-    fun selectTrack(trackId: String) { engine.selectTrack(trackId) }
+    // ---------------- Selection Synchronization ----------------
+    fun onTapClip(clipId: String) {
+        engine.setSelection(setOf(clipId))
+        onClipSelected?.invoke(clipId)
+    }
 
-    // ---------------- media addition ----------------
-    var onAddMediaHandler: ((String) -> Unit)? = null
+    fun onTapEmpty() {
+        engine.clearSelection()
+        onClipSelected?.invoke(null)
+    }
 
+    fun onLongPressClip(clipId: String) {
+        engine.toggleSelection(clipId)
+        val firstSel = engine.selection.firstOrNull()
+        onClipSelected?.invoke(firstSel)
+    }
+
+    fun selectTrack(trackId: String) {
+        engine.selectTrack(trackId)
+    }
+
+    // ---------------- Media Addition ----------------
     fun onAddMediaToTrack(trackId: String) {
         val handler = onAddMediaHandler
         if (handler != null) {
@@ -260,7 +314,7 @@ class TimelineUiController(
         }
     }
 
-    // ---------------- clip drag (§6, §12) ----------------
+    // ---------------- Clip Drag ----------------
     private var dragAnchor = 0L
 
     fun beginClipDrag(primaryId: String) {
@@ -273,7 +327,6 @@ class TimelineUiController(
         dragPreview = DragPreview(ids, primaryId, 0L, 0, originRow)
     }
 
-    /** Max track shift allowed for whole group (P3 bug fix applied). */
     fun allowedTrackShift(preview: DragPreview, shift: Int): Int {
         if (shift == 0) return 0
         val n = snapshot.tracks.size
@@ -298,7 +351,6 @@ class TimelineUiController(
         val p = dragPreview ?: return
         var delta = deltaMicros
         var snappedTo: List<Long> = emptyList()
-        // Ensure no clip is moved before timeline zero (0.000s)
         val minDelta = -dragAnchor
         if (delta < minDelta) delta = minDelta
         if (snapEnabled) {
@@ -334,6 +386,7 @@ class TimelineUiController(
                     snapEnabled = id == p.primaryId,
                 )
                 engine.moveClip(id, placement.startMicros, placement.trackId)
+                onClipMoveCommitted?.invoke(id, placement.startMicros / 1000L)
             }
             engine.commit()
         } catch (e: Exception) { engine.cancel(); report(e.message ?: "Move failed") }
@@ -341,11 +394,10 @@ class TimelineUiController(
 
     fun cancelClipDrag() { dragPreview = null; snapLines = emptyList() }
 
-    /** Effective start for rendering during drag (called per clip). */
     fun effectiveClipStart(clip: Clip): Long =
         clip.startMicros + (dragPreview?.takeIf { clip.id in it.clipIds }?.deltaMicros ?: 0L)
 
-    // ---------------- trimming (§6) ----------------
+    // ---------------- Trimming (Extend / Shrink Handles) ----------------
     fun beginTrim(clipId: String, side: Hit.Side) {
         val c = engine.clip(clipId) ?: return
         trimPreview = TrimPreview(clipId, c.startMicros, c.durationMicros)
@@ -365,9 +417,14 @@ class TimelineUiController(
         val t = trimPreview
         trimPreview = null
         t ?: return
-        try { engine.trimClip(t.clipId, t.startMicros, t.durationMicros) }
-        catch (e: Exception) { report(e.message ?: "Trim failed") }
+        try {
+            engine.trimClip(t.clipId, t.startMicros, t.durationMicros)
+            onClipTrimCommitted?.invoke(t.clipId, t.startMicros / 1000L, t.durationMicros / 1000L)
+        } catch (e: Exception) {
+            report(e.message ?: "Trim failed")
+        }
     }
+
     fun cancelTrim() { trimPreview = null }
 
     fun effectiveTrim(clip: Clip): Clip? = trimPreview?.takeIf { it.clipId == clip.id }?.let {
@@ -375,7 +432,7 @@ class TimelineUiController(
                   sourceInMicros = clip.sourceInMicros + ((it.startMicros - clip.startMicros) * clip.speed).toLong())
     }
 
-    // ---------------- high-level edit actions ----------------
+    // ---------------- High-Level Edit Actions ----------------
     fun splitAtPlayhead() {
         val t = playheadMicros
         val selected = selection.mapNotNull { engine.clip(it) }
@@ -414,11 +471,11 @@ class TimelineUiController(
     fun undo() { history.undo(engine) }
     fun redo() { history.redo(engine) }
 
-    // ---------------- track reorder (§13) ----------------
+    // ---------------- Track Reorder ----------------
     fun beginTrackReorder(index: Int) { reorderPreview = ReorderPreview(index, index) }
-    fun updateTrackReorder(absoluteY: Float, rowHeightPx: Float) {
+    fun updateTrackReorder(absoluteY: Float, metrics: TimelineMetrics) {
         val rp = reorderPreview ?: return
-        val insertion = (absoluteY / rowHeightPx).roundToInt().coerceIn(0, snapshot.tracks.size)
+        val insertion = metrics.trackIndexAtY(absoluteY, snapshot.tracks.size).coerceIn(0, snapshot.tracks.size)
         reorderPreview = rp.copy(insertionIndex = insertion)
     }
     fun commitTrackReorder() {
@@ -431,13 +488,13 @@ class TimelineUiController(
     }
     fun cancelTrackReorder() { reorderPreview = null }
 
-    // ---------------- zoom (§5, pinch anchored on playhead) ----------------
+    // ---------------- Zoom ----------------
     fun setZoomAroundPlayhead(anchorMicros: Long, factor: Float) {
         viewport.setZoomAroundTime(anchorMicros, factor)
         scrollToTime(anchorMicros)
     }
 
-    // ---------------- edge auto-scroll during gestures ----------------
+    // ---------------- Edge Auto-Scroll ----------------
     fun edgeAutoScroll(pointerX: Float, viewportWidthPx: Float): Float {
         val m = 64f; val maxSpeed = 22f
         return when {

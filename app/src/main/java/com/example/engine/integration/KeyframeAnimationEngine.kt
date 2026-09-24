@@ -117,4 +117,27 @@ object KeyframeAnimationEngine {
     val u = 1f - t
     return 3f * u * u * t * p1 + 3f * u * t * t * p2 + t * t * t
   }
+
+  /**
+   * Converts a MotionTrackerEngine TrackingResult into baked Timeline ClipKeyframes
+   * normalized to the target clip coordinate space.
+   */
+  fun convertTrackingResultToClipKeyframes(
+    trackingResult: com.example.engine.ai.TrackingResult,
+    clipStartTimelineMs: Long = 0L
+  ): List<ClipKeyframe> {
+    return trackingResult.keyframes.map { kf ->
+      val timeMs = kf.timestampUs / 1000L
+      val normPosX = (kf.centerX - 0.5f) * 2f
+      val normPosY = (kf.centerY - 0.5f) * 2f
+      ClipKeyframe(
+        timeMs = timeMs,
+        posX = normPosX,
+        posY = normPosY,
+        scaleX = kf.scaleX,
+        scaleY = kf.scaleY,
+        rotation = kf.rotationDeg
+      )
+    }
+  }
 }

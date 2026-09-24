@@ -128,7 +128,7 @@ fun AudioToolsContainerPanel(
     )
   }
 
-  Box(modifier = modifier.fillMaxSize()) {
+  Box(modifier = modifier.fillMaxWidth().heightIn(min = 180.dp, max = 240.dp)) {
     AnimatedContent(
       targetState = currentSubPanel,
       transitionSpec = { fadeIn() togetherWith fadeOut() },

@@ -8,12 +8,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 
-/** §2 — ONE vertical CTI line at exactly viewport.playheadXPx. Every track aligns to it. */
+/** Single authoritative vertical CTI needle at exactly viewport.playheadXPx. Every track aligns to it. */
 @Composable
 fun PlayheadLine(ctrl: TimelineUiController, m: TimelineMetrics) {
     Canvas(Modifier.fillMaxSize()) {
         val x = ctrl.playheadXPx
-        // High-contrast clean solid white playhead
+        // High-contrast clean solid white playhead needle
         drawLine(
             color = Color.White,
             start = Offset(x, 0f),
@@ -23,7 +23,7 @@ fun PlayheadLine(ctrl: TimelineUiController, m: TimelineMetrics) {
     }
 }
 
-/** §10 — snap feedback lines. */
+/** Snap feedback lines. */
 @Composable
 fun SnapLinesOverlay(ctrl: TimelineUiController, m: TimelineMetrics) {
     val lines = ctrl.snapLines
@@ -37,12 +37,12 @@ fun SnapLinesOverlay(ctrl: TimelineUiController, m: TimelineMetrics) {
     }
 }
 
-/** §13 — insertion line while reordering tracks. */
+/** Insertion line while reordering tracks. */
 @Composable
 fun ReorderIndicator(ctrl: TimelineUiController, m: TimelineMetrics) {
     val rp = ctrl.reorderPreview ?: return
     Canvas(Modifier.fillMaxSize()) {
-        val y = rp.insertionIndex * m.rowHeightPx - ctrl.scrollY
+        val y = m.trackTopPx(rp.insertionIndex) - ctrl.scrollY
         drawLine(Color(0xFF7FD1FF), Offset(0f, y), Offset(size.width, y), 3f)
     }
 }

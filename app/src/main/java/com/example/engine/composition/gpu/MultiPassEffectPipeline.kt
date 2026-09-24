@@ -31,13 +31,15 @@ interface GlEffectPass {
    * @param width Frame width in pixels.
    * @param height Frame height in pixels.
    * @param timeSeconds Playback timeline timestamp in seconds.
+   * @param texMatrix Optional texture coordinate transformation matrix (e.g. from SurfaceTexture).
    */
   fun render(
     inputTextureId: Int,
     isOes: Boolean,
     width: Int,
     height: Int,
-    timeSeconds: Float
+    timeSeconds: Float,
+    texMatrix: FloatArray? = null
   )
 
   /**
@@ -97,7 +99,8 @@ abstract class BaseGlEffectPass(
     isOes: Boolean,
     width: Int,
     height: Int,
-    timeSeconds: Float
+    timeSeconds: Float,
+    texMatrix: FloatArray?
   ) {
     val program = if (isOes) programOES else program2D
     if (program == 0) return
@@ -111,7 +114,20 @@ abstract class BaseGlEffectPass(
     val uSamplerLoc = if (isOes) uTextureLocOES else uTextureLoc2D
 
     if (uMvpLoc >= 0) GLES20.glUniformMatrix4fv(uMvpLoc, 1, false, MultiPassEffectPipeline.IDENTITY_MATRIX, 0)
-    if (uTexLoc >= 0) GLES20.glUniformMatrix4fv(uTexLoc, 1, false, MultiPassEffectPipeline.IDENTITY_MATRIX, 0)
+    if (uTexLoc >= 0) {
+      val mat = texMatrix ?: MultiPassEffectPipeline.IDENTITY_MATRIX
+      GLES20.glUniformMatrix4fv(uTexLoc, 1, false, mat, 0)
+    }
+
+    val uResLoc = GLES20.glGetUniformLocation(program, "uResolution")
+    if (uResLoc >= 0) {
+      GLES20.glUniform2f(uResLoc, width.toFloat(), height.toFloat())
+    }
+    val uAspectLoc = GLES20.glGetUniformLocation(program, "uAspectRatio")
+    if (uAspectLoc >= 0) {
+      val aspect = if (height > 0) width.toFloat() / height.toFloat() else 1.0f
+      GLES20.glUniform1f(uAspectLoc, aspect)
+    }
 
     GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     val target = if (isOes) GLES11Ext.GL_TEXTURE_EXTERNAL_OES else GLES20.GL_TEXTURE_2D
@@ -157,9 +173,9 @@ class ColorGradingPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -243,9 +259,9 @@ class VignettePass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -257,13 +273,14 @@ class VignettePass(
       uniform float uRadius;
       uniform float uSoftness;
       uniform float uRoundness;
+      uniform float uAspectRatio;
 
       void main() {
         vec2 uv = clamp(vTextureCoord, 0.0, 1.0);
         vec4 color = texture2D(uTexture, uv);
 
         vec2 centered = (uv - 0.5) * 2.0;
-        centered.x *= uRoundness;
+        centered.x *= uAspectRatio * uRoundness;
         float dist = length(centered);
 
         float vig = smoothstep(uRadius, uRadius - uSoftness, dist);
@@ -294,9 +311,9 @@ class SharpenPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -346,9 +363,9 @@ class GaussianBlurPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -402,9 +419,9 @@ class ChromaticAberrationPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -449,9 +466,9 @@ class BloomGlowPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -504,9 +521,9 @@ class FilmGrainPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -549,9 +566,9 @@ class GlitchPass(
 
   override fun getFragmentShader(isOes: Boolean): String {
     val header = if (isOes) {
-      "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+      "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
     } else {
-      "precision mediump float;\n"
+      "precision highp float;\n"
     }
     val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
 
@@ -611,7 +628,7 @@ class CustomGlEffectPass(
     return if (isOes) {
       fragmentShaderBodyOES ?: """
         #extension GL_OES_EGL_image_external : require
-        precision mediump float;
+        precision highp float;
         varying vec2 vTextureCoord;
         uniform samplerExternalOES uTexture;
         void main() {
@@ -689,9 +706,9 @@ class MultiPassEffectPipeline {
   private val passthroughPass = object : BaseGlEffectPass("passthrough", "Passthrough") {
     override fun getFragmentShader(isOes: Boolean): String {
       val header = if (isOes) {
-        "#extension GL_OES_EGL_image_external : require\nprecision mediump float;\n"
+        "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n"
       } else {
-        "precision mediump float;\n"
+        "precision highp float;\n"
       }
       val sampler = if (isOes) "samplerExternalOES" else "sampler2D"
       return """
@@ -800,6 +817,7 @@ class MultiPassEffectPipeline {
    * @param height Frame height in pixels.
    * @param targetFboId The destination FBO ID (0 for default display surface or a custom FBO).
    * @param timeSeconds The current playback time in seconds.
+   * @param texMatrix Optional texture coordinate transformation matrix (e.g. from SurfaceTexture).
    * @return The 2D texture ID of the final processed output frame (valid if targetFboId was a ping-pong FBO).
    */
   fun process(
@@ -808,7 +826,8 @@ class MultiPassEffectPipeline {
     width: Int,
     height: Int,
     targetFboId: Int = 0,
-    timeSeconds: Float = 0.0f
+    timeSeconds: Float = 0.0f,
+    texMatrix: FloatArray? = null
   ): Int {
     if (!isInitialized) {
       init()
@@ -837,6 +856,7 @@ class MultiPassEffectPipeline {
 
     var currentInputTex = inputTextureId
     var currentIsOes = isOes
+    var currentTexMatrix = if (isOes) texMatrix else null
 
     // If no passes are active, simply copy the input to the target FBO/surface
     if (enabledPasses.isEmpty()) {
@@ -845,7 +865,7 @@ class MultiPassEffectPipeline {
       GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
       GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-      passthroughPass.render(currentInputTex, currentIsOes, width, height, timeSeconds)
+      passthroughPass.render(currentInputTex, currentIsOes, width, height, timeSeconds, currentTexMatrix)
 
       restoreGlState(wasBlendEnabled, wasDepthEnabled, wasCullEnabled)
       return if (targetFboId == 0) currentInputTex else pingPongFbo.getReadTextureId()
@@ -863,7 +883,7 @@ class MultiPassEffectPipeline {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        pass.render(currentInputTex, currentIsOes, width, height, timeSeconds)
+        pass.render(currentInputTex, currentIsOes, width, height, timeSeconds, currentTexMatrix)
       } else {
         // Render to the current Ping-Pong write FBO
         val writeFbo = pingPongFbo.getWriteFbo()
@@ -871,13 +891,14 @@ class MultiPassEffectPipeline {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        pass.render(currentInputTex, currentIsOes, width, height, timeSeconds)
+        pass.render(currentInputTex, currentIsOes, width, height, timeSeconds, currentTexMatrix)
 
         writeFbo.unbind()
 
         // Swap ping-pong FBOs for the next pass
         currentInputTex = writeFbo.getTextureId()
         currentIsOes = false
+        currentTexMatrix = null
         pingPongFbo.swap()
       }
     }
@@ -888,7 +909,7 @@ class MultiPassEffectPipeline {
       GLES20.glViewport(0, 0, width, height)
       GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
       GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-      passthroughPass.render(currentInputTex, false, width, height, timeSeconds)
+      passthroughPass.render(currentInputTex, false, width, height, timeSeconds, null)
     }
 
     // Restore previous GL state

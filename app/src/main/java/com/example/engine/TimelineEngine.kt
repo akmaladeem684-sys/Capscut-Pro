@@ -1095,8 +1095,8 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   ) {
     recordHistory()
     val currentOverlays = _timeline.value.overlayClips.toMutableList()
-    val nextOverlayTrack = (currentOverlays.maxOfOrNull { it.trackIndex } ?: 0) + 1
-    val start = startTimeMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
+    val nextOverlayTrack = com.example.engine.timeline.TimelineTrackManager.allocateOverlayTrackIndex(_timeline.value)
+    val start = startTimeMs ?: com.example.engine.timeline.TimelineTrackManager.getAuthoritativeInsertionTime(_currentPositionMs.value)
     val newOverlay = VideoClip(
       uri = uri,
       name = name,
@@ -3512,8 +3512,8 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   ) {
     recordHistory()
     val maxFade = durationMs / 2
-    val nextAudioTrack = ( _timeline.value.audioClips.maxOfOrNull { it.trackIndex } ?: 0) + 1
-    val start = startTimeMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
+    val nextAudioTrack = com.example.engine.timeline.TimelineTrackManager.allocateAudioTrackIndex(_timeline.value)
+    val start = startTimeMs ?: com.example.engine.timeline.TimelineTrackManager.getAuthoritativeInsertionTime(_currentPositionMs.value)
     val newAudio = AudioClip(
       title = title,
       uri = uri,
@@ -3543,24 +3543,30 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   fun addTextClip(
     text: String = "NEW TEXT",
     timelineStartMs: Long? = null,
-    durationMs: Long = 3000L
+    durationMs: Long = 3000L,
+    fontFamily: String = "Default",
+    fontSizeSp: Float = 24f,
+    textColor: Long = 0xFFFFFFFF,
+    animationType: String = "None",
+    hasGlow: Boolean = false,
+    glowColor: Long = 0xFF00E5FF
   ) {
     recordHistory()
-    val maxTrack = _timeline.value.textClips.maxOfOrNull { it.trackIndex } ?: -1
-    val newTrackIndex = maxTrack + 1
-    val start = timelineStartMs ?: if (_currentPositionMs.value >= _timeline.value.totalDurationMs && _timeline.value.totalDurationMs > 0L) 0L else _currentPositionMs.value
+    val newTrackIndex = com.example.engine.timeline.TimelineTrackManager.allocateTextTrackIndex(_timeline.value)
+    val start = timelineStartMs ?: com.example.engine.timeline.TimelineTrackManager.getAuthoritativeInsertionTime(_currentPositionMs.value)
     val newText = TextClip(
       text = text,
       timelineStartMs = start,
       durationMs = durationMs,
       trackIndex = newTrackIndex,
-      fontSizeSp = 24f,
+      fontFamily = fontFamily,
+      fontSizeSp = fontSizeSp,
       fontWeight = 800,
-      textColor = 0xFFFFFFFF,
-      hasGradient = true,
-      gradientColorStart = 0xFF00E5FF,
-      gradientColorEnd = 0xFF8B5CF6,
-      animationType = "None"
+      textColor = textColor,
+      hasGradient = false,
+      animationType = animationType,
+      hasGlow = hasGlow,
+      glowColor = glowColor
     )
     val list = _timeline.value.textClips.toMutableList()
     list.add(newText)
@@ -3570,9 +3576,9 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
 
   fun addTextClipObject(newClip: TextClip) {
     recordHistory()
-    val maxTrack = _timeline.value.textClips.maxOfOrNull { it.trackIndex } ?: -1
+    val newTrackIndex = com.example.engine.timeline.TimelineTrackManager.allocateTextTrackIndex(_timeline.value)
     val clipWithTrack = if (_timeline.value.textClips.any { it.trackIndex == newClip.trackIndex }) {
-      newClip.copy(trackIndex = maxTrack + 1)
+      newClip.copy(trackIndex = newTrackIndex)
     } else {
       newClip
     }
@@ -3585,6 +3591,34 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   fun updateTextClip(updated: TextClip) {
     val list = _timeline.value.textClips.map { if (it.id == updated.id) updated else it }
     _timeline.value = _timeline.value.copy(textClips = list)
+  }
+
+  fun updateTextClipPayload(
+    clipId: String,
+    newText: String? = null,
+    fontFamily: String? = null,
+    textColor: Long? = null,
+    fontSizeSp: Float? = null,
+    animation: String? = null
+  ) {
+    recordHistory()
+    val list = _timeline.value.textClips.map { clip ->
+      if (clip.id == clipId) {
+        var updated = clip
+        if (newText != null) updated = updated.copy(text = newText)
+        if (fontFamily != null) updated = updated.copy(fontFamily = fontFamily)
+        if (textColor != null) updated = updated.copy(textColor = textColor)
+        if (fontSizeSp != null) updated = updated.copy(fontSizeSp = fontSizeSp)
+        if (animation != null) updated = updated.copy(animationType = animation)
+        updated
+      } else clip
+    }
+    _timeline.value = _timeline.value.copy(textClips = list)
+  }
+
+  fun splitClipAt(ctiPositionMs: Long): Boolean {
+    _currentPositionMs.value = ctiPositionMs
+    return splitAtPlayhead()
   }
 
   // --- Sticker Operations ---
@@ -6188,6 +6222,61 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
             val kfs = (clip.keyframes.filterNot { Math.abs(it.timeMs - keyframe.timeMs) < 15L } + keyframe).sortedBy { it.timeMs }
             clip.copy(keyframes = kfs)
           } else clip
+        }
+        _timeline.value = _timeline.value.copy(textClips = updated)
+        return true
+      }
+      else -> return false
+    }
+  }
+
+  /**
+   * Sets or replaces the entire keyframes list on a specific clip.
+   */
+  fun updateClipKeyframes(clipId: String, keyframes: List<ClipKeyframe>): Boolean = withStateLock {
+    val element = findTrackElementForClip(clipId)
+    if (element == SelectedTrackElement.None) return false
+    recordHistory(TimelineActionType.KEYFRAME_EDIT, "Update Keyframes", setOf(clipId))
+
+    when (element) {
+      is SelectedTrackElement.Video -> {
+        val updated = _timeline.value.videoClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
+        }
+        _timeline.value = _timeline.value.copy(videoClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Overlay -> {
+        val updated = _timeline.value.overlayClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
+        }
+        _timeline.value = _timeline.value.copy(overlayClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Audio -> {
+        val updated = _timeline.value.audioClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
+        }
+        _timeline.value = _timeline.value.copy(audioClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Sticker -> {
+        val updated = _timeline.value.stickerClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
+        }
+        _timeline.value = _timeline.value.copy(stickerClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Effect -> {
+        val updated = _timeline.value.effectClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
+        }
+        _timeline.value = _timeline.value.copy(effectClips = updated)
+        return true
+      }
+      is SelectedTrackElement.Text -> {
+        val updated = _timeline.value.textClips.map { clip ->
+          if (clip.id == clipId) clip.copy(keyframes = keyframes.sortedBy { it.timeMs }) else clip
         }
         _timeline.value = _timeline.value.copy(textClips = updated)
         return true

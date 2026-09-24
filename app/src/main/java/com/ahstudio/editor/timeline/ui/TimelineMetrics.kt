@@ -6,20 +6,59 @@ import androidx.compose.ui.unit.dp
 import com.ahstudio.editor.timeline.core.TrackKind
 
 data class TimelineMetrics(
-    val rowHeightPx: Float,
+    val mainRowHeightPx: Float,
+    val subRowHeightPx: Float,
+    val mainToSubGapPx: Float,
+    val subTrackGapPx: Float,
     val rulerHeightPx: Float,
     val headerWidthPx: Float,
     val handlePx: Float,
     val snapPx: Float,
     val edgeMarginPx: Float,
     val density: Density,
-)
+) {
+    // Backwards compatibility for single-height access
+    val rowHeightPx: Float get() = mainRowHeightPx
+
+    fun rowHeightPx(trackIndex: Int): Float =
+        if (trackIndex == 0) mainRowHeightPx else subRowHeightPx
+
+    fun trackTopPx(trackIndex: Int): Float {
+        if (trackIndex <= 0) return 0f
+        var y = mainRowHeightPx + mainToSubGapPx
+        for (i in 1 until trackIndex) {
+            y += subRowHeightPx + subTrackGapPx
+        }
+        return y
+    }
+
+    fun totalTracksHeightPx(trackCount: Int): Float {
+        if (trackCount <= 0) return 0f
+        if (trackCount == 1) return mainRowHeightPx
+        return mainRowHeightPx + mainToSubGapPx + (trackCount - 1) * subRowHeightPx + ((trackCount - 2).coerceAtLeast(0)) * subTrackGapPx
+    }
+
+    fun trackIndexAtY(contentY: Float, trackCount: Int): Int {
+        if (trackCount <= 0 || contentY < 0f) return -1
+        if (contentY <= mainRowHeightPx) return 0
+        if (contentY < mainRowHeightPx + mainToSubGapPx) return -1 // inside vertical separation gap
+        var currentY = mainRowHeightPx + mainToSubGapPx
+        for (i in 1 until trackCount) {
+            if (contentY in currentY..(currentY + subRowHeightPx)) return i
+            currentY += subRowHeightPx + subTrackGapPx
+        }
+        return -1
+    }
+}
 
 object TimelineTokens {
-    val RowHeight = 52.dp
+    val MainRowHeight = 58.dp
+    val SubRowHeight = 36.dp
+    val MainToSubGap = 8.dp     // Exact 2mm visual separation gap
+    val SubTrackGap = 4.dp      // Clean spacing between sub-tracks
     val RulerHeight = 28.dp
     val HeaderWidth = 104.dp
-    val TrimHandle = 20.dp
+    val TrimHandle = 24.dp      // Easy touch hit width for resizing
     val SnapHit = 10.dp
     val EdgeMargin = 56.dp
 
@@ -31,6 +70,7 @@ object TimelineTokens {
     val HeaderBg = Color(0xFF0E0F12)
     val ClipStroke = Color(0xFF2A3240)
     val Selection = Color(0xFFFFFFFF)
+    val SelectionYellow = Color(0xFFFFD54F)
     val Playhead = Color(0xFFFFFFFF) // Crisp solid white CTI
     val SnapLine = Color(0xFF7FE3A0)
     val TextPrimary = Color(0xFFFFFFFF)

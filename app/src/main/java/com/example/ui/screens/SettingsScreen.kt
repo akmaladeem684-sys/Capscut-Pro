@@ -119,6 +119,13 @@ fun SettingsScreen(
       item {
         SettingsSection(title = "Editor Configuration") {
           SettingsSwitchRow(
+            title = "Open Editor Directly (Empty Tracks)",
+            subtitle = "Directly open editor with blank tracks on new project so you can add media inside",
+            checked = settings.openEditorDirectlyOnNewProject,
+            onCheckedChange = { StudioPreferencesManager.updateOpenEditorDirectly(it) }
+          )
+          Divider(color = StudioBorder)
+          SettingsSwitchRow(
             title = "Timeline Snapping",
             subtitle = "Magnetically snap playhead to cut points and clip borders",
             checked = settings.timelineSnapping,
