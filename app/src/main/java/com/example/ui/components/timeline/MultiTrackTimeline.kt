@@ -516,11 +516,11 @@ private fun DynamicLaneRow(
         val isSelected = when (lane.kind) {
           LaneKind.MAIN_VIDEO -> (selectedElement as? SelectedTrackElement.Video)?.clipId == clip.id
           LaneKind.OVERLAY -> (selectedElement as? SelectedTrackElement.Overlay)?.clipId == clip.id
-          LaneKind.TEXT -> (selectedElement as? SelectedTrackElement.Text)?.clipId == clip.id
-          LaneKind.AUDIO -> (selectedElement as? SelectedTrackElement.Audio)?.clipId == clip.id
-          LaneKind.EFFECT -> (selectedElement as? SelectedTrackElement.Effect)?.clipId == clip.id
+          LaneKind.TEXT, LaneKind.CAPTION -> (selectedElement as? SelectedTrackElement.Text)?.clipId == clip.id
+          LaneKind.AUDIO, LaneKind.MUSIC, LaneKind.SFX -> (selectedElement as? SelectedTrackElement.Audio)?.clipId == clip.id
+          LaneKind.EFFECT, LaneKind.ADJUSTMENT -> (selectedElement as? SelectedTrackElement.Effect)?.clipId == clip.id
           LaneKind.FILTER -> false
-          LaneKind.STICKER -> (selectedElement as? SelectedTrackElement.Sticker)?.clipId == clip.id
+          LaneKind.STICKER, LaneKind.ELEMENT -> (selectedElement as? SelectedTrackElement.Sticker)?.clipId == clip.id
         }
         val isMulti = clip.id in selectedClipIds
 
@@ -555,11 +555,11 @@ private fun DynamicLaneRow(
               val element = when (lane.kind) {
                 LaneKind.MAIN_VIDEO -> SelectedTrackElement.Video(clip.id)
                 LaneKind.OVERLAY -> SelectedTrackElement.Overlay(clip.id)
-                LaneKind.TEXT -> SelectedTrackElement.Text(clip.id)
-                LaneKind.AUDIO -> SelectedTrackElement.Audio(clip.id)
-                LaneKind.EFFECT -> SelectedTrackElement.Effect(clip.id)
+                LaneKind.TEXT, LaneKind.CAPTION -> SelectedTrackElement.Text(clip.id)
+                LaneKind.AUDIO, LaneKind.MUSIC, LaneKind.SFX -> SelectedTrackElement.Audio(clip.id)
+                LaneKind.EFFECT, LaneKind.ADJUSTMENT -> SelectedTrackElement.Effect(clip.id)
                 LaneKind.FILTER -> SelectedTrackElement.None
-                LaneKind.STICKER -> SelectedTrackElement.Sticker(clip.id)
+                LaneKind.STICKER, LaneKind.ELEMENT -> SelectedTrackElement.Sticker(clip.id)
               }
               onSelectElement(element)
             }

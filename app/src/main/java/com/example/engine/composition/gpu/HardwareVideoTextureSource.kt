@@ -69,6 +69,7 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
   private var isOutputEos = false
   private var lastRenderedPtsUs = 0L
   private val frameAvailable = AtomicBoolean(false)
+  private val surfaceLock = Any()
 
   val transformMatrix = FloatArray(16).apply { Matrix.setIdentityM(this, 0) }
   private var glHandler: Handler? = null
@@ -303,24 +304,20 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
     return outputRendered || isOutputEos
   }
 
-  fun updateTexImage(): FloatArray {
+  fun updateTexImage(): FloatArray = synchronized(surfaceLock) {
     val st = surfaceTexture ?: return transformMatrix
-    var waitAttempts = 0
-    while (!frameAvailable.get() && waitAttempts < 15) {
-      try { Thread.sleep(1) } catch (_: InterruptedException) { break }
-      waitAttempts++
+    if (frameAvailable.compareAndSet(true, false)) {
+      try {
+        st.updateTexImage()
+        st.getTransformMatrix(transformMatrix)
+      } catch (e: Exception) {
+        Log.w(TAG, "updateTexImage failed: ${e.message}")
+      }
     }
-    try {
-      st.updateTexImage()
-      st.getTransformMatrix(transformMatrix)
-    } catch (e: Exception) {
-      Log.w(TAG, "updateTexImage ignored: ${e.message}")
-    }
-    frameAvailable.set(false)
     return transformMatrix
   }
 
-  fun flush() {
+  fun flush() = synchronized(surfaceLock) {
     try {
       codec?.flush()
       lastRequestUs = Long.MIN_VALUE
@@ -332,7 +329,7 @@ class HardwareVideoTextureSource : SurfaceTexture.OnFrameAvailableListener {
     }
   }
 
-  fun release() {
+  fun release() = synchronized(surfaceLock) {
     isInitialized = false
     try { codec?.stop() } catch (_: Throwable) {}
     try { codec?.release() } catch (_: Throwable) {}

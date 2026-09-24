@@ -11,6 +11,7 @@ import com.example.domain.model.Timeline
 import com.example.domain.model.VideoClip
 import com.example.engine.composition.VideoCompositionEngine
 import com.example.engine.media.MediaRelinkManager
+import com.example.engine.playback.ProxyMediaEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,10 +28,12 @@ import java.util.concurrent.atomic.AtomicLong
 class CustomVideoEngineController(
   private val context: Context,
   private val onTimelinePositionChanged: (Long) -> Unit,
-  private val onPlaybackEnded: () -> Unit = {}
+  private val onPlaybackEnded: () -> Unit = {},
+  proxyEngine: ProxyMediaEngine? = null
 ) {
   companion object { private const val TAG = "CustomVideoEngineCtrl" }
 
+  val proxyMediaEngine: ProxyMediaEngine = proxyEngine ?: ProxyMediaEngine(context)
   private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
   val decoderManager = DecoderManager()
   val renderCacheManager = RenderCacheManager()
@@ -113,6 +116,19 @@ class CustomVideoEngineController(
     activeClip = timelineSyncManager.findClipAt(currentPosMs)
     timelineSyncManager.setActiveClip(activeClip)
     _engineState.value = _engineState.value.copy(duration = timeline.totalDurationMs)
+
+    // Automatically generate lightweight 540p proxy for heavy/4K clips in background
+    timeline.videoClips.forEach { clip ->
+      if (proxyMediaEngine.isHeavyMedia(clip)) {
+        proxyMediaEngine.generateProxyMediaAsync(clip)
+      }
+    }
+    timeline.overlayClips.forEach { clip ->
+      if (proxyMediaEngine.isHeavyMedia(clip)) {
+        proxyMediaEngine.generateProxyMediaAsync(clip)
+      }
+    }
+
     val clip = activeClip
     if (clip != null && clip.isVideo && isPlayableInPlayer(clip.uri)) {
       ensureClipLoaded(clip)
@@ -253,7 +269,7 @@ class CustomVideoEngineController(
   }
 
   private fun ensureClipLoaded(clip: VideoClip) {
-    val uriString = clip.uri
+    val uriString = proxyMediaEngine.getProxyUri(clip)
     if (clip.id == loadedClipId && uriString == loadedUri && playbackController.player.playbackState != Player.STATE_IDLE) return
     loadedClipId = clip.id
     loadedUri = uriString
@@ -288,6 +304,7 @@ class CustomVideoEngineController(
     playbackController.release()
     gpuRenderManager.release()
     renderCacheManager.clear()
+    proxyMediaEngine.release()
     scope.cancel()
     _engineState.value = _engineState.value.copy(playbackState = EnginePlaybackState.RELEASED, isPlaying = false)
   }

@@ -2,7 +2,12 @@ package com.example.engine.playback
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
 import android.net.Uri
 import android.util.Log
 import com.example.domain.model.VideoClip
@@ -10,6 +15,7 @@ import com.example.engine.memory.EngineMemoryManager
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
@@ -240,7 +246,7 @@ class ProxyMediaEngine(private val context: Context) {
   }
 
   /**
-   * Asynchronously generates a proxy video media file or pre-decoded proxy frames.
+   * Asynchronously generates a lightweight 540p proxy MP4 file and pre-decoded proxy keyframes.
    */
   fun generateProxyMediaAsync(clip: VideoClip, onComplete: (String?) -> Unit = {}) {
     if (!clip.isVideo || clip.uri.isBlank()) {
@@ -258,10 +264,10 @@ class ProxyMediaEngine(private val context: Context) {
       return
     }
 
-    val job = scope.launch {
+    val job = scope.launch(Dispatchers.IO) {
       try {
         val proxyDir = File(context.cacheDir, "proxies").apply { if (!exists()) mkdirs() }
-        val proxyFile = File(proxyDir, "proxy_${clip.id.hashCode()}_720p.mp4")
+        val proxyFile = File(proxyDir, "proxy_${clip.id.hashCode()}_540p.mp4")
 
         if (proxyFile.exists() && proxyFile.length() > 0) {
           proxyFileMap[clip.id] = proxyFile.absolutePath
@@ -269,27 +275,36 @@ class ProxyMediaEngine(private val context: Context) {
           return@launch
         }
 
-        // Generate downscaled proxy keyframes into memory cache for instant scrubbing
-        val retriever = getOrCreateRetriever(clip.uri) ?: return@launch
-        val durationMs = clip.durationMs
-        var stepMs = 500L
-        if (durationMs > 60000L) stepMs = 1000L
-
-        var timeMs = 0L
-        while (timeMs <= durationMs && isActive) {
-          val frameKey = "proxy_${clip.id}_${timeMs / 100}_${currentQuality.maxDimension}"
-          if (frameCache.get(frameKey) == null) {
-            val bitmap = extractFrameAt(retriever, timeMs, currentQuality.maxDimension)
-            if (bitmap != null) {
-              frameCache.put(frameKey, bitmap, clip.id, timeMs)
+        // 1. Pre-populate downscaled proxy keyframes into memory cache for instant zero-lag scrubbing
+        val retriever = getOrCreateRetriever(clip.uri)
+        if (retriever != null) {
+          val durationMs = clip.durationMs
+          val stepMs = if (durationMs > 60000L) 1000L else 500L
+          var timeMs = 0L
+          while (timeMs <= durationMs && isActive) {
+            val frameKey = "proxy_${clip.id}_${timeMs / 100}_${currentQuality.maxDimension}"
+            if (frameCache.get(frameKey) == null) {
+              val bitmap = extractFrameAt(retriever, timeMs, currentQuality.maxDimension)
+              if (bitmap != null) {
+                frameCache.put(frameKey, bitmap, clip.id, timeMs)
+              }
             }
+            timeMs += stepMs
           }
-          timeMs += stepMs
         }
 
-        withContext(Dispatchers.Main) { onComplete(null) }
+        // 2. Transcode lightweight 540p proxy MP4 video file
+        val success = transcodeTo540pProxy(clip, proxyFile)
+        if (success && proxyFile.exists() && proxyFile.length() > 0) {
+          proxyFileMap[clip.id] = proxyFile.absolutePath
+          Log.i(tag, "Successfully created 540p proxy video for ${clip.id} at ${proxyFile.absolutePath}")
+          withContext(Dispatchers.Main) { onComplete(proxyFile.absolutePath) }
+        } else {
+          Log.d(tag, "Proxy video generation finished with frame caching for ${clip.id}")
+          withContext(Dispatchers.Main) { onComplete(null) }
+        }
       } catch (e: Exception) {
-        Log.w(tag, "Proxy media generation failed for clip ${clip.id}", e)
+        Log.w(tag, "Proxy media generation error for clip ${clip.id}", e)
         withContext(Dispatchers.Main) { onComplete(null) }
       } finally {
         activeProxyJobs.remove(clip.id)
@@ -297,6 +312,157 @@ class ProxyMediaEngine(private val context: Context) {
     }
 
     activeProxyJobs[clip.id] = job
+  }
+
+  /**
+   * Transcodes a video clip to a lightweight 540p proxy MP4 file.
+   */
+  private fun transcodeTo540pProxy(clip: VideoClip, outputFile: File): Boolean {
+    var extractor: MediaExtractor? = null
+    var muxer: MediaMuxer? = null
+    var decoder: MediaCodec? = null
+    var encoder: MediaCodec? = null
+    val tempFile = File(outputFile.parentFile, "${outputFile.name}.tmp")
+    if (tempFile.exists()) tempFile.delete()
+
+    try {
+      extractor = MediaExtractor()
+      val parsedUri = Uri.parse(clip.uri)
+      if (parsedUri.scheme == "content" || parsedUri.scheme == "file") {
+        extractor.setDataSource(context, parsedUri, null)
+      } else {
+        extractor.setDataSource(clip.uri)
+      }
+
+      var videoTrackIndex = -1
+      var videoFormat: MediaFormat? = null
+
+      for (i in 0 until extractor.trackCount) {
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+        if (mime.startsWith("video/") && videoTrackIndex < 0) {
+          videoTrackIndex = i
+          videoFormat = format
+          break
+        }
+      }
+
+      if (videoTrackIndex < 0 || videoFormat == null) return false
+
+      val origW = if (videoFormat.containsKey(MediaFormat.KEY_WIDTH)) videoFormat.getInteger(MediaFormat.KEY_WIDTH) else clip.width
+      val origH = if (videoFormat.containsKey(MediaFormat.KEY_HEIGHT)) videoFormat.getInteger(MediaFormat.KEY_HEIGHT) else clip.height
+
+      val maxDim = 960
+      val scale = if (origW > origH) {
+        (maxDim.toFloat() / origW.coerceAtLeast(1)).coerceAtMost(1f)
+      } else {
+        (maxDim.toFloat() / origH.coerceAtLeast(1)).coerceAtMost(1f)
+      }
+      val targetW = (((origW * scale).toInt() / 16) * 16).coerceIn(320, 1280)
+      val targetH = (((origH * scale).toInt() / 16) * 16).coerceIn(240, 720)
+
+      muxer = MediaMuxer(tempFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+      val encFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, targetW, targetH).apply {
+        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+        setInteger(MediaFormat.KEY_BIT_RATE, 2_000_000)
+        setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+      }
+
+      encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+      encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+      val inputSurface = encoder.createInputSurface()
+      encoder.start()
+
+      val videoMime = videoFormat.getString(MediaFormat.KEY_MIME) ?: MediaFormat.MIMETYPE_VIDEO_AVC
+      decoder = MediaCodec.createDecoderByType(videoMime)
+      decoder.configure(videoFormat, inputSurface, null, 0)
+      decoder.start()
+
+      extractor.selectTrack(videoTrackIndex)
+
+      var muxerVideoTrack = -1
+      var muxerStarted = false
+      val bufferInfo = MediaCodec.BufferInfo()
+      val timeoutUs = 8000L
+      var inputDone = false
+      var decodeDone = false
+      var encodeDone = false
+
+      while (!encodeDone) {
+        if (!inputDone) {
+          val inIndex = decoder.dequeueInputBuffer(timeoutUs)
+          if (inIndex >= 0) {
+            val buf = decoder.getInputBuffer(inIndex)
+            if (buf != null) {
+              buf.clear()
+              val sampleSize = extractor.readSampleData(buf, 0)
+              if (sampleSize < 0) {
+                decoder.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                inputDone = true
+              } else {
+                val pts = extractor.sampleTime
+                decoder.queueInputBuffer(inIndex, 0, sampleSize, pts, 0)
+                extractor.advance()
+              }
+            }
+          }
+        }
+
+        if (!decodeDone) {
+          val decOutIndex = decoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
+          if (decOutIndex >= 0) {
+            val isEos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+            decoder.releaseOutputBuffer(decOutIndex, true)
+            if (isEos) {
+              encoder.signalEndOfInputStream()
+              decodeDone = true
+            }
+          }
+        }
+
+        val encOutIndex = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
+        if (encOutIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+          muxerVideoTrack = muxer.addTrack(encoder.outputFormat)
+          muxer.start()
+          muxerStarted = true
+        } else if (encOutIndex >= 0) {
+          val outBuf = encoder.getOutputBuffer(encOutIndex)
+          if (outBuf != null && muxerStarted) {
+            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && bufferInfo.size > 0) {
+              muxer.writeSampleData(muxerVideoTrack, outBuf, bufferInfo)
+            }
+          }
+          val isEos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+          encoder.releaseOutputBuffer(encOutIndex, false)
+          if (isEos) {
+            encodeDone = true
+          }
+        }
+      }
+
+      try { encoder.stop() } catch (_: Exception) {}
+      try { decoder.stop() } catch (_: Exception) {}
+      if (muxerStarted) {
+        try { muxer.stop() } catch (_: Exception) {}
+      }
+
+      if (tempFile.exists() && tempFile.length() > 0) {
+        tempFile.renameTo(outputFile)
+        return true
+      }
+      return false
+    } catch (e: Exception) {
+      Log.w(tag, "Proxy transcode fallback: ${e.message}")
+      return false
+    } finally {
+      try { encoder?.release() } catch (_: Exception) {}
+      try { decoder?.release() } catch (_: Exception) {}
+      try { muxer?.release() } catch (_: Exception) {}
+      try { extractor?.release() } catch (_: Exception) {}
+      if (tempFile.exists()) tempFile.delete()
+    }
   }
 
   /**
@@ -308,6 +474,19 @@ class ProxyMediaEngine(private val context: Context) {
       return Uri.fromFile(File(proxyPath)).toString()
     }
     return clip.uri
+  }
+
+  fun hasProxy(clipId: String): Boolean {
+    val path = proxyFileMap[clipId] ?: return false
+    return File(path).exists()
+  }
+
+  /**
+   * Selects original URI for export rendering, or proxy URI for editor preview.
+   */
+  fun getOriginalOrProxyUri(clip: VideoClip, forExport: Boolean): String {
+    if (forExport) return clip.uri
+    return getProxyUri(clip)
   }
 
   /**

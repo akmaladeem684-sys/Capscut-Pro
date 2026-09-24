@@ -82,7 +82,8 @@ class VideoPlaybackEngine(
     onPlaybackEnded = {
       _isPlaying.value = false
       onPlaybackEnded()
-    }
+    },
+    proxyEngine = proxyEngine
   )
 
   val player: ExoPlayer get() = engineController.player
@@ -215,9 +216,10 @@ class VideoPlaybackEngine(
     engineController.togglePlayPause()
   }
 
-  fun stepFrame(forward: Boolean, fps: Int = 30) {
+  fun stepFrame(forward: Boolean, fps: Int? = null) {
     pause()
-    val frameMs = (1000L / fps.coerceAtLeast(1)).coerceAtLeast(1L)
+    val effectiveFps = fps ?: (_activeClip.value?.frameRate?.toInt() ?: 30).coerceIn(12, 120)
+    val frameMs = (1000L / effectiveFps).coerceAtLeast(1L)
     seekTo(if (forward) currentPosMs + frameMs else currentPosMs - frameMs)
   }
 
@@ -248,10 +250,11 @@ class VideoPlaybackEngine(
     _trimPlaybackPositionMs.value = target
   }
 
-  fun stepTrimFrame(forward: Boolean, fps: Int = 30) {
+  fun stepTrimFrame(forward: Boolean, fps: Int? = null) {
     if (!isTrimPreviewMode) return
     pauseTrimPreview()
-    val delta = (1000L / fps.coerceAtLeast(1)).coerceAtLeast(1L)
+    val effectiveFps = fps ?: (trimPreviewClip?.frameRate?.toInt() ?: 30).coerceIn(12, 120)
+    val delta = (1000L / effectiveFps).coerceAtLeast(1L)
     seekTrimPreviewToSourceMs(if (forward) _trimPlaybackPositionMs.value + delta else _trimPlaybackPositionMs.value - delta)
   }
 

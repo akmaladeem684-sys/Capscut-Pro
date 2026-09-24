@@ -309,6 +309,17 @@ data class VideoClip(
     }
   }
 
+  fun sourceToTimelineMs(sourcePosMs: Long): Long {
+    val offset = if (isReversed) {
+      (sourceEndMs - sourcePosMs).coerceAtLeast(0L)
+    } else {
+      (sourcePosMs - sourceStartMs).coerceAtLeast(0L)
+    }
+    val effectiveSpeed = speed.coerceAtLeast(0.01f)
+    val timelineOffset = (offset / effectiveSpeed).toLong()
+    return (timelineStartMs + timelineOffset).coerceIn(timelineStartMs, timelineStartMs + durationMs)
+  }
+
   private fun evaluateSpeedCurveFactor(normalizedT: Float): Float {
     return when (speedCurve.preset) {
       SpeedCurvePreset.EASE_IN -> normalizedT * normalizedT
@@ -351,9 +362,28 @@ data class AudioClip(
   val audioEffects: AudioEffectsSettings = AudioEffectsSettings(),
   val isLocked: Boolean = false,
   val isHidden: Boolean = false,
+  val isSolo: Boolean = false,
   /** Independent NLE audio lane index. */
   val trackIndex: Int = 0
 )
+
+fun VideoClip.overlapsWith(startMs: Long, durMs: Long): Boolean {
+  val endMs = startMs + durMs
+  val clipEnd = timelineStartMs + durationMs
+  return startMs < clipEnd && endMs > timelineStartMs
+}
+
+fun AudioClip.overlapsWith(startMs: Long, durMs: Long): Boolean {
+  val endMs = startMs + durMs
+  val clipEnd = timelineStartMs + durationMs
+  return startMs < clipEnd && endMs > timelineStartMs
+}
+
+fun TextClip.overlapsWith(startMs: Long, durMs: Long): Boolean {
+  val endMs = startMs + durMs
+  val clipEnd = timelineStartMs + durationMs
+  return startMs < clipEnd && endMs > timelineStartMs
+}
 
 data class WordTiming(
   val word: String,
@@ -911,16 +941,55 @@ enum class TrackType {
   MAIN_VIDEO,
   OVERLAY,
   TEXT,
+  CAPTION,
   AUDIO,
+  MUSIC,
+  SFX,
   STICKER,
-  EFFECT
+  EFFECT,
+  ADJUSTMENT,
+  ELEMENT;
+
+  val isVideoTrack: Boolean get() = this == MAIN_VIDEO || this == OVERLAY || this == ELEMENT || this == ADJUSTMENT
+  val isAudioTrack: Boolean get() = this == AUDIO || this == MUSIC || this == SFX
 }
+
+enum class MarkerType {
+  GENERAL,
+  BEAT,
+  SCENE,
+  CHAPTER,
+  EXPORT
+}
+
+data class TimelineMarker(
+  val id: String = UUID.randomUUID().toString(),
+  val timeMs: Long,
+  val label: String = "",
+  val type: MarkerType = MarkerType.GENERAL,
+  val color: Long = 0xFFFFD700
+)
 
 enum class TrackHeight(val label: String, val heightDp: Int) {
   COMPACT("Compact", 40),
   NORMAL("Normal", 56),
   EXPANDED("Expanded", 78)
 }
+
+data class NleTrack(
+  val trackId: String = UUID.randomUUID().toString(),
+  val trackType: TrackType = TrackType.MAIN_VIDEO,
+  val displayName: String = "",
+  val order: Int = 0,
+  val zOrder: Int = 0,
+  val isLocked: Boolean = false,
+  val isVisible: Boolean = true,
+  val isMuted: Boolean = false,
+  val isSolo: Boolean = false,
+  val height: TrackHeight = TrackHeight.NORMAL,
+  val isCollapsed: Boolean = false,
+  val metadata: Map<String, String> = emptyMap()
+)
 
 data class TrackSettings(
   val type: TrackType,
@@ -948,7 +1017,10 @@ data class Timeline(
   val chromaKey: ChromaKeySettings = ChromaKeySettings(),
   val canvasBackgroundColor: Long = 0xFF000000,
   val aspectRatio: AspectRatio = AspectRatio.RATIO_9_16,
-  val trackSettings: Map<TrackType, TrackSettings> = defaultTrackSettings()
+  val trackSettings: Map<TrackType, TrackSettings> = defaultTrackSettings(),
+  val tracks: List<NleTrack> = emptyList(),
+  val markers: List<TimelineMarker> = emptyList(),
+  val version: Int = 1
 ) {
   val totalDurationMs: Long
     get() {
@@ -958,6 +1030,105 @@ data class Timeline(
       val textDur = textClips.maxOfOrNull { it.timelineStartMs + it.durationMs } ?: 0L
       val stickerDur = stickerClips.maxOfOrNull { it.timelineStartMs + it.durationMs } ?: 0L
       val effectDur = effectClips.maxOfOrNull { it.timelineStartMs + it.durationMs } ?: 0L
-      return maxOf(videoDur, overlayDur, audioDur, textDur, stickerDur, effectDur)
+      val markerDur = markers.maxOfOrNull { it.timeMs } ?: 0L
+      return maxOf(videoDur, overlayDur, audioDur, textDur, stickerDur, effectDur, markerDur)
     }
+
+  /**
+   * Returns authoritative NleTrack list. If custom tracks list is empty, dynamically
+   * synthesizes tracks matching current clips and sub-tracks.
+   */
+  fun getEffectiveTracks(): List<NleTrack> {
+    if (tracks.isNotEmpty()) return tracks.sortedBy { it.order }
+
+    val result = mutableListOf<NleTrack>()
+    // 0: Main Video
+    result.add(
+      NleTrack(
+        trackId = "track_main_video",
+        trackType = TrackType.MAIN_VIDEO,
+        displayName = "Main Video",
+        order = 0,
+        zOrder = 0,
+        isLocked = trackSettings[TrackType.MAIN_VIDEO]?.isLocked ?: false,
+        isVisible = !(trackSettings[TrackType.MAIN_VIDEO]?.isHidden ?: false)
+      )
+    )
+
+    // Overlays (Track 1..N)
+    val overlayTrackIndices = overlayClips.map { it.trackIndex }.distinct().sorted()
+    val baseOverlayIndices = if (overlayTrackIndices.isEmpty()) listOf(1) else overlayTrackIndices
+    baseOverlayIndices.forEachIndexed { i, tIdx ->
+      result.add(
+        NleTrack(
+          trackId = "track_overlay_$tIdx",
+          trackType = TrackType.OVERLAY,
+          displayName = "Overlay $tIdx",
+          order = i + 1,
+          zOrder = tIdx,
+          isLocked = trackSettings[TrackType.OVERLAY]?.isLocked ?: false,
+          isVisible = !(trackSettings[TrackType.OVERLAY]?.isHidden ?: false)
+        )
+      )
+    }
+
+    // Audio tracks (Music, Audio, SFX)
+    val audioTrackIndices = audioClips.map { it.trackIndex }.distinct().sorted()
+    val baseAudioIndices = if (audioTrackIndices.isEmpty()) listOf(0) else audioTrackIndices
+    baseAudioIndices.forEachIndexed { i, tIdx ->
+      result.add(
+        NleTrack(
+          trackId = "track_audio_$tIdx",
+          trackType = TrackType.AUDIO,
+          displayName = if (tIdx == 0) "Voice / Audio" else "Audio Track $tIdx",
+          order = 100 + i,
+          zOrder = 0,
+          isLocked = trackSettings[TrackType.AUDIO]?.isLocked ?: false,
+          isMuted = trackSettings[TrackType.AUDIO]?.isMuted ?: false,
+          isSolo = trackSettings[TrackType.AUDIO]?.isSolo ?: false
+        )
+      )
+    }
+
+    // Text & Captions
+    result.add(
+      NleTrack(
+        trackId = "track_text",
+        trackType = TrackType.TEXT,
+        displayName = "Text & Titles",
+        order = 200,
+        zOrder = 50,
+        isLocked = trackSettings[TrackType.TEXT]?.isLocked ?: false,
+        isVisible = !(trackSettings[TrackType.TEXT]?.isHidden ?: false)
+      )
+    )
+
+    // Effects
+    result.add(
+      NleTrack(
+        trackId = "track_effects",
+        trackType = TrackType.EFFECT,
+        displayName = "Effects & Filters",
+        order = 300,
+        zOrder = 60,
+        isLocked = trackSettings[TrackType.EFFECT]?.isLocked ?: false,
+        isVisible = !(trackSettings[TrackType.EFFECT]?.isHidden ?: false)
+      )
+    )
+
+    // Stickers
+    result.add(
+      NleTrack(
+        trackId = "track_stickers",
+        trackType = TrackType.STICKER,
+        displayName = "Stickers & Elements",
+        order = 400,
+        zOrder = 70,
+        isLocked = trackSettings[TrackType.STICKER]?.isLocked ?: false,
+        isVisible = !(trackSettings[TrackType.STICKER]?.isHidden ?: false)
+      )
+    )
+
+    return result
+  }
 }

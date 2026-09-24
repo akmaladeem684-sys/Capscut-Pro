@@ -5901,9 +5901,9 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   fun isTrackChronologicallyOrdered(trackType: TrackType, trackIndex: Int = 0): Boolean {
     val starts = when (trackType) {
       TrackType.MAIN_VIDEO -> _timeline.value.videoClips.map { it.timelineStartMs }
-      TrackType.OVERLAY -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
-      TrackType.AUDIO -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
-      TrackType.TEXT -> _timeline.value.textClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
+      TrackType.OVERLAY, TrackType.ADJUSTMENT, TrackType.ELEMENT -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
+      TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
+      TrackType.TEXT, TrackType.CAPTION -> _timeline.value.textClips.filter { it.trackIndex == trackIndex }.map { it.timelineStartMs }
       TrackType.STICKER -> _timeline.value.stickerClips.map { it.timelineStartMs }
       TrackType.EFFECT -> _timeline.value.effectClips.map { it.timelineStartMs }
     }
@@ -6534,9 +6534,9 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   fun getTrackOverlaps(trackType: TrackType, trackIndex: Int = 0): List<ClipOverlapInfo> {
     val clips: List<Pair<String, Pair<Long, Long>>> = when (trackType) {
       TrackType.MAIN_VIDEO -> _timeline.value.videoClips.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
-      TrackType.OVERLAY -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
-      TrackType.AUDIO -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
-      TrackType.TEXT -> _timeline.value.textClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
+      TrackType.OVERLAY, TrackType.ADJUSTMENT, TrackType.ELEMENT -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
+      TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
+      TrackType.TEXT, TrackType.CAPTION -> _timeline.value.textClips.filter { it.trackIndex == trackIndex }.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
       TrackType.STICKER -> _timeline.value.stickerClips.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
       TrackType.EFFECT -> _timeline.value.effectClips.map { it.id to (it.timelineStartMs to (it.timelineStartMs + it.durationMs)) }
     }
@@ -6587,9 +6587,9 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
     val endMs = startMs + durationMs
     val clips = when (trackType) {
       TrackType.MAIN_VIDEO -> _timeline.value.videoClips.filter { it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
-      TrackType.OVERLAY -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
-      TrackType.AUDIO -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
-      TrackType.TEXT -> _timeline.value.textClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
+      TrackType.OVERLAY, TrackType.ADJUSTMENT, TrackType.ELEMENT -> _timeline.value.overlayClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
+      TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> _timeline.value.audioClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
+      TrackType.TEXT, TrackType.CAPTION -> _timeline.value.textClips.filter { it.trackIndex == trackIndex && it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
       TrackType.STICKER -> _timeline.value.stickerClips.filter { it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
       TrackType.EFFECT -> _timeline.value.effectClips.filter { it.id != ignoreClipId }.map { it.timelineStartMs to (it.timelineStartMs + it.durationMs) }
     }

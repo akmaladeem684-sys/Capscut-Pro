@@ -46,13 +46,18 @@ fun TrackHeaderControl(
     TrackType.MAIN_VIDEO -> Triple("V1 Main", Icons.Default.Movie, VideoTrackColor)
     TrackType.OVERLAY -> Triple("V2 Overlay", Icons.Default.Layers, OverlayTrackColor)
     TrackType.TEXT -> Triple("T1 Subtitle", Icons.Default.TextFields, TextTrackColor)
+    TrackType.CAPTION -> Triple("C1 Caption", Icons.Default.TextFields, TextTrackColor)
     TrackType.AUDIO -> Triple("A1 Master", Icons.Default.Audiotrack, AudioTrackColor)
+    TrackType.MUSIC -> Triple("M1 Music", Icons.Default.MusicNote, AudioTrackColor)
+    TrackType.SFX -> Triple("FX Sound", Icons.Default.GraphicEq, AudioTrackColor)
     TrackType.STICKER -> Triple("S1 Sticker", Icons.Default.EmojiEmotions, StickerTrackColor)
     TrackType.EFFECT -> Triple("FX Filter", Icons.Default.AutoFixHigh, EffectTrackColor)
+    TrackType.ADJUSTMENT -> Triple("ADJ Layer", Icons.Default.Tune, EffectTrackColor)
+    TrackType.ELEMENT -> Triple("EL Element", Icons.Default.Widgets, StickerTrackColor)
   }
 
-  val hasAudio = trackType == TrackType.MAIN_VIDEO || trackType == TrackType.OVERLAY || trackType == TrackType.AUDIO
-  val hasVisual = trackType != TrackType.AUDIO
+  val hasAudio = trackType.isAudioTrack || trackType == TrackType.MAIN_VIDEO || trackType == TrackType.OVERLAY
+  val hasVisual = !trackType.isAudioTrack
 
   val heightDp = settings.height.toDp()
 

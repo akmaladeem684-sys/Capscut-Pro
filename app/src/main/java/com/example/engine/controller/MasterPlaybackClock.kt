@@ -12,8 +12,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
 /**
@@ -35,8 +33,8 @@ class MasterPlaybackClock(
   private var audioClockProvider: AudioClockProvider? = null
 ) {
   companion object {
-    private const val MAX_CLOCK_DRIFT_CORRECTION_MS = 80L
-    private const val VSYNC_SMOOTH_FACTOR = 0.2f
+    private const val TAG = "MasterPlaybackClock"
+    private const val MAX_SUB_AUDIO_INTERPOLATION_MS = 60L
   }
 
   private val _positionMs = MutableStateFlow(0L)
@@ -45,50 +43,59 @@ class MasterPlaybackClock(
   private val _isPlaying = MutableStateFlow(false)
   val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-  private val mutex = Mutex()
-  private var anchorPositionMs = 0L
-  private var anchorTimeNs = 0L
-  private var lastVsyncTimeNs = 0L
-  private var smoothedDriftOffsetMs = 0.0
+  private val clockLock = Any()
+
+  @Volatile private var anchorPositionMs = 0L
+  @Volatile private var anchorTimeNs = 0L
+  @Volatile private var lastVsyncTimeNs = 0L
+  @Volatile private var lastAudioPositionMs = -1L
+  @Volatile private var lastAudioTimestampNs = 0L
 
   private var tickerJob: Job? = null
   private var choreographerCallback: Choreographer.FrameCallback? = null
   private val mainHandler = Handler(Looper.getMainLooper())
 
   fun setAudioClockProvider(provider: AudioClockProvider?) {
-    this.audioClockProvider = provider
-  }
-
-  suspend fun play(positionMs: Long = _positionMs.value) = mutex.withLock {
-    if (_isPlaying.value) return@withLock
-    rebase(positionMs)
-    _isPlaying.value = true
-    startVsyncClock()
-  }
-
-  suspend fun pause() = mutex.withLock {
-    if (!_isPlaying.value) return@withLock
-    rebase(currentPositionLocked())
-    _isPlaying.value = false
-    stopVsyncClock()
-  }
-
-  suspend fun seekTo(positionMs: Long, isScrubbing: Boolean = false) = mutex.withLock {
-    rebase(positionMs)
-    if (!isScrubbing && !_isPlaying.value) {
-      // Re-anchor firmly
-      anchorPositionMs = positionMs.coerceAtLeast(0L)
-      anchorTimeNs = System.nanoTime()
-      smoothedDriftOffsetMs = 0.0
-      _positionMs.value = anchorPositionMs
+    synchronized(clockLock) {
+      this.audioClockProvider = provider
+      lastAudioPositionMs = -1L
     }
   }
 
-  private fun rebase(positionMs: Long) {
+  fun play(positionMs: Long = _positionMs.value) {
+    synchronized(clockLock) {
+      if (_isPlaying.value) return
+      rebaseInternal(positionMs)
+      _isPlaying.value = true
+      startVsyncClock()
+    }
+  }
+
+  fun pause() {
+    synchronized(clockLock) {
+      if (!_isPlaying.value) return
+      val current = calculateCurrentPosition()
+      rebaseInternal(current)
+      _isPlaying.value = false
+      stopVsyncClock()
+    }
+  }
+
+  fun seekTo(positionMs: Long, isScrubbing: Boolean = false) {
+    synchronized(clockLock) {
+      val targetPos = positionMs.coerceAtLeast(0L)
+      rebaseInternal(targetPos)
+      _positionMs.value = targetPos
+    }
+  }
+
+  private fun rebaseInternal(positionMs: Long) {
+    val now = System.nanoTime()
     anchorPositionMs = positionMs.coerceAtLeast(0L)
-    anchorTimeNs = System.nanoTime()
-    lastVsyncTimeNs = anchorTimeNs
-    smoothedDriftOffsetMs = 0.0
+    anchorTimeNs = now
+    lastVsyncTimeNs = now
+    lastAudioPositionMs = -1L
+    lastAudioTimestampNs = now
     _positionMs.value = anchorPositionMs
   }
 
@@ -104,7 +111,7 @@ class MasterPlaybackClock(
     // Coroutine fallback & audio sync poller
     tickerJob = scope.launch(Dispatchers.Default) {
       while (isActive && _isPlaying.value) {
-        val calculatedPos = mutex.withLock { currentPositionLocked() }
+        val calculatedPos = calculateCurrentPosition()
         _positionMs.value = calculatedPos
         delay(8L) // 120fps poll fallback
       }
@@ -116,7 +123,7 @@ class MasterPlaybackClock(
       override fun doFrame(frameTimeNanos: Long) {
         if (!_isPlaying.value) return
         lastVsyncTimeNs = frameTimeNanos
-        val nextPos = currentPositionLocked()
+        val nextPos = calculateCurrentPosition()
         _positionMs.value = nextPos
         Choreographer.getInstance().postFrameCallback(this)
       }
@@ -137,29 +144,41 @@ class MasterPlaybackClock(
     choreographerCallback = null
   }
 
-  private fun currentPositionLocked(): Long {
-    val nowNs = if (lastVsyncTimeNs > anchorTimeNs) lastVsyncTimeNs else System.nanoTime()
-    val monotonicElapsedNs = (nowNs - anchorTimeNs).coerceAtLeast(0L)
-    var calculatedMs = anchorPositionMs + TimeUnit.NANOSECONDS.toMillis(monotonicElapsedNs)
+  /**
+   * Authoritative clock calculation.
+   * Locked to AudioTrack presentation timestamps (PTS) when audio is available.
+   * Uses monotonic nanosecond interpolation locked to VSYNC.
+   */
+  fun calculateCurrentPosition(): Long = synchronized(clockLock) {
+    if (!_isPlaying.value) return anchorPositionMs
+
+    val nowNs = System.nanoTime()
+    val vsyncNs = if (lastVsyncTimeNs > 0L) lastVsyncTimeNs else nowNs
 
     // Synchronize with hardware audio clock PTS if available
-    val audioPos = audioClockProvider?.getAudioPositionMs()
+    val provider = audioClockProvider
+    val audioPos = provider?.getAudioPositionMs()
     if (audioPos != null && audioPos >= 0L) {
-      val drift = audioPos - calculatedMs
-      if (kotlin.math.abs(drift) > MAX_CLOCK_DRIFT_CORRECTION_MS) {
-        // Large jump -> hard sync anchor to audio clock
+      if (lastAudioPositionMs != audioPos) {
+        lastAudioPositionMs = audioPos
+        lastAudioTimestampNs = nowNs
         anchorPositionMs = audioPos
         anchorTimeNs = nowNs
-        smoothedDriftOffsetMs = 0.0
-        calculatedMs = audioPos
-      } else {
-        // Smooth PID / low-pass filter convergence
-        smoothedDriftOffsetMs += drift * VSYNC_SMOOTH_FACTOR
-        calculatedMs += smoothedDriftOffsetMs.toLong()
       }
+      // Interpolate between audio head updates using VSYNC time
+      val subAudioNs = (vsyncNs - lastAudioTimestampNs).coerceIn(
+        0L,
+        TimeUnit.MILLISECONDS.toNanos(MAX_SUB_AUDIO_INTERPOLATION_MS)
+      )
+      val calculatedMs = anchorPositionMs + TimeUnit.NANOSECONDS.toMillis(subAudioNs)
+      return calculatedMs.coerceAtLeast(0L)
     }
 
+    // Fallback to high-precision monotonic VSYNC clock
+    val monotonicElapsedNs = (vsyncNs - anchorTimeNs).coerceAtLeast(0L)
+    val calculatedMs = anchorPositionMs + TimeUnit.NANOSECONDS.toMillis(monotonicElapsedNs)
     return calculatedMs.coerceAtLeast(0L)
   }
-}
 
+  fun getCurrentPosition(): Long = _positionMs.value
+}

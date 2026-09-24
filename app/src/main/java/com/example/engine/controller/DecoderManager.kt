@@ -86,20 +86,34 @@ class HardwareDecoderPool(private val decoderManager: DecoderManager) {
         if (lowestPriorityHw != null) {
           Log.i(TAG, "Preempting lower-priority hardware decoder (${lowestPriorityHw.clipId}, prio=${lowestPriorityHw.priority}) for clip $clipId (prio=$priority)")
           releaseDecoder(lowestPriorityHw.clipId)
+          try {
+            val (hwCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = true)
+            codec = hwCodec
+            createdHw = isHw
+          } catch (e: Throwable) {
+            Log.w(TAG, "Failed creating hardware decoder after preemption: ${e.message}")
+          }
+        }
+      } else {
+        try {
           val (hwCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = true)
           codec = hwCodec
           createdHw = isHw
+        } catch (e: Throwable) {
+          Log.w(TAG, "Hardware decoder allocation threw exception: ${e.message}, falling back to software")
         }
-      } else {
-        val (hwCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = true)
-        codec = hwCodec
-        createdHw = isHw
       }
     }
 
-    // Fallback to software decoder if hardware was not acquired
+    // Fallback to software decoder if hardware was not acquired or limit exhausted
     if (codec == null) {
-      val (swCodec, isHw) = decoderManager.createDecoder(mimeType, preferHardware = false)
+      val (swCodec, isHw) = try {
+        decoderManager.createDecoder(mimeType, preferHardware = false)
+      } catch (e: Throwable) {
+        Log.e(TAG, "Software decoder creation error: ${e.message}")
+        // Ultimate emergency fallback
+        Pair(MediaCodec.createDecoderByType(mimeType), false)
+      }
       codec = swCodec
       createdHw = isHw
     }
@@ -115,6 +129,9 @@ class HardwareDecoderPool(private val decoderManager: DecoderManager) {
     Log.d(TAG, "Acquired decoder for clip $clipId (hw=$createdHw, priority=$priority, activeTotal=${activeLeases.size})")
     return lease
   }
+
+  fun getActiveDecoderCount(): Int = activeLeases.size
+  fun getHardwareDecoderCount(): Int = activeLeases.values.count { it.isHardware }
 
   fun releaseDecoder(clipId: String) = lock.withLock {
     val lease = activeLeases.remove(clipId) ?: return
@@ -230,10 +247,11 @@ class DecoderManager {
   }
 
   /**
-   * Discovers a software decoder name for the given MIME type from MediaCodecList.
+   * Discovers a software decoder name for the given MIME type from MediaCodecList,
+   * falling back to standard platform software codec names.
    */
   fun findSoftwareDecoderName(mimeType: String): String? {
-    return try {
+    try {
       val codecList = MediaCodecList(MediaCodecList.ALL_CODECS)
       for (info in codecList.codecInfos) {
         if (info.isEncoder) continue
@@ -245,10 +263,20 @@ class DecoderManager {
           }
         }
       }
-      null
     } catch (e: Exception) {
-      Log.w(TAG, "Error looking up software decoder for $mimeType", e)
-      null
+      Log.w(TAG, "Error looking up software decoder for $mimeType in MediaCodecList", e)
+    }
+
+    // Platform-standard C2 and OMX software decoders
+    return when (mimeType.lowercase()) {
+      MediaFormat.MIMETYPE_VIDEO_AVC -> "c2.android.avc.decoder"
+      MediaFormat.MIMETYPE_VIDEO_HEVC -> "c2.android.hevc.decoder"
+      MediaFormat.MIMETYPE_VIDEO_VP8 -> "c2.android.vp8.decoder"
+      MediaFormat.MIMETYPE_VIDEO_VP9 -> "c2.android.vp9.decoder"
+      MediaFormat.MIMETYPE_VIDEO_MPEG4 -> "c2.android.mp4v.decoder"
+      MediaFormat.MIMETYPE_VIDEO_H263 -> "c2.android.h263.decoder"
+      "video/av01" -> "c2.android.av1.decoder"
+      else -> null
     }
   }
 

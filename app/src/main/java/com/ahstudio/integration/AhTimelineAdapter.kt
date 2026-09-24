@@ -121,9 +121,9 @@ class AhTimelineAdapter(
         tl.trackSettings.forEach { (type, setting) ->
             val kind = when (type) {
                 com.example.domain.model.TrackType.MAIN_VIDEO -> TrackKind.VIDEO
-                com.example.domain.model.TrackType.OVERLAY -> TrackKind.OVERLAY
-                com.example.domain.model.TrackType.AUDIO -> TrackKind.AUDIO
-                com.example.domain.model.TrackType.TEXT -> TrackKind.TEXT
+                com.example.domain.model.TrackType.OVERLAY, com.example.domain.model.TrackType.ELEMENT, com.example.domain.model.TrackType.ADJUSTMENT -> TrackKind.OVERLAY
+                com.example.domain.model.TrackType.AUDIO, com.example.domain.model.TrackType.MUSIC, com.example.domain.model.TrackType.SFX -> TrackKind.AUDIO
+                com.example.domain.model.TrackType.TEXT, com.example.domain.model.TrackType.CAPTION -> TrackKind.TEXT
                 com.example.domain.model.TrackType.EFFECT -> TrackKind.EFFECT
                 com.example.domain.model.TrackType.STICKER -> TrackKind.STICKER
             }

@@ -89,6 +89,19 @@ class AudioEngine(private val context: Context) {
   }
 
   /**
+   * Retrieves optimal hardware sample rate from AudioManager, defaulting to 48000 Hz pro video standard.
+   */
+  fun getOptimalSampleRate(): Int {
+    return try {
+      val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+      val rateStr = audioManager?.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+      rateStr?.toIntOrNull()?.coerceIn(44100, 96000) ?: 48000
+    } catch (_: Throwable) {
+      48000
+    }
+  }
+
+  /**
    * Starts real microphone voice recording to an AAC/M4A file using MediaRecorder.
    */
   fun startVoiceRecording(onDurationTick: (Long) -> Unit) {
@@ -104,11 +117,12 @@ class AudioEngine(private val context: Context) {
         MediaRecorder()
       }
 
+      val sampleRate = getOptimalSampleRate()
       recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
       recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
       recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
       recorder.setAudioEncodingBitRate(128000)
-      recorder.setAudioSamplingRate(44100)
+      recorder.setAudioSamplingRate(sampleRate)
       recorder.setOutputFile(file.absolutePath)
       recorder.prepare()
       recorder.start()

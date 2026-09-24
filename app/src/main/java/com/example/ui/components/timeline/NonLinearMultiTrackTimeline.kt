@@ -111,9 +111,14 @@ enum class TimelineTrackType {
   MAIN_VIDEO,
   OVERLAY_PIP,
   AUDIO,
+  MUSIC,
+  SFX,
   TEXT,
+  CAPTION,
   EFFECT,
-  STICKER
+  STICKER,
+  ADJUSTMENT,
+  ELEMENT
 }
 
 @Immutable
@@ -163,17 +168,23 @@ object TimelineLayerResolver {
     val resultLayers = mutableListOf<TrackLayer>()
     val groupedByType = clips.groupBy { it.trackType }
 
-    // Explicit rendering order: Main Video -> Overlay PIP -> Text -> Stickers/Effects -> Audio
+    // Explicit rendering order: Text/Captions -> Stickers/Elements -> Effects/Adjustments -> Overlay PIP -> Main Video -> Audio/Music/SFX
     val typeOrder = listOf(
       TimelineTrackType.TEXT,
+      TimelineTrackType.CAPTION,
       TimelineTrackType.STICKER,
+      TimelineTrackType.ELEMENT,
       TimelineTrackType.EFFECT,
+      TimelineTrackType.ADJUSTMENT,
       TimelineTrackType.OVERLAY_PIP,
       TimelineTrackType.MAIN_VIDEO,
-      TimelineTrackType.AUDIO
+      TimelineTrackType.AUDIO,
+      TimelineTrackType.MUSIC,
+      TimelineTrackType.SFX
     )
+    val allTypes = (typeOrder + (groupedByType.keys - typeOrder.toSet())).distinct()
 
-    for (type in typeOrder) {
+    for (type in allTypes) {
       val typeClips = (groupedByType[type] ?: emptyList()).sortedBy { it.startMs }
       if (typeClips.isEmpty() && type != TimelineTrackType.MAIN_VIDEO) continue
 
@@ -557,9 +568,9 @@ private fun NonLinearTrackRow(
   val trackHeight = when (layer.trackType) {
     TimelineTrackType.MAIN_VIDEO -> 68.dp
     TimelineTrackType.OVERLAY_PIP -> 52.dp
-    TimelineTrackType.TEXT -> 38.dp
-    TimelineTrackType.AUDIO -> 42.dp
-    TimelineTrackType.EFFECT, TimelineTrackType.STICKER -> 34.dp
+    TimelineTrackType.TEXT, TimelineTrackType.CAPTION -> 38.dp
+    TimelineTrackType.AUDIO, TimelineTrackType.MUSIC, TimelineTrackType.SFX -> 42.dp
+    TimelineTrackType.EFFECT, TimelineTrackType.STICKER, TimelineTrackType.ADJUSTMENT, TimelineTrackType.ELEMENT -> 34.dp
   }
 
   Box(
@@ -588,20 +599,30 @@ private fun NonLinearTrackRow(
             modifier = Modifier.fillMaxSize()
           )
         }
-        TimelineTrackType.AUDIO -> {
+        TimelineTrackType.AUDIO, TimelineTrackType.MUSIC, TimelineTrackType.SFX -> {
           // Dynamic Audio / Speaker Badge
+          val title = when (layer.trackType) {
+            TimelineTrackType.MUSIC -> if (layer.subTrackIndex == 0) "Music" else "Music ${layer.subTrackIndex + 1}"
+            TimelineTrackType.SFX -> if (layer.subTrackIndex == 0) "SFX" else "SFX ${layer.subTrackIndex + 1}"
+            else -> if (layer.subTrackIndex == 0) "Audio" else "Audio ${layer.subTrackIndex + 1}"
+          }
           TrackStartBadge(
             icon = if (layer.isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
-            label = if (layer.subTrackIndex == 0) "Audio" else "Audio ${layer.subTrackIndex + 1}",
+            label = title,
             accentColor = Color(0xFF00E676),
             modifier = Modifier.fillMaxSize()
           )
         }
-        TimelineTrackType.TEXT -> {
-          // "T" Text Track Badge
+        TimelineTrackType.TEXT, TimelineTrackType.CAPTION -> {
+          // Text / Caption Track Badge
+          val title = if (layer.trackType == TimelineTrackType.CAPTION) {
+            if (layer.subTrackIndex == 0) "Caption" else "Cap ${layer.subTrackIndex + 1}"
+          } else {
+            if (layer.subTrackIndex == 0) "Text" else "T ${layer.subTrackIndex + 1}"
+          }
           TrackStartBadge(
             icon = Icons.Default.TextFields,
-            label = if (layer.subTrackIndex == 0) "Text" else "T ${layer.subTrackIndex + 1}",
+            label = title,
             accentColor = Color(0xFFFFD600),
             modifier = Modifier.fillMaxSize()
           )
@@ -615,11 +636,18 @@ private fun NonLinearTrackRow(
             modifier = Modifier.fillMaxSize()
           )
         }
-        TimelineTrackType.EFFECT, TimelineTrackType.STICKER -> {
-          // Effect / Sticker Badge
+        TimelineTrackType.EFFECT, TimelineTrackType.STICKER, TimelineTrackType.ADJUSTMENT, TimelineTrackType.ELEMENT -> {
+          // Effect / Sticker / Adjustment / Element Badge
+          val label = when (layer.trackType) {
+            TimelineTrackType.EFFECT -> "FX"
+            TimelineTrackType.STICKER -> "Sticker"
+            TimelineTrackType.ADJUSTMENT -> "Adj"
+            TimelineTrackType.ELEMENT -> "Elem"
+            else -> "Layer"
+          }
           TrackStartBadge(
             icon = Icons.Default.AutoAwesome,
-            label = if (layer.trackType == TimelineTrackType.EFFECT) "FX" else "Sticker",
+            label = label,
             accentColor = Color(0xFFFF4081),
             modifier = Modifier.fillMaxSize()
           )
@@ -771,9 +799,14 @@ private fun TimelineClipBlock(
     TimelineTrackType.MAIN_VIDEO -> Color(0xFF1565C0)
     TimelineTrackType.OVERLAY_PIP -> Color(0xFF6A1B9A)
     TimelineTrackType.AUDIO -> Color(0xFF2E7D32)
+    TimelineTrackType.MUSIC -> Color(0xFF00796B)
+    TimelineTrackType.SFX -> Color(0xFF388E3C)
     TimelineTrackType.TEXT -> Color(0xFFC62828)
+    TimelineTrackType.CAPTION -> Color(0xFF1976D2)
     TimelineTrackType.EFFECT -> Color(0xFFAD1457)
     TimelineTrackType.STICKER -> Color(0xFFEF6C00)
+    TimelineTrackType.ADJUSTMENT -> Color(0xFF7B1FA2)
+    TimelineTrackType.ELEMENT -> Color(0xFFC2185B)
   }
 
   val baseColor = clip.color ?: defaultColor

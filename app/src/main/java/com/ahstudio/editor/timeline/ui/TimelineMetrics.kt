@@ -6,17 +6,38 @@ import androidx.compose.ui.unit.dp
 import com.ahstudio.editor.timeline.core.TrackKind
 
 data class TimelineMetrics(
-    val mainRowHeightPx: Float,
-    val subRowHeightPx: Float,
-    val mainToSubGapPx: Float,
-    val subTrackGapPx: Float,
-    val rulerHeightPx: Float,
-    val headerWidthPx: Float,
-    val handlePx: Float,
-    val snapPx: Float,
-    val edgeMarginPx: Float,
-    val density: Density,
+    val mainRowHeightPx: Float = 58f,
+    val subRowHeightPx: Float = 36f,
+    val mainToSubGapPx: Float = 8f,
+    val subTrackGapPx: Float = 4f,
+    val rulerHeightPx: Float = 28f,
+    val headerWidthPx: Float = 104f,
+    val handlePx: Float = 20f,
+    val snapPx: Float = 10f,
+    val edgeMarginPx: Float = 56f,
+    val density: Density = Density(1f),
 ) {
+    constructor(
+        rowHeightPx: Float,
+        rulerHeightPx: Float,
+        headerWidthPx: Float,
+        handlePx: Float,
+        snapPx: Float,
+        edgeMarginPx: Float,
+        density: Density = Density(1f)
+    ) : this(
+        mainRowHeightPx = rowHeightPx,
+        subRowHeightPx = (rowHeightPx * 0.68f).coerceAtLeast(32f),
+        mainToSubGapPx = 8f,
+        subTrackGapPx = 4f,
+        rulerHeightPx = rulerHeightPx,
+        headerWidthPx = headerWidthPx,
+        handlePx = handlePx,
+        snapPx = snapPx,
+        edgeMarginPx = edgeMarginPx,
+        density = density
+    )
+
     // Backwards compatibility for single-height access
     val rowHeightPx: Float get() = mainRowHeightPx
 

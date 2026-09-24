@@ -116,21 +116,21 @@ fun MasterTimelineView(
                 val trackKind = when (lane.kind) {
                     com.example.ui.components.timeline.LaneKind.MAIN_VIDEO -> TrackKind.VIDEO
                     com.example.ui.components.timeline.LaneKind.OVERLAY -> TrackKind.OVERLAY
-                    com.example.ui.components.timeline.LaneKind.TEXT -> TrackKind.TEXT
-                    com.example.ui.components.timeline.LaneKind.AUDIO -> TrackKind.VOICE
+                    com.example.ui.components.timeline.LaneKind.TEXT, com.example.ui.components.timeline.LaneKind.CAPTION -> TrackKind.TEXT
+                    com.example.ui.components.timeline.LaneKind.AUDIO, com.example.ui.components.timeline.LaneKind.MUSIC, com.example.ui.components.timeline.LaneKind.SFX -> TrackKind.VOICE
                     com.example.ui.components.timeline.LaneKind.STICKER -> TrackKind.STICKER
-                    com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER -> TrackKind.EFFECT
+                    com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER, com.example.ui.components.timeline.LaneKind.ADJUSTMENT, com.example.ui.components.timeline.LaneKind.ELEMENT -> TrackKind.EFFECT
                 }
 
                 val track = activeCtrl.engine.addTrack(trackKind, lane.label)
 
                 for (clip in lane.clips) {
                     val clipKind = when (lane.kind) {
-                        com.example.ui.components.timeline.LaneKind.MAIN_VIDEO, com.example.ui.components.timeline.LaneKind.OVERLAY -> ClipKind.VIDEO
-                        com.example.ui.components.timeline.LaneKind.TEXT -> ClipKind.TEXT
-                        com.example.ui.components.timeline.LaneKind.AUDIO -> ClipKind.AUDIO
+                        com.example.ui.components.timeline.LaneKind.MAIN_VIDEO, com.example.ui.components.timeline.LaneKind.OVERLAY, com.example.ui.components.timeline.LaneKind.ELEMENT -> ClipKind.VIDEO
+                        com.example.ui.components.timeline.LaneKind.TEXT, com.example.ui.components.timeline.LaneKind.CAPTION -> ClipKind.TEXT
+                        com.example.ui.components.timeline.LaneKind.AUDIO, com.example.ui.components.timeline.LaneKind.MUSIC, com.example.ui.components.timeline.LaneKind.SFX -> ClipKind.AUDIO
                         com.example.ui.components.timeline.LaneKind.STICKER -> ClipKind.STICKER
-                        com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER -> ClipKind.EFFECT
+                        com.example.ui.components.timeline.LaneKind.EFFECT, com.example.ui.components.timeline.LaneKind.FILTER, com.example.ui.components.timeline.LaneKind.ADJUSTMENT -> ClipKind.EFFECT
                     }
 
                     activeCtrl.engine.addClip(

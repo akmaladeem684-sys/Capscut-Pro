@@ -31,10 +31,15 @@ enum class LaneKind(
   MAIN_VIDEO("Main Track", 60.dp, Color(0xFF1E293B), Color(0xFF00E5FF)),
   OVERLAY("Overlay / PIP", 36.dp, Color(0xFF1E1B4B), Color(0xFF818CF8)),
   TEXT("Text", 36.dp, Color(0xFF312E81), Color(0xFFA78BFA)),
+  CAPTION("Caption", 36.dp, Color(0xFF1E3A8A), Color(0xFF60A5FA)),
   AUDIO("Audio", 36.dp, Color(0xFF064E3B), Color(0xFF34D399)),
+  MUSIC("Music", 36.dp, Color(0xFF065F46), Color(0xFF10B981)),
+  SFX("SFX", 36.dp, Color(0xFF047857), Color(0xFF6EE7B7)),
   EFFECT("Effect", 36.dp, Color(0xFF4C1D95), Color(0xFFC084FC)),
   FILTER("Filter", 36.dp, Color(0xFF701A75), Color(0xFFF472B6)),
-  STICKER("Sticker", 36.dp, Color(0xFF78350F), Color(0xFFFBBF24))
+  STICKER("Sticker", 36.dp, Color(0xFF78350F), Color(0xFFFBBF24)),
+  ADJUSTMENT("Adjustment", 36.dp, Color(0xFF581C87), Color(0xFFA855F7)),
+  ELEMENT("Element", 36.dp, Color(0xFF831843), Color(0xFFF43F5E))
 }
 
 /**
@@ -373,4 +378,89 @@ object TrackLaneManager {
       else item.overlapsWith(startMs, durationMs)
     }
   }
+
+  /**
+   * Authoritative multi-track timeline evaluation.
+   * Evaluates ALL active tracks (Track 0 Main, Track 1 PIP, Track 2, Track 3 ... up to Track N)
+   * simultaneously at [timelinePosMs] without arbitrary hardcoded track limits.
+   */
+  fun evaluateTimelineAt(timeline: Timeline, timelinePosMs: Long): ActiveTracksSnapshot {
+    val pos = timelinePosMs.coerceAtLeast(0L)
+
+    // Track 0: Main Video Clip
+    val mainClip = timeline.videoClips.firstOrNull { clip ->
+      !clip.isHidden && pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs)
+    }
+
+    // Track 1..N: ALL Active Overlays / PIP clips across all sub-tracks (Dynamic unlimited)
+    val activeOverlays = timeline.overlayClips
+      .filter { clip -> !clip.isHidden && pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs) }
+      .sortedBy { it.trackIndex } // Deterministic layer Z-stacking order
+
+    // ALL Active Audio Clips across all audio tracks (Lane 1, 2, 3... N)
+    val activeAudios = timeline.audioClips
+      .filter { clip -> !clip.isHidden && !clip.isMuted && pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs) }
+      .sortedBy { it.trackIndex }
+
+    // ALL Active Text Clips across all text lanes
+    val activeTexts = timeline.textClips
+      .filter { clip -> pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs) }
+      .sortedBy { it.trackIndex }
+
+    // ALL Active Effect Clips
+    val activeEffects = timeline.effectClips
+      .filter { clip -> !clip.isHidden && pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs) }
+
+    // ALL Active Sticker Clips
+    val activeStickers = timeline.stickerClips
+      .filter { clip -> !clip.isHidden && pos >= clip.timelineStartMs && pos < (clip.timelineStartMs + clip.durationMs) }
+
+    val totalLayers = (if (mainClip != null) 1 else 0) +
+      activeOverlays.size +
+      activeAudios.size +
+      activeTexts.size +
+      activeEffects.size +
+      activeStickers.size
+
+    return ActiveTracksSnapshot(
+      timestampMs = pos,
+      mainVideoClip = mainClip,
+      activeOverlays = activeOverlays,
+      activeAudios = activeAudios,
+      activeTexts = activeTexts,
+      activeEffects = activeEffects,
+      activeStickers = activeStickers,
+      totalActiveLayersCount = totalLayers
+    )
+  }
+
+  /**
+   * Returns all clip items in the specified lane index.
+   */
+  fun getClipsInLane(timeline: Timeline, laneIndex: Int): List<LaneClipItem> {
+    val lanes = computeLanes(timeline)
+    return lanes.firstOrNull { it.laneIndex == laneIndex }?.clips ?: emptyList()
+  }
+
+  /**
+   * Returns total count of all dynamically generated track lanes.
+   * Never hardcapped by static limits.
+   */
+  fun getTotalLaneCount(timeline: Timeline): Int {
+    return computeLanes(timeline).size
+  }
 }
+
+/**
+ * Result of evaluating all active clips across all tracks at a given timeline timestamp.
+ */
+data class ActiveTracksSnapshot(
+  val timestampMs: Long,
+  val mainVideoClip: VideoClip?,
+  val activeOverlays: List<VideoClip>,
+  val activeAudios: List<AudioClip>,
+  val activeTexts: List<TextClip>,
+  val activeEffects: List<EffectClip>,
+  val activeStickers: List<StickerClip>,
+  val totalActiveLayersCount: Int
+)
