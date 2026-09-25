@@ -171,9 +171,26 @@ class TimelineEngine(
 
     // ---------- track mutations ----------
     fun addTrack(kind: TrackKind, name: String, atIndex: Int = snapshot.tracks.size): Track = tx("Add track") {
-        val t = Track(id = newId("track"), kind = kind, name = name)
-        val list = snapshot.tracks.toMutableList().apply { add(atIndex.coerceIn(0, size), t) }
+        val nextOrder = (snapshot.tracks.maxOfOrNull { it.order } ?: -1) + 1
+        val t = Track(
+            id = java.util.UUID.randomUUID().toString(),
+            kind = kind,
+            name = name,
+            order = nextOrder
+        )
+        val list = snapshot.tracks + t
         snapshot = snapshot.copy(tracks = list); t
+    }
+
+    fun addTrackDirect(track: Track): Track = tx("Add track") {
+        val nextOrder = (snapshot.tracks.maxOfOrNull { it.order } ?: -1) + 1
+        val finalTrack = if (track.id.isBlank()) {
+            track.copy(id = java.util.UUID.randomUUID().toString(), order = nextOrder)
+        } else {
+            track.copy(order = if (track.order <= 0) nextOrder else track.order)
+        }
+        val list = snapshot.tracks + finalTrack
+        snapshot = snapshot.copy(tracks = list); finalTrack
     }
 
     fun removeTrack(trackId: String) = tx("Delete track") {

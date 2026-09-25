@@ -822,6 +822,7 @@ class AsyncFramePipelineEngine(private val context: Context) {
           AspectRatio.RATIO_4_5 -> Pair(shortSide, (shortSide * 5) / 4)
           AspectRatio.RATIO_4_3 -> Pair((shortSide * 4) / 3, shortSide)
           AspectRatio.RATIO_3_4 -> Pair((shortSide * 3) / 4, shortSide)
+          AspectRatio.RATIO_21_9 -> Pair((shortSide * 21) / 9, shortSide)
           AspectRatio.CUSTOM -> {
             val customH = (shortSide / aspect.ratio).toInt().coerceAtLeast(1)
             Pair(shortSide, customH)

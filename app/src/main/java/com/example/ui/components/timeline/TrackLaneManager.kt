@@ -261,6 +261,43 @@ object TrackLaneManager {
     resultLanes.addAll(stickerLanes)
     currentSubLaneIndex += stickerLanes.size
 
+    // B. Explicit sub-tracks from timeline.tracks (ensure newly created tracks without clips are never dropped)
+    val explicitSubTracks = timeline.tracks.filter { it.trackType != com.example.domain.model.TrackType.MAIN_VIDEO }
+    for (explicitTrack in explicitSubTracks) {
+      val alreadyRepresented = resultLanes.any { lane ->
+        lane.clips.any { it.laneIndex == explicitTrack.zOrder } || lane.label == explicitTrack.displayName
+      }
+      if (!alreadyRepresented) {
+        val kind = when (explicitTrack.trackType) {
+          com.example.domain.model.TrackType.MAIN_VIDEO -> LaneKind.MAIN_VIDEO
+          com.example.domain.model.TrackType.OVERLAY, com.example.domain.model.TrackType.ELEMENT, com.example.domain.model.TrackType.ADJUSTMENT -> LaneKind.OVERLAY
+          com.example.domain.model.TrackType.TEXT, com.example.domain.model.TrackType.CAPTION -> LaneKind.TEXT
+          com.example.domain.model.TrackType.AUDIO, com.example.domain.model.TrackType.MUSIC, com.example.domain.model.TrackType.SFX -> LaneKind.AUDIO
+          com.example.domain.model.TrackType.EFFECT -> LaneKind.EFFECT
+          com.example.domain.model.TrackType.STICKER -> LaneKind.STICKER
+        }
+        val icon = when (kind) {
+          LaneKind.OVERLAY -> Icons.Default.Layers
+          LaneKind.TEXT -> Icons.Default.TextFields
+          LaneKind.AUDIO -> Icons.Default.MusicNote
+          LaneKind.EFFECT -> Icons.Default.AutoAwesome
+          LaneKind.STICKER -> Icons.Default.Face
+          else -> Icons.Default.Movie
+        }
+        resultLanes.add(
+          TimelineLane(
+            laneIndex = currentSubLaneIndex++,
+            kind = kind,
+            heightDp = SUB_LANE_HEIGHT,
+            label = explicitTrack.displayName.ifBlank { "${explicitTrack.trackType.name} $currentSubLaneIndex" },
+            icon = icon,
+            clips = emptyList(),
+            isMainLane = false
+          )
+        )
+      }
+    }
+
     // 3. Compact and re-index lanes consecutively so there are zero empty gaps
     return recompactLanes(resultLanes)
   }
@@ -323,23 +360,21 @@ object TrackLaneManager {
 
   /**
    * Re-indexes lanes so that all active lanes are strictly continuous (0, 1, 2, ... N).
-   * Automatically drops any sub-lane that contains 0 clips.
+   * Retains all tracks without dropping explicit tracks.
    */
   private fun recompactLanes(lanes: List<TimelineLane>): List<TimelineLane> {
     val compacted = mutableListOf<TimelineLane>()
     var nextIndex = 0
 
     for (lane in lanes) {
-      if (lane.isMainLane || lane.hasClips) {
-        val reindexedClips = lane.clips.map { it.copy(laneIndex = nextIndex) }
-        compacted.add(
-          lane.copy(
-            laneIndex = nextIndex,
-            clips = reindexedClips
-          )
+      val reindexedClips = lane.clips.map { it.copy(laneIndex = nextIndex) }
+      compacted.add(
+        lane.copy(
+          laneIndex = nextIndex,
+          clips = reindexedClips
         )
-        nextIndex++
-      }
+      )
+      nextIndex++
     }
 
     return compacted

@@ -145,24 +145,20 @@ class TimelineUiController(
         return v.coerceIn(min, max)
     }
 
-    var subTracksViewportHeightPx: Float = 0f
-
-    fun subTracksContentHeightPx(): Float {
+    fun tracksContentHeightPx(): Float {
         val n = snapshot.tracks.size
-        if (n <= 1) return 0f
-        val subCount = n - 1
+        if (n <= 0) return 0f
+        val mainH = 58f * densityScale
         val subH = 36f * densityScale
+        val mainGap = 8f * densityScale
         val subGap = 4f * densityScale
-        return subCount * subH + (subCount - 1) * subGap
+        if (n == 1) return mainH
+        return mainH + mainGap + (n - 1) * subH + ((n - 2).coerceAtLeast(0)) * subGap
     }
 
     fun setScrollYRaw(v: Float) {
-        val maxScroll = maxOf(0f, subTracksContentHeightPx() - subTracksViewportHeightPx)
+        val maxScroll = maxOf(0f, tracksContentHeightPx() - tracksAreaHeightPx)
         scrollY = v.coerceIn(0f, maxScroll)
-    }
-
-    fun tracksContentHeightPx(): Float {
-        return 58f * densityScale + 8f * densityScale + subTracksContentHeightPx()
     }
 
     var densityScale: Float = 1f
@@ -250,22 +246,11 @@ class TimelineUiController(
     // ---------------- Hit Testing with Dynamic Row Heights & Generous Trim Handles ----------------
     fun hitTest(screenX: Float, screenY: Float, m: TimelineMetrics): Hit {
         if (screenY < m.rulerHeightPx) return Hit.Ruler(timeUnderPointer(screenX))
-        val yInTracks = screenY - m.rulerHeightPx
+        val contentY = screenY - m.rulerHeightPx + scrollY
         val tracks = snapshot.tracks
         if (tracks.isEmpty()) return Hit.Empty
 
-        val row: Int
-        if (yInTracks <= m.mainRowHeightPx) {
-            row = 0
-        } else if (yInTracks < m.mainRowHeightPx + m.mainToSubGapPx) {
-            return Hit.Empty
-        } else {
-            val subY = yInTracks - (m.mainRowHeightPx + m.mainToSubGapPx) + scrollY
-            val subIndex = m.subTrackIndexAtY(subY, tracks.size - 1)
-            if (subIndex < 0) return Hit.Empty
-            row = 1 + subIndex
-        }
-
+        val row = m.trackIndexAtY(contentY, tracks.size)
         if (row < 0 || row >= tracks.size) return Hit.Empty
         val track = tracks[row]
         if (!track.visible || track.locked) return Hit.Empty

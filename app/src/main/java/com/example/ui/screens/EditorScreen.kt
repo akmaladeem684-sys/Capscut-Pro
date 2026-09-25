@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -242,6 +243,14 @@ fun EditorScreen(
             defaultImageDurationMs = 3000L
           )
 
+          // Authoritatively configure project canvas from first imported video
+          viewModel.checkAndAutoConfigureCanvasFromMedia(
+            width = metadata.width,
+            height = metadata.height,
+            rotationDegrees = metadata.rotationDegrees,
+            frameRate = metadata.frameRate
+          )
+
           viewModel.timelineEngine.addVideoClip(
             uri = persistentPath,
             name = fileName,
@@ -301,36 +310,11 @@ fun EditorScreen(
       // The old filmstrip thumbnail band has been removed from the editor layout.
       // Reclaim that vertical space for the actual video preview instead of leaving a gap.
       // The cap keeps the timeline and playback controls usable on compact screens.
-      val basePreviewHeight = remember(screenHeight, screenWidth, isLandscape) {
-        if (isLandscape) {
-          when {
-            screenHeight < 500.dp -> (screenHeight * 0.44f).coerceIn(160.dp, 220.dp)
-            screenHeight < 700.dp -> (screenHeight * 0.48f).coerceIn(200.dp, 280.dp)
-            else -> (screenHeight * 0.52f).coerceIn(250.dp, 360.dp)
-          }
-        } else {
-          when {
-            screenHeight < 650.dp -> (screenHeight * 0.45f).coerceIn(220.dp, 300.dp)
-            screenHeight < 850.dp -> (screenHeight * 0.52f).coerceIn(300.dp, 420.dp)
-            else -> (screenHeight * 0.56f).coerceIn(360.dp, 500.dp)
-          }
-        }
-      }
-
-      // When any bottom navigation tool/panel is opened, automatically reduce the video preview size by approx. 30%
-      val targetPreviewHeight = if (activeTab != null) {
-        basePreviewHeight * 0.70f
-      } else {
-        basePreviewHeight
-      }
-
-      // Smooth layout resizing animation when the navigation panel opens or closes
-      val animatedPreviewHeight by animateDpAsState(
-        targetValue = targetPreviewHeight,
-        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-        label = "animated_preview_height"
-      )
-
+      // In portrait: Give maximum vertical space to video preview while reserving exact space for
+      // Playback bar (~44dp), 3-track timeline (~214dp), and BottomToolbar (~72dp).
+      // This pushes the timeline tracks down to sit flush above the bottom navigation bar and eliminates empty space.
+      val timelineHeight = if (isLandscape) 150.dp else 214.dp
+      val subToolPanelHeight = if (isLandscape) 180.dp else 290.dp
       val responsiveSpacerHeight = 0.dp
 
       Column(
@@ -376,11 +360,11 @@ fun EditorScreen(
         }
       }
 
-      // 1. VIDEO PREVIEW CONTAINER (Dynamically resizes with smooth animation when panel opens/closes)
+      // 1. VIDEO PREVIEW AREA (Fixed weight - will never shrink, keeps video screen prominent)
       Box(
         modifier = Modifier
           .fillMaxWidth()
-          .height(animatedPreviewHeight)
+          .weight(1f)
           .background(Color.Black)
           .testTag("video_preview_container"),
         contentAlignment = Alignment.Center
@@ -555,13 +539,14 @@ fun EditorScreen(
           shrinkVertically(animationSpec = tween(260, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
         modifier = Modifier
           .fillMaxWidth()
-          .weight(1f)
+          .wrapContentHeight()
       ) {
-          Column(modifier = Modifier.fillMaxSize()) {
+          Column(modifier = Modifier.fillMaxWidth().wrapContentHeight()) {
+            // 2. TIMELINE WRAPPER (Fixed height allocated for editing)
             Box(
               modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .height(timelineHeight)
             ) {
               var multiTrackZoom by remember { mutableFloatStateOf(1.0f) }
 
@@ -646,7 +631,7 @@ fun EditorScreen(
         shrinkVertically(animationSpec = tween(260, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Bottom),
       modifier = Modifier
         .fillMaxWidth()
-        .weight(1f)
+        .height(subToolPanelHeight)
     ) {
       Surface(
         color = StudioSurface,
@@ -1475,6 +1460,8 @@ fun VideoPreviewSurface(
               MediaRelinkManager.isRealPlayableMedia(context, activeClip.uri)
             }
             if (activeClip.isVideo && isRealPlayable && player != null) {
+              val clipRot = if (activeClip.naturalRotation != 0) activeClip.naturalRotation else activeClip.rotationDegrees
+              val (clipW, clipH) = AspectRatio.resolveEffectiveDimensions(activeClip.width, activeClip.height, clipRot)
               AndroidView(
                 factory = { ctx ->
                   android.view.TextureView(ctx).apply {
@@ -1488,6 +1475,10 @@ fun VideoPreviewSurface(
                       android.util.Log.w("VideoPreviewSurface", "Failed to attach TextureView to ExoPlayer", e)
                     }
                     tag = player
+                    addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                      applyTextureViewAspectFit(this, clipW, clipH)
+                    }
+                    applyTextureViewAspectFit(this, clipW, clipH)
                   }
                 },
                 update = { tv ->
@@ -1499,6 +1490,7 @@ fun VideoPreviewSurface(
                       android.util.Log.w("VideoPreviewSurface", "Failed to rebind TextureView", e)
                     }
                   }
+                  applyTextureViewAspectFit(tv, clipW, clipH)
                 },
                 onReset = { /* Preserve texture view across recompositions */ },
                 onRelease = { tv ->
@@ -2721,6 +2713,34 @@ private fun MoreToolsDialog(
       }
     }
   )
+}
+
+private fun applyTextureViewAspectFit(
+  tv: android.view.TextureView,
+  videoWidth: Int,
+  videoHeight: Int
+) {
+  val viewW = tv.width.toFloat()
+  val viewH = tv.height.toFloat()
+  if (viewW <= 0f || viewH <= 0f || videoWidth <= 0 || videoHeight <= 0) return
+
+  val viewRatio = viewW / viewH
+  val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
+
+  var scaleX = 1f
+  var scaleY = 1f
+
+  if (videoRatio > viewRatio) {
+    // Video is wider than canvas -> letterbox top & bottom
+    scaleY = viewRatio / videoRatio
+  } else {
+    // Video is taller than canvas -> pillarbox left & right
+    scaleX = videoRatio / viewRatio
+  }
+
+  val matrix = Matrix()
+  matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+  tv.setTransform(matrix)
 }
 
 private fun formatDurationShort(timeMs: Long): String {

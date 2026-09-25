@@ -153,14 +153,17 @@ fun MasterTimelineView(
                 activeCtrl.engine.setSelection(selectedClipIds)
             }
 
-            // Auto-scroll to reveal newly added sub-track if outside visible sub-tracks viewport
+            // Auto-scroll to reveal newly added track if outside visible viewport
             val newTrackCount = activeCtrl.snapshot.tracks.size
             if (newTrackCount > previousTrackCount && newTrackCount > 1) {
-                val subH = 36f * activeCtrl.densityScale
-                val subGap = 4f * activeCtrl.densityScale
-                val subCount = newTrackCount - 1
-                val lastSubTrackBottom = subCount * subH + (subCount - 1) * subGap
-                val targetScrollY = maxOf(0f, lastSubTrackBottom - activeCtrl.subTracksViewportHeightPx)
+                val metrics = com.ahstudio.editor.timeline.ui.TimelineMetrics(
+                    mainRowHeightPx = 58f * activeCtrl.densityScale,
+                    subRowHeightPx = 36f * activeCtrl.densityScale,
+                    mainToSubGapPx = 8f * activeCtrl.densityScale,
+                    subTrackGapPx = 4f * activeCtrl.densityScale
+                )
+                val lastTrackBottom = metrics.totalTracksHeightPx(newTrackCount)
+                val targetScrollY = maxOf(0f, lastTrackBottom - activeCtrl.tracksAreaHeightPx)
                 if (targetScrollY > activeCtrl.scrollY) {
                     activeCtrl.setScrollYRaw(targetScrollY)
                 }

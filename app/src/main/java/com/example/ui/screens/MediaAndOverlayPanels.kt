@@ -85,6 +85,12 @@ fun MediaImportPanel(
           )
 
           if (selectedTarget == MediaImportTarget.MAIN_TRACK) {
+            viewModel.checkAndAutoConfigureCanvasFromMedia(
+              width = metadata.width,
+              height = metadata.height,
+              rotationDegrees = metadata.rotationDegrees,
+              frameRate = metadata.frameRate
+            )
             viewModel.timelineEngine.addVideoClip(
               uri = persistentPath,
               name = fileName,
@@ -132,6 +138,12 @@ fun MediaImportPanel(
           )
           val metadata = com.example.engine.media.MediaMetadataHelper.extractMetadata(context, persistentPath)
           if (selectedTarget == MediaImportTarget.MAIN_TRACK) {
+            viewModel.checkAndAutoConfigureCanvasFromMedia(
+              width = metadata.width,
+              height = metadata.height,
+              rotationDegrees = metadata.rotationDegrees,
+              frameRate = metadata.frameRate
+            )
             viewModel.timelineEngine.addVideoClip(
               uri = persistentPath,
               name = fileName,
@@ -183,6 +195,12 @@ fun MediaImportPanel(
             defaultImageDurationMs = (imageDurationSec * 1000).toLong()
           )
           if (selectedTarget == MediaImportTarget.MAIN_TRACK) {
+            viewModel.checkAndAutoConfigureCanvasFromMedia(
+              width = metadata.width,
+              height = metadata.height,
+              rotationDegrees = metadata.rotationDegrees,
+              frameRate = metadata.frameRate
+            )
             viewModel.timelineEngine.addVideoClip(
               uri = persistentPath,
               name = fileName,

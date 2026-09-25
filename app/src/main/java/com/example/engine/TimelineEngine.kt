@@ -5736,6 +5736,16 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   }
 
   /**
+   * Dynamically adds a new track appended with a unique UUID and proper incremented order.
+   */
+  fun addTrack(trackType: TrackType = TrackType.OVERLAY, displayName: String? = null): NleTrack {
+    recordHistory()
+    val (updated, newTrack) = com.example.engine.timeline.TimelineTrackManager.addTrack(_timeline.value, trackType, displayName)
+    _timeline.value = updated
+    return newTrack
+  }
+
+  /**
    * Adds a video clip to a specific video track lane.
    * Track 0 appends or places it on the main video track; Track > 0 places it on the overlay track.
    */

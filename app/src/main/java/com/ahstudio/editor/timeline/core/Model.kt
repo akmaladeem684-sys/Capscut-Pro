@@ -59,14 +59,18 @@ data class Clip(
 }
 
 data class Track(
-    val id: String,
+    val id: String = java.util.UUID.randomUUID().toString(),
     val kind: TrackKind,
     val name: String,
     val visible: Boolean = true,
     val muted: Boolean = false,
     val solo: Boolean = false,
     val locked: Boolean = false,
-)
+    val order: Int = 0,
+    val clips: List<Clip> = emptyList(),
+) {
+    val trackId: String get() = id
+}
 
 enum class MarkerKind { USER, BEAT, CHAPTER }
 

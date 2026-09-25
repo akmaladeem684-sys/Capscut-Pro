@@ -4,22 +4,35 @@ enum class AspectRatio(val label: String, val ratio: Float, val iconDesc: String
   RATIO_9_16("9:16", 9f / 16f, "TikTok / Reels / Shorts"),
   RATIO_16_9("16:9", 16f / 9f, "YouTube / Landscape"),
   RATIO_1_1("1:1", 1f, "Instagram Square"),
-  RATIO_4_3("4:3", 4f / 3f, "Standard Landscape (4:3)"),
   RATIO_4_5("4:5", 4f / 5f, "Instagram Portrait"),
+  RATIO_4_3("4:3", 4f / 3f, "Standard Landscape (4:3)"),
   RATIO_3_4("3:4", 3f / 4f, "Classic Portrait"),
+  RATIO_21_9("21:9", 21f / 9f, "Cinematic Ultrawide (21:9)"),
   CUSTOM("Custom", 1f, "Freeform");
 
   companion object {
-    fun fromDimensions(width: Int, height: Int): AspectRatio {
+    fun resolveEffectiveDimensions(width: Int, height: Int, rotationDegrees: Int = 0): Pair<Int, Int> {
+      if (width <= 0 || height <= 0) return Pair(1920, 1080)
+      val isRotated90or270 = (rotationDegrees % 180 != 0)
+      return if (isRotated90or270 && width > height) {
+        Pair(height, width)
+      } else {
+        Pair(width, height)
+      }
+    }
+
+    fun fromDimensions(width: Int, height: Int, rotationDegrees: Int = 0): AspectRatio {
       if (width <= 0 || height <= 0) return RATIO_16_9
-      val targetRatio = width.toFloat() / height.toFloat()
+      val (effWidth, effHeight) = resolveEffectiveDimensions(width, height, rotationDegrees)
+      val targetRatio = effWidth.toFloat() / effHeight.toFloat()
       val standardRatios = listOf(
-        RATIO_16_9,
         RATIO_9_16,
+        RATIO_16_9,
         RATIO_1_1,
+        RATIO_4_5,
         RATIO_4_3,
         RATIO_3_4,
-        RATIO_4_5
+        RATIO_21_9
       )
       return standardRatios.minByOrNull { kotlin.math.abs(it.ratio - targetRatio) } ?: RATIO_16_9
     }

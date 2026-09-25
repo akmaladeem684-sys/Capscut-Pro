@@ -1,5 +1,12 @@
 package com.ahstudio.editor.timeline.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,32 +59,23 @@ fun TracksArea(ctrl: TimelineUiController, m: TimelineMetrics) {
     val dragged = ctrl.dragPreview
     val shift = dragged?.trackShift ?: 0
 
-    Column(Modifier.fillMaxSize().clipToBounds()) {
-        // 1. STICKY MAIN TRACK (Row 0 - Fixed at top)
-        if (tracks.isNotEmpty()) {
-            TrackRow(ctrl, 0, tracks, dragged, shift, m)
-            if (tracks.size > 1) {
-                Spacer(Modifier.height(TimelineTokens.MainToSubGap))
-            }
-        }
-
-        // 2. SCROLLABLE SUB-TRACKS VIEWPORT (Row 1..N-1)
-        if (tracks.size > 1) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clipToBounds()
-                    .onSizeChanged { ctrl.subTracksViewportHeightPx = it.height.toFloat() }
-            ) {
-                Column(Modifier.graphicsLayer { translationY = -ctrl.scrollY }) {
-                    for (row in 1 until tracks.size) {
-                        if (row > 1) {
-                            Spacer(Modifier.height(TimelineTokens.SubTrackGap))
-                        }
-                        TrackRow(ctrl, row, tracks, dragged, shift, m)
-                    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clipToBounds()
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .graphicsLayer { translationY = -ctrl.scrollY }
+        ) {
+            tracks.forEachIndexed { row, _ ->
+                if (row == 1) {
+                    Spacer(Modifier.height(TimelineTokens.MainToSubGap))
+                } else if (row > 1) {
+                    Spacer(Modifier.height(TimelineTokens.SubTrackGap))
                 }
+                TrackRow(ctrl, row, tracks, dragged, shift, m)
             }
         }
     }
@@ -108,11 +106,36 @@ private fun TrackRow(
         .orEmpty()
 
     val allClips = (static + draggedHere).sortedBy { it.startMicros }
+    val isTrackSelected = allClips.any { it.id in ctrl.selection } || track.id in ctrl.selection
+
+    val trackScale by animateFloatAsState(
+        targetValue = if (isTrackSelected) 1.008f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "trackRowScale"
+    )
+    val trackBorderColor by animateColorAsState(
+        targetValue = if (isTrackSelected) Color(0xFF00E5FF).copy(alpha = 0.55f) else Color.Transparent,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "trackRowBorderColor"
+    )
+    val trackBorderWidth by animateDpAsState(
+        targetValue = if (isTrackSelected) 1.5.dp else 0.dp,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "trackRowBorderWidth"
+    )
 
     Box(
         Modifier
             .fillMaxWidth()
             .height(rowDp)
+            .graphicsLayer {
+                scaleX = trackScale
+                scaleY = trackScale
+            }
+            .border(trackBorderWidth, trackBorderColor, RoundedCornerShape(4.dp))
             .background(if (row % 2 == 0) TimelineTokens.TrackBg else TimelineTokens.TrackBgAlt)
     ) {
         // Continuous lane bottom divider line
@@ -206,11 +229,24 @@ fun ClipBox(
     val selected = clip.id in ctrl.selection
     val density = LocalDensity.current
 
+    val clipScale by animateFloatAsState(
+        targetValue = if (selected) 1.025f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "clipScale"
+    )
+
     Box(
         modifier = Modifier
             .offset { IntOffset(x0.roundToInt(), 0) }
             .width(with(density) { widthPx.toDp() })
             .height(with(density) { rowHeightPx.toDp() })
+            .graphicsLayer {
+                scaleX = clipScale
+                scaleY = clipScale
+            }
             .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(4.dp))
     ) {

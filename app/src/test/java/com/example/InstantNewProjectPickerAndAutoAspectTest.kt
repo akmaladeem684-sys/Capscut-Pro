@@ -131,4 +131,49 @@ class InstantNewProjectPickerAndAutoAspectTest {
     assertEquals(1080, clip.width)
     assertEquals(1920, clip.height)
   }
+
+  @Test
+  fun testAllRequiredAspectRatios_PromptSpecifications() {
+    // Portrait video: 1080 x 1920 -> 9:16
+    assertEquals(AspectRatio.RATIO_9_16, AspectRatio.fromDimensions(1080, 1920, 0))
+
+    // Landscape video: 1920 x 1080 -> 16:9
+    assertEquals(AspectRatio.RATIO_16_9, AspectRatio.fromDimensions(1920, 1080, 0))
+
+    // Square video: 1080 x 1080 -> 1:1
+    assertEquals(AspectRatio.RATIO_1_1, AspectRatio.fromDimensions(1080, 1080, 0))
+
+    // 4:5 video: 1080 x 1350 -> 4:5
+    assertEquals(AspectRatio.RATIO_4_5, AspectRatio.fromDimensions(1080, 1350, 0))
+
+    // 4:3 video: 1440 x 1080 -> 4:3
+    assertEquals(AspectRatio.RATIO_4_3, AspectRatio.fromDimensions(1440, 1080, 0))
+
+    // 3:4 video: 1080 x 1440 -> 3:4
+    assertEquals(AspectRatio.RATIO_3_4, AspectRatio.fromDimensions(1080, 1440, 0))
+
+    // 21:9 video: 2560 x 1080 -> 21:9
+    assertEquals(AspectRatio.RATIO_21_9, AspectRatio.fromDimensions(2560, 1080, 0))
+  }
+
+  @Test
+  fun testResolveEffectiveDimensions_WithRotationMetadata() {
+    // 1920x1080 landscape container recorded with 90 deg rotation -> 1080x1920 portrait
+    val (w90, h90) = AspectRatio.resolveEffectiveDimensions(1920, 1080, 90)
+    assertEquals(1080, w90)
+    assertEquals(1920, h90)
+    assertEquals(AspectRatio.RATIO_9_16, AspectRatio.fromDimensions(1920, 1080, 90))
+
+    // 1920x1080 landscape container with 270 deg rotation -> 1080x1920 portrait
+    val (w270, h270) = AspectRatio.resolveEffectiveDimensions(1920, 1080, 270)
+    assertEquals(1080, w270)
+    assertEquals(1920, h270)
+    assertEquals(AspectRatio.RATIO_9_16, AspectRatio.fromDimensions(1920, 1080, 270))
+
+    // Already-swapped dimensions by metadata retriever (1080x1920) with rotation 90
+    val (wSwapped, hSwapped) = AspectRatio.resolveEffectiveDimensions(1080, 1920, 90)
+    assertEquals(1080, wSwapped)
+    assertEquals(1920, hSwapped)
+    assertEquals(AspectRatio.RATIO_9_16, AspectRatio.fromDimensions(1080, 1920, 90))
+  }
 }

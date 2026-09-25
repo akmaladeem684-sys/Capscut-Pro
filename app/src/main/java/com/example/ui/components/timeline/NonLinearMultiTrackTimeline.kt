@@ -2,6 +2,12 @@ package com.example.ui.components.timeline
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -79,6 +85,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -573,10 +580,35 @@ private fun NonLinearTrackRow(
     TimelineTrackType.EFFECT, TimelineTrackType.STICKER, TimelineTrackType.ADJUSTMENT, TimelineTrackType.ELEMENT -> 34.dp
   }
 
+  val isTrackSelected = layer.clips.any { it.id == selectedClipId }
+  val trackScale by animateFloatAsState(
+    targetValue = if (isTrackSelected) 1.01f else 1.0f,
+    animationSpec = spring(
+      dampingRatio = Spring.DampingRatioMediumBouncy,
+      stiffness = Spring.StiffnessMediumLow
+    ),
+    label = "nlTrackScale"
+  )
+  val trackBorderColor by animateColorAsState(
+    targetValue = if (isTrackSelected) Color(0xFF00E5FF).copy(alpha = 0.55f) else Color.Transparent,
+    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+    label = "nlTrackBorderColor"
+  )
+  val trackBorderWidth by animateDpAsState(
+    targetValue = if (isTrackSelected) 1.5.dp else 0.dp,
+    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+    label = "nlTrackBorderWidth"
+  )
+
   Box(
     modifier = Modifier
       .fillMaxWidth()
       .height(trackHeight)
+      .graphicsLayer {
+        scaleX = trackScale
+        scaleY = trackScale
+      }
+      .border(trackBorderWidth, trackBorderColor, RoundedCornerShape(4.dp))
   ) {
     // -------------------------------------------------------------------------------------
     // A. MOVING TRACK START INDICATOR (Attached to Track Start at 0ms, scrolls with media)

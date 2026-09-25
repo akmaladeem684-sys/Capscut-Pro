@@ -32,8 +32,11 @@ object TimelineTrackManager {
      * Allocates a guaranteed unique Z-Index / TrackIndex for a newly created overlay.
      */
     fun allocateOverlayTrackIndex(timeline: Timeline): Int {
-        val existingIndices = timeline.overlayClips.map { it.trackIndex }
-        val maxIndex = existingIndices.maxOrNull() ?: 0
+        val fromClips = timeline.overlayClips.map { it.trackIndex }
+        val fromTracks = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() })
+            .filter { it.trackType == TrackType.OVERLAY || it.trackType == TrackType.ELEMENT || it.trackType == TrackType.ADJUSTMENT }
+            .map { it.zOrder }
+        val maxIndex = (fromClips + fromTracks).maxOrNull() ?: 0
         return maxIndex + 1
     }
 
@@ -41,8 +44,11 @@ object TimelineTrackManager {
      * Allocates a guaranteed unique TrackIndex for a newly created text clip.
      */
     fun allocateTextTrackIndex(timeline: Timeline): Int {
-        val existingIndices = timeline.textClips.map { it.trackIndex }
-        val maxIndex = existingIndices.maxOrNull() ?: 0
+        val fromClips = timeline.textClips.map { it.trackIndex }
+        val fromTracks = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() })
+            .filter { it.trackType == TrackType.TEXT || it.trackType == TrackType.CAPTION }
+            .map { it.zOrder }
+        val maxIndex = (fromClips + fromTracks).maxOrNull() ?: 0
         return maxIndex + 1
     }
 
@@ -50,8 +56,11 @@ object TimelineTrackManager {
      * Allocates a guaranteed unique TrackIndex for a newly created audio clip.
      */
     fun allocateAudioTrackIndex(timeline: Timeline): Int {
-        val existingIndices = timeline.audioClips.map { it.trackIndex }
-        val maxIndex = existingIndices.maxOrNull() ?: 0
+        val fromClips = timeline.audioClips.map { it.trackIndex }
+        val fromTracks = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() })
+            .filter { it.trackType.isAudioTrack }
+            .map { it.zOrder }
+        val maxIndex = (fromClips + fromTracks).maxOrNull() ?: 0
         return maxIndex + 1
     }
 
@@ -59,14 +68,47 @@ object TimelineTrackManager {
      * Allocates a guaranteed unique TrackIndex for any TrackType.
      */
     fun allocateTrackIndex(timeline: Timeline, trackType: TrackType): Int {
-        return when (trackType) {
+        val fromTracks = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() })
+            .filter { it.trackType == trackType }
+            .map { it.zOrder }
+        val maxZFromTracks = fromTracks.maxOrNull() ?: 0
+        val maxClipIndex = when (trackType) {
             TrackType.MAIN_VIDEO -> 0
-            TrackType.OVERLAY, TrackType.ELEMENT, TrackType.ADJUSTMENT -> allocateOverlayTrackIndex(timeline)
-            TrackType.TEXT, TrackType.CAPTION -> allocateTextTrackIndex(timeline)
-            TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> allocateAudioTrackIndex(timeline)
-            TrackType.EFFECT -> timeline.effectClips.size + 1
-            TrackType.STICKER -> timeline.stickerClips.size + 1
+            TrackType.OVERLAY, TrackType.ELEMENT, TrackType.ADJUSTMENT -> allocateOverlayTrackIndex(timeline) - 1
+            TrackType.TEXT, TrackType.CAPTION -> allocateTextTrackIndex(timeline) - 1
+            TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> allocateAudioTrackIndex(timeline) - 1
+            TrackType.EFFECT -> maxOf(timeline.effectClips.size, maxZFromTracks)
+            TrackType.STICKER -> maxOf(timeline.stickerClips.size, maxZFromTracks)
         }
+        return maxOf(maxClipIndex, maxZFromTracks) + 1
+    }
+
+    /**
+     * Appends a brand new track to the timeline track list (tracks + newTrack)
+     * with a unique UUID and proper incremented order. Never overwrites existing tracks.
+     */
+    fun addTrack(
+        timeline: Timeline,
+        trackType: TrackType,
+        displayName: String? = null
+    ): Pair<Timeline, NleTrack> {
+        val currentTracks = timeline.tracks
+        val nextOrder = (currentTracks.maxOfOrNull { it.order } ?: -1) + 1
+        val newTrackIndex = allocateTrackIndex(timeline, trackType)
+        val newTrackUuid = UUID.randomUUID().toString()
+        val newNleTrack = NleTrack(
+            trackId = newTrackUuid,
+            trackType = trackType,
+            displayName = displayName ?: "${trackType.name.replace("_", " ")} $newTrackIndex",
+            order = nextOrder,
+            zOrder = newTrackIndex,
+            isLocked = false,
+            isVisible = true,
+            isMuted = false,
+            isSolo = false
+        )
+        val updatedTracks = currentTracks + newNleTrack
+        return Pair(timeline.copy(tracks = updatedTracks), newNleTrack)
     }
 
     /**
@@ -112,20 +154,23 @@ object TimelineTrackManager {
             }
         }
 
-        // No free unlocked track found -> dynamically create a new track
+        // No free unlocked track found -> dynamically create a new track appended with unique UUID & incremented order
+        val currentTracks = timeline.tracks.ifEmpty { effectiveTracks }
         val newTrackIndex = allocateTrackIndex(timeline, trackType)
+        val nextOrder = (currentTracks.maxOfOrNull { it.order } ?: -1) + 1
+        val newTrackUuid = UUID.randomUUID().toString()
         val newNleTrack = NleTrack(
-            trackId = "track_${trackType.name.lowercase()}_$newTrackIndex",
+            trackId = newTrackUuid,
             trackType = trackType,
             displayName = "${trackType.name.replace("_", " ")} $newTrackIndex",
-            order = effectiveTracks.size,
+            order = nextOrder,
             zOrder = newTrackIndex,
             isLocked = false,
             isVisible = true,
             isMuted = false,
             isSolo = false
         )
-        val updatedTracks = (timeline.tracks.ifEmpty { effectiveTracks }) + newNleTrack
+        val updatedTracks = currentTracks + newNleTrack
         return Pair(timeline.copy(tracks = updatedTracks), newTrackIndex)
     }
 

@@ -190,6 +190,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   private val _activeAspectRatio = MutableStateFlow(AspectRatio.RATIO_9_16)
   val activeAspectRatio: StateFlow<AspectRatio> = _activeAspectRatio.asStateFlow()
 
+  private val _isCanvasConfiguredByMedia = MutableStateFlow(false)
+  val isCanvasConfiguredByMedia: StateFlow<Boolean> = _isCanvasConfiguredByMedia.asStateFlow()
+
   private val _activeResolution = MutableStateFlow(Resolution.RES_1080P)
   val activeResolution: StateFlow<Resolution> = _activeResolution.asStateFlow()
 
@@ -238,6 +241,16 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     viewModelScope.launch {
       timelineEngine.timeline.collectLatest { timeline ->
         playbackEngine.updateTimeline(timeline)
+        if (!_isCanvasConfiguredByMedia.value && timeline.videoClips.isNotEmpty()) {
+          val firstClip = timeline.videoClips.first()
+          val rot = if (firstClip.naturalRotation != 0) firstClip.naturalRotation else firstClip.rotationDegrees
+          checkAndAutoConfigureCanvasFromMedia(
+            width = firstClip.width,
+            height = firstClip.height,
+            rotationDegrees = rot,
+            frameRate = firstClip.frameRate
+          )
+        }
         if (_activeProjectId.value.isNotBlank() && _currentScreen.value == AppScreen.EDITOR) {
           _saveState.value = _saveState.value.copy(status = ProjectSaveStatus.UNSAVED)
           // Debounce crash recovery snapshot so every keystroke or trim is immediately protected
@@ -339,6 +352,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     _activeFps.value = fps
     _activeSampleRate.value = 48000
     _activeCanvasColor.value = 0xFF000000
+    _isCanvasConfiguredByMedia.value = initialMediaClips.isNotEmpty()
 
     // Timeline is completely empty: no video clips, text, audio clips, overlays, stickers, or any other media
     val initialTimeline = Timeline(
@@ -358,6 +372,48 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     _isCreatingProject.value = false
     navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
+  }
+
+  /**
+   * Authoritatively configures the project canvas (aspect ratio, resolution, fps)
+   * based on the intrinsic dimensions and metadata of the first imported video.
+   * Subsequent media imports do NOT alter the established canvas aspect ratio.
+   */
+  fun checkAndAutoConfigureCanvasFromMedia(
+    width: Int,
+    height: Int,
+    rotationDegrees: Int = 0,
+    frameRate: Float = 30f,
+    force: Boolean = false
+  ): Boolean {
+    val clips = timelineEngine.timeline.value.videoClips
+    // Authoritative rule: If canvas is already configured by media and has clips, and not forced, keep established canvas locked
+    if (!force && _isCanvasConfiguredByMedia.value && clips.isNotEmpty()) {
+      return false
+    }
+
+    val (effWidth, effHeight) = AspectRatio.resolveEffectiveDimensions(width, height, rotationDegrees)
+    val detectedAspect = AspectRatio.fromDimensions(effWidth, effHeight)
+    val detectedFps = when {
+      frameRate >= 50f -> FrameRate.FPS_60
+      frameRate in 23.5f..26.5f -> FrameRate.FPS_24
+      frameRate in 24.5f..26.0f -> FrameRate.FPS_25
+      else -> FrameRate.FPS_30
+    }
+    val detectedResolution = when (detectedAspect) {
+      AspectRatio.RATIO_9_16 -> if (effWidth >= 1440 || effHeight >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
+      AspectRatio.RATIO_1_1 -> if (effWidth >= 2000 || effHeight >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
+      AspectRatio.RATIO_16_9, AspectRatio.RATIO_21_9 -> if (effWidth >= 3840 || effHeight >= 2160) Resolution.RES_4K else if (effWidth >= 2560) Resolution.RES_2K else Resolution.RES_1080P
+      else -> Resolution.RES_1080P
+    }
+
+    _activeAspectRatio.value = detectedAspect
+    _activeResolution.value = detectedResolution
+    _activeFps.value = detectedFps
+    _isCanvasConfiguredByMedia.value = true
+    saveCurrentProject()
+    android.util.Log.d("StudioViewModel", "Canvas auto-configured from first imported video: ${detectedAspect.label} (${effWidth}x${effHeight}) at ${detectedFps.fps}fps")
+    return true
   }
 
   fun createProjectFromPickedVideo(
@@ -405,8 +461,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
       }
 
       val firstClip = clips.firstOrNull()
+      val (effW, effH) = if (firstClip != null) {
+        val rot = if (firstClip.naturalRotation != 0) firstClip.naturalRotation else firstClip.rotationDegrees
+        AspectRatio.resolveEffectiveDimensions(firstClip.width, firstClip.height, rot)
+      } else Pair(1920, 1080)
+
       val detectedAspect = if (firstClip != null) {
-        AspectRatio.fromDimensions(firstClip.width, firstClip.height)
+        AspectRatio.fromDimensions(effW, effH)
       } else AspectRatio.RATIO_16_9
 
       val detectedFps = if (firstClip != null) {
@@ -420,9 +481,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
       val detectedResolution = if (firstClip != null) {
         when (detectedAspect) {
-          AspectRatio.RATIO_9_16 -> if (firstClip.width >= 1440 || firstClip.height >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
-          AspectRatio.RATIO_1_1 -> if (firstClip.width >= 2000 || firstClip.height >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
-          AspectRatio.RATIO_16_9 -> if (firstClip.width >= 3840 || firstClip.height >= 2160) Resolution.RES_4K else if (firstClip.width >= 2560) Resolution.RES_2K else Resolution.RES_1080P
+          AspectRatio.RATIO_9_16 -> if (effW >= 1440 || effH >= 2560) Resolution.RES_VERTICAL_2K else Resolution.RES_1080P
+          AspectRatio.RATIO_1_1 -> if (effW >= 2000 || effH >= 2000) Resolution.RES_SQUARE_2K else Resolution.RES_1080P
+          AspectRatio.RATIO_16_9, AspectRatio.RATIO_21_9 -> if (effW >= 3840 || effH >= 2160) Resolution.RES_4K else if (effW >= 2560) Resolution.RES_2K else Resolution.RES_1080P
           else -> Resolution.RES_1080P
         }
       } else Resolution.RES_1080P
@@ -517,6 +578,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
       _activeFps.value = pkg.settings.fps
     }
     timelineEngine.loadTimeline(loadedTimeline)
+    _isCanvasConfiguredByMedia.value = loadedTimeline.videoClips.isNotEmpty()
     _saveState.value = ProjectSaveState(ProjectSaveStatus.SAVED, project.lastEditedTime)
     navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
@@ -558,6 +620,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     val generatedTimeline = template.createTimeline(mediaReplacements, textReplacements)
     timelineEngine.loadTimeline(generatedTimeline)
+    _isCanvasConfiguredByMedia.value = true
     saveCurrentProject()
     navigateTo(AppScreen.EDITOR)
     checkMissingMedia()
@@ -875,6 +938,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     _activeFps.value = fps
     _activeSampleRate.value = sampleRate
     _activeCanvasColor.value = canvasColor
+    _isCanvasConfiguredByMedia.value = true
     // Update timeline canvas background color as well
     timelineEngine.setCanvasBackgroundColor(canvasColor)
     saveCurrentProject()

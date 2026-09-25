@@ -44,34 +44,25 @@ fun TrackHeaders(ctrl: TimelineUiController, m: TimelineMetrics, modifier: Modif
     val density = LocalDensity.current
     val tracks = ctrl.snapshot.tracks
 
-    Box(modifier.background(TimelineTokens.HeaderBg)) {
-        Column(Modifier.fillMaxSize()) {
-            // 1. STICKY MAIN TRACK HEADER (Row 0)
-            if (tracks.isNotEmpty()) {
-                val track = tracks[0]
-                val rowHeightPx = m.rowHeightPx(0)
-                val rowDp = with(density) { rowHeightPx.toDp() }
-                TrackHeaderRowItem(ctrl, 0, track, rowDp, rowHeightPx, m, haptics)
-                if (tracks.size > 1) {
+    Box(
+        modifier
+            .background(TimelineTokens.HeaderBg)
+            .clipToBounds()
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { translationY = -ctrl.scrollY }
+        ) {
+            tracks.forEachIndexed { index, track ->
+                if (index == 1) {
                     Spacer(Modifier.height(TimelineTokens.MainToSubGap))
+                } else if (index > 1) {
+                    Spacer(Modifier.height(TimelineTokens.SubTrackGap))
                 }
-            }
-
-            // 2. SCROLLABLE SUB-TRACK HEADERS (Row 1..N-1)
-            if (tracks.size > 1) {
-                Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
-                    Column(Modifier.graphicsLayer { translationY = -ctrl.scrollY }) {
-                        for (index in 1 until tracks.size) {
-                            if (index > 1) {
-                                Spacer(Modifier.height(TimelineTokens.SubTrackGap))
-                            }
-                            val track = tracks[index]
-                            val rowHeightPx = m.rowHeightPx(index)
-                            val rowDp = with(density) { rowHeightPx.toDp() }
-                            TrackHeaderRowItem(ctrl, index, track, rowDp, rowHeightPx, m, haptics)
-                        }
-                    }
-                }
+                val rowHeightPx = m.rowHeightPx(index)
+                val rowDp = with(density) { rowHeightPx.toDp() }
+                TrackHeaderRowItem(ctrl, index, track, rowDp, rowHeightPx, m, haptics)
             }
         }
     }

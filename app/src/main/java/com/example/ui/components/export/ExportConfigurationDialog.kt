@@ -218,6 +218,7 @@ internal fun calculateExportDimensions(res: Resolution, aspect: AspectRatio): Pa
         AspectRatio.RATIO_4_3 -> Pair(longSide, (longSide * 3) / 4)
         AspectRatio.RATIO_4_5 -> Pair((shortSide * 4) / 5, shortSide)
         AspectRatio.RATIO_3_4 -> Pair((shortSide * 3) / 4, shortSide)
+        AspectRatio.RATIO_21_9 -> Pair((shortSide * 21) / 9, shortSide)
         AspectRatio.CUSTOM -> Pair(longSide, shortSide)
       }
     }

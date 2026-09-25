@@ -1,6 +1,12 @@
 package com.example.ui.components.timeline
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -409,17 +416,41 @@ private fun IndividualLayerRow(
     label = "layerBg"
   )
 
-  val borderColor = if (isSelected) CyanAccent else StudioBorder
+  val scale by animateFloatAsState(
+    targetValue = if (isSelected) 1.025f else 1.0f,
+    animationSpec = spring(
+      dampingRatio = Spring.DampingRatioMediumBouncy,
+      stiffness = Spring.StiffnessMediumLow
+    ),
+    label = "layerScale"
+  )
+
+  val borderWidth by animateDpAsState(
+    targetValue = if (isSelected) 2.dp else 0.5.dp,
+    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+    label = "layerBorderWidth"
+  )
+
+  val borderColor by animateColorAsState(
+    targetValue = if (isSelected) CyanAccent else StudioBorder,
+    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+    label = "layerBorderColor"
+  )
 
   Surface(
     modifier = Modifier
       .fillMaxWidth()
+      .graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+      }
       .clip(RoundedCornerShape(10.dp))
-      .border(if (isSelected) 1.5.dp else 0.5.dp, borderColor, RoundedCornerShape(10.dp))
+      .border(borderWidth, borderColor, RoundedCornerShape(10.dp))
       .clickable(onClick = onSelect)
       .testTag("layer_item_${layer.id}"),
     color = backgroundColor,
-    tonalElevation = if (isSelected) 4.dp else 1.dp
+    tonalElevation = if (isSelected) 6.dp else 1.dp,
+    shadowElevation = if (isSelected) 4.dp else 0.dp
   ) {
     Column(
       modifier = Modifier
