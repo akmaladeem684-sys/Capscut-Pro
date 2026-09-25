@@ -235,6 +235,7 @@ fun VideoTrimmingToolPanel(
         }
 
         if (activeClip.isVideo && isRealPlayable) {
+          val trimPlayer = viewModel.playbackEngine.player
           AndroidView(
             factory = { ctx ->
               android.view.TextureView(ctx).apply {
@@ -242,11 +243,29 @@ fun VideoTrimmingToolPanel(
                   ViewGroup.LayoutParams.MATCH_PARENT,
                   ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                viewModel.playbackEngine.player.setVideoTextureView(this)
+                try {
+                  trimPlayer.setVideoTextureView(this)
+                } catch (e: Exception) {
+                  android.util.Log.w("VideoTrimmingToolPanel", "Failed to attach TextureView to player", e)
+                }
+                tag = trimPlayer
               }
             },
             update = { tv ->
-              viewModel.playbackEngine.player.setVideoTextureView(tv)
+              if (tv.tag != trimPlayer) {
+                try {
+                  trimPlayer.setVideoTextureView(tv)
+                  tv.tag = trimPlayer
+                } catch (e: Exception) {
+                  android.util.Log.w("VideoTrimmingToolPanel", "Failed to rebind TextureView to player", e)
+                }
+              }
+            },
+            onReset = { /* Keep view intact */ },
+            onRelease = { tv ->
+              try {
+                trimPlayer.clearVideoTextureView(tv)
+              } catch (_: Exception) {}
             },
             modifier = Modifier
               .fillMaxSize()

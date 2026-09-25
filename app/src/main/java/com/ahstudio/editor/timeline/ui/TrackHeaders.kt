@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ahstudio.editor.timeline.core.Track
@@ -40,70 +42,96 @@ import com.ahstudio.editor.timeline.core.TrackKind
 fun TrackHeaders(ctrl: TimelineUiController, m: TimelineMetrics, modifier: Modifier = Modifier) {
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val tracks = ctrl.snapshot.tracks
 
     Box(modifier.background(TimelineTokens.HeaderBg)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer { translationY = -ctrl.scrollY }
-        ) {
-            ctrl.snapshot.tracks.forEachIndexed { index, track ->
-                if (index == 1) {
-                    Spacer(Modifier.height(TimelineTokens.MainToSubGap))
-                } else if (index > 1) {
-                    Spacer(Modifier.height(TimelineTokens.SubTrackGap))
-                }
-
-                val rowHeightPx = m.rowHeightPx(index)
+        Column(Modifier.fillMaxSize()) {
+            // 1. STICKY MAIN TRACK HEADER (Row 0)
+            if (tracks.isNotEmpty()) {
+                val track = tracks[0]
+                val rowHeightPx = m.rowHeightPx(0)
                 val rowDp = with(density) { rowHeightPx.toDp() }
-                val isPrimaryVideo = index == 0 && track.kind == TrackKind.VIDEO
+                TrackHeaderRowItem(ctrl, 0, track, rowDp, rowHeightPx, m, haptics)
+                if (tracks.size > 1) {
+                    Spacer(Modifier.height(TimelineTokens.MainToSubGap))
+                }
+            }
 
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(rowDp)
-                        .padding(vertical = 2.dp, horizontal = 4.dp)
-                        .pointerInput(track.id) {
-                            detectTapGestures(onTap = {
-                                ctrl.onTimelineTouchBegan()
-                                ctrl.selectTrack(track.id)
-                            })
-                        }
-                        .pointerInput(track.id, ctrl.snapshot.tracks.size) {
-                            var accY = 0f
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    ctrl.onTimelineTouchBegan()
-                                    ctrl.beginTrackReorder(index)
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    accY = 0f
-                                },
-                                onDrag = { change, amt ->
-                                    accY += amt.y
-                                    ctrl.updateTrackReorder(
-                                        m.trackTopPx(index) + rowHeightPx / 2f + accY + ctrl.scrollY,
-                                        m
-                                    )
-                                    change.consume()
-                                },
-                                onDragEnd = { ctrl.commitTrackReorder() },
-                                onDragCancel = { ctrl.cancelTrackReorder() },
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isPrimaryVideo) {
-                        PrimaryVideoHeaderRow(
-                            track = track,
-                            onToggleMute = {
-                                ctrl.engine.updateTrack(track.id) { it.copy(muted = !it.muted) }
+            // 2. SCROLLABLE SUB-TRACK HEADERS (Row 1..N-1)
+            if (tracks.size > 1) {
+                Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                    Column(Modifier.graphicsLayer { translationY = -ctrl.scrollY }) {
+                        for (index in 1 until tracks.size) {
+                            if (index > 1) {
+                                Spacer(Modifier.height(TimelineTokens.SubTrackGap))
                             }
-                        )
-                    } else {
-                        SecondaryTrackIconTile(track = track)
+                            val track = tracks[index]
+                            val rowHeightPx = m.rowHeightPx(index)
+                            val rowDp = with(density) { rowHeightPx.toDp() }
+                            TrackHeaderRowItem(ctrl, index, track, rowDp, rowHeightPx, m, haptics)
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TrackHeaderRowItem(
+    ctrl: TimelineUiController,
+    index: Int,
+    track: com.ahstudio.editor.timeline.core.Track,
+    rowDp: Dp,
+    rowHeightPx: Float,
+    m: TimelineMetrics,
+    haptics: androidx.compose.ui.hapticfeedback.HapticFeedback
+) {
+    val isPrimaryVideo = index == 0 && track.kind == com.ahstudio.editor.timeline.core.TrackKind.VIDEO
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(rowDp)
+            .padding(vertical = 2.dp, horizontal = 4.dp)
+            .pointerInput(track.id) {
+                detectTapGestures(onTap = {
+                    ctrl.onTimelineTouchBegan()
+                    ctrl.selectTrack(track.id)
+                })
+            }
+            .pointerInput(track.id, ctrl.snapshot.tracks.size) {
+                var accY = 0f
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        ctrl.onTimelineTouchBegan()
+                        ctrl.beginTrackReorder(index)
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        accY = 0f
+                    },
+                    onDrag = { change, amt ->
+                        accY += amt.y
+                        ctrl.updateTrackReorder(
+                            m.trackTopPx(index) + rowHeightPx / 2f + accY + ctrl.scrollY,
+                            m
+                        )
+                        change.consume()
+                    },
+                    onDragEnd = { ctrl.commitTrackReorder() },
+                    onDragCancel = { ctrl.cancelTrackReorder() },
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (isPrimaryVideo) {
+            PrimaryVideoHeaderRow(
+                track = track,
+                onToggleMute = {
+                    ctrl.engine.updateTrack(track.id) { it.copy(muted = !it.muted) }
+                }
+            )
+        } else {
+            SecondaryTrackIconTile(track = track)
         }
     }
 }

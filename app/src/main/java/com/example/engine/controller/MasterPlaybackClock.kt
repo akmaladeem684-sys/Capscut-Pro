@@ -105,43 +105,65 @@ class MasterPlaybackClock(
     if (Looper.myLooper() == Looper.getMainLooper()) {
       setupChoreographer()
     } else {
-      mainHandler.post { setupChoreographer() }
-    }
-
-    // Coroutine fallback & audio sync poller
-    tickerJob = scope.launch(Dispatchers.Default) {
-      while (isActive && _isPlaying.value) {
-        val calculatedPos = calculateCurrentPosition()
-        _positionMs.value = calculatedPos
-        delay(8L) // 120fps poll fallback
+      mainHandler.post {
+        if (_isPlaying.value) {
+          setupChoreographer()
+        }
       }
     }
   }
 
   private fun setupChoreographer() {
-    val callback = object : Choreographer.FrameCallback {
-      override fun doFrame(frameTimeNanos: Long) {
-        if (!_isPlaying.value) return
-        lastVsyncTimeNs = frameTimeNanos
-        val nextPos = calculateCurrentPosition()
-        _positionMs.value = nextPos
-        Choreographer.getInstance().postFrameCallback(this)
+    try {
+      val cb = choreographerCallback
+      if (cb != null) {
+        Choreographer.getInstance().removeFrameCallback(cb)
+      }
+      val callback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+          if (!_isPlaying.value) return
+          lastVsyncTimeNs = frameTimeNanos
+          val nextPos = calculateCurrentPosition()
+          _positionMs.value = nextPos
+          try {
+            Choreographer.getInstance().postFrameCallback(this)
+          } catch (_: Throwable) {}
+        }
+      }
+      choreographerCallback = callback
+      Choreographer.getInstance().postFrameCallback(callback)
+    } catch (e: Throwable) {
+      // Fallback to coroutine ticker if Choreographer is unavailable (e.g. in test or headless env)
+      tickerJob?.cancel()
+      tickerJob = scope.launch(Dispatchers.Main.immediate) {
+        while (isActive && _isPlaying.value) {
+          val calculatedPos = calculateCurrentPosition()
+          _positionMs.value = calculatedPos
+          delay(16L)
+        }
       }
     }
-    choreographerCallback = callback
-    Choreographer.getInstance().postFrameCallback(callback)
   }
 
   private fun stopVsyncClock() {
     tickerJob?.cancel()
     tickerJob = null
 
-    choreographerCallback?.let { cb ->
-      mainHandler.post {
-        Choreographer.getInstance().removeFrameCallback(cb)
+    val cb = choreographerCallback
+    choreographerCallback = null
+    if (cb != null) {
+      if (Looper.myLooper() == Looper.getMainLooper()) {
+        try {
+          Choreographer.getInstance().removeFrameCallback(cb)
+        } catch (_: Throwable) {}
+      } else {
+        mainHandler.post {
+          try {
+            Choreographer.getInstance().removeFrameCallback(cb)
+          } catch (_: Throwable) {}
+        }
       }
     }
-    choreographerCallback = null
   }
 
   /**
@@ -156,22 +178,26 @@ class MasterPlaybackClock(
     val vsyncNs = if (lastVsyncTimeNs > 0L) lastVsyncTimeNs else nowNs
 
     // Synchronize with hardware audio clock PTS if available
-    val provider = audioClockProvider
-    val audioPos = provider?.getAudioPositionMs()
-    if (audioPos != null && audioPos >= 0L) {
-      if (lastAudioPositionMs != audioPos) {
-        lastAudioPositionMs = audioPos
-        lastAudioTimestampNs = nowNs
-        anchorPositionMs = audioPos
-        anchorTimeNs = nowNs
+    try {
+      val provider = audioClockProvider
+      val audioPos = provider?.getAudioPositionMs()
+      if (audioPos != null && audioPos >= 0L) {
+        if (lastAudioPositionMs != audioPos) {
+          lastAudioPositionMs = audioPos
+          lastAudioTimestampNs = nowNs
+          anchorPositionMs = audioPos
+          anchorTimeNs = nowNs
+        }
+        // Interpolate between audio head updates using VSYNC time
+        val subAudioNs = (vsyncNs - lastAudioTimestampNs).coerceIn(
+          0L,
+          TimeUnit.MILLISECONDS.toNanos(MAX_SUB_AUDIO_INTERPOLATION_MS)
+        )
+        val calculatedMs = anchorPositionMs + TimeUnit.NANOSECONDS.toMillis(subAudioNs)
+        return calculatedMs.coerceAtLeast(0L)
       }
-      // Interpolate between audio head updates using VSYNC time
-      val subAudioNs = (vsyncNs - lastAudioTimestampNs).coerceIn(
-        0L,
-        TimeUnit.MILLISECONDS.toNanos(MAX_SUB_AUDIO_INTERPOLATION_MS)
-      )
-      val calculatedMs = anchorPositionMs + TimeUnit.NANOSECONDS.toMillis(subAudioNs)
-      return calculatedMs.coerceAtLeast(0L)
+    } catch (_: Throwable) {
+      // Audio provider safely ignored if player is transitioning or detached
     }
 
     // Fallback to high-precision monotonic VSYNC clock

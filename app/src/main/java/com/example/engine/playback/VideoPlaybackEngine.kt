@@ -112,42 +112,63 @@ class VideoPlaybackEngine(
     // Existing GPU composition layer remains responsible for realtime filter/shader application.
   }
 
-  fun getOverlayPlayer(clipId: String): ExoPlayer? = overlayPlayers[clipId]
+  fun getOverlayPlayer(clipId: String): ExoPlayer? = try { overlayPlayers[clipId] } catch (_: Exception) { null }
 
   fun syncOverlayPlayers(posMs: Long) {
     if (isTrimPreviewMode) return
-    val activeOverlays = currentTimeline.overlayClips.filter { it.isVideo && !it.isHidden && isPlayableInPlayer(it.uri) }
-    val activeIds = activeOverlays.map { it.id }.toSet()
-    overlayPlayers.keys.toList().filter { it !in activeIds }.forEach { id ->
-      overlayPlayers.remove(id)?.let { p -> try { p.stop(); p.release() } catch (_: Exception) {} }
-      overlayLoadedUris.remove(id)
-    }
-    for (overlay in activeOverlays) {
-      val effectiveUri = proxyEngine?.getProxyUri(overlay) ?: overlay.uri
-      var p = overlayPlayers[overlay.id]
-      if (p == null) {
-        p = try {
-          ExoPlayer.Builder(context.applicationContext, DefaultRenderersFactory(context.applicationContext).setEnableDecoderFallback(true))
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 5000, 250, 500).build())
-            .setSeekParameters(SeekParameters.CLOSEST_SYNC).build().apply { repeatMode = Player.REPEAT_MODE_OFF }
-        } catch (e: Exception) {
-          Log.w(TAG, "Overlay player creation failed", e); continue
+    if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return
+    try {
+      val activeOverlays = currentTimeline.overlayClips.filter { it.isVideo && !it.isHidden && isPlayableInPlayer(it.uri) }
+      val activeIds = activeOverlays.map { it.id }.toSet()
+      overlayPlayers.keys.toList().filter { it !in activeIds }.forEach { id ->
+        overlayPlayers.remove(id)?.let { p -> try { p.stop(); p.clearVideoSurface(); p.release() } catch (_: Exception) {} }
+        overlayLoadedUris.remove(id)
+      }
+      for (overlay in activeOverlays) {
+        val effectiveUri = proxyEngine?.getProxyUri(overlay) ?: overlay.uri
+        var p = overlayPlayers[overlay.id]
+        if (p == null) {
+          p = try {
+            ExoPlayer.Builder(context.applicationContext, DefaultRenderersFactory(context.applicationContext).setEnableDecoderFallback(true))
+              .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(500, 5000, 250, 500).build())
+              .setSeekParameters(SeekParameters.CLOSEST_SYNC).build().apply { repeatMode = Player.REPEAT_MODE_OFF }
+          } catch (e: Exception) {
+            Log.w(TAG, "Overlay player creation failed", e); continue
+          }
+          overlayPlayers[overlay.id] = p
         }
-        overlayPlayers[overlay.id] = p
+        if (overlayLoadedUris[overlay.id] != effectiveUri || p.mediaItemCount == 0 || p.playbackState == Player.STATE_IDLE) {
+          try {
+            p.setMediaItem(MediaItem.fromUri(Uri.parse(effectiveUri)))
+            p.prepare()
+            overlayLoadedUris[overlay.id] = effectiveUri
+          } catch (e: Exception) {
+            Log.w(TAG, "Overlay prepare failed", e)
+          }
+        }
+        try {
+          p.playbackParameters = androidx.media3.common.PlaybackParameters(overlay.speed.coerceAtLeast(0.01f))
+          p.volume = if (overlay.isMuted) 0f else overlay.volume
+          val active = posMs >= overlay.timelineStartMs && posMs < overlay.timelineStartMs + overlay.durationMs
+          val source = overlay.timelineToSourceMs(posMs)
+          if (active && engineController.timelineSyncManager.isPlaying) {
+            val playerPos = try { p.currentPosition } catch (_: Exception) { 0L }
+            val isPPlaying = try { p.isPlaying } catch (_: Exception) { false }
+            if (kotlin.math.abs(playerPos - source) > 100L || !isPPlaying) {
+              p.seekTo(source)
+              p.play()
+            }
+          } else {
+            val isPPlaying = try { p.isPlaying } catch (_: Exception) { false }
+            if (isPPlaying) p.pause()
+            p.seekTo(source.coerceAtLeast(0L))
+          }
+        } catch (e: Exception) {
+          Log.w(TAG, "Overlay sync error", e)
+        }
       }
-      if (overlayLoadedUris[overlay.id] != effectiveUri || p.mediaItemCount == 0 || p.playbackState == Player.STATE_IDLE) {
-        try { p.setMediaItem(MediaItem.fromUri(Uri.parse(effectiveUri))); p.prepare(); overlayLoadedUris[overlay.id] = effectiveUri } catch (e: Exception) { Log.w(TAG, "Overlay prepare failed", e) }
-      }
-      p.playbackParameters = androidx.media3.common.PlaybackParameters(overlay.speed.coerceAtLeast(0.01f))
-      p.volume = if (overlay.isMuted) 0f else overlay.volume
-      val active = posMs >= overlay.timelineStartMs && posMs < overlay.timelineStartMs + overlay.durationMs
-      val source = overlay.timelineToSourceMs(posMs)
-      if (active && engineController.timelineSyncManager.isPlaying) {
-        if (kotlin.math.abs(p.currentPosition - source) > 100L || !p.isPlaying) { p.seekTo(source); p.play() }
-      } else {
-        if (p.isPlaying) p.pause()
-        p.seekTo(source.coerceAtLeast(0L))
-      }
+    } catch (e: Exception) {
+      Log.w(TAG, "syncOverlayPlayers error", e)
     }
   }
 

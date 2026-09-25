@@ -51,11 +51,9 @@ object KeyframeEvaluator {
     fun evalScalar(kfs: List<Keyframe>, seg: Int, t: Long, cache: TrackEvalCache?, dataVersion: Long): EvaluatedValue.FloatV? {
         val n = kfs.size
         if (n == 0) return null
-        if (seg < 0) return EvaluatedValue.FloatV(kfs.first().value, 0.0)
-        val s = if (seg >= n - 1) {
-            if (n >= 2 && t <= kfs.last().timeMs) n - 2
-            else return EvaluatedValue.FloatV(kfs.last().value, 0.0)
-        } else seg
+        if (t <= kfs.first().timeMs || seg < 0) return EvaluatedValue.FloatV(kfs.first().value, 0.0)
+        if (t >= kfs.last().timeMs) return EvaluatedValue.FloatV(kfs.last().value, 0.0)
+        val s = if (seg >= n - 1) n - 2 else seg
         val a = kfs[s]; val b = kfs[s + 1]
         if (a.interpolation == InterpolationType.HOLD) return EvaluatedValue.FloatV(a.value, 0.0)
         val dtMs = b.timeMs - a.timeMs
@@ -74,11 +72,9 @@ object KeyframeEvaluator {
     ): EvaluatedValue.Vec2V? {
         val n = kfs.size
         if (n == 0) return null
-        if (seg < 0) return EvaluatedValue.Vec2V(vecOf(kfs.first()), Vec2.ZERO)
-        val s = if (seg >= n - 1) {
-            if (n >= 2 && t <= kfs.last().timeMs) n - 2
-            else return EvaluatedValue.Vec2V(vecOf(kfs.last()), Vec2.ZERO)
-        } else seg
+        if (t <= kfs.first().timeMs || seg < 0) return EvaluatedValue.Vec2V(vecOf(kfs.first()), Vec2.ZERO)
+        if (t >= kfs.last().timeMs) return EvaluatedValue.Vec2V(vecOf(kfs.last()), Vec2.ZERO)
+        val s = if (seg >= n - 1) n - 2 else seg
         val a = kfs[s]; val b = kfs[s + 1]
         val va = vecOf(a); val vb = vecOf(b)
         if (a.interpolation == InterpolationType.HOLD) return EvaluatedValue.Vec2V(va, Vec2.ZERO)

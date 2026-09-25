@@ -292,5 +292,128 @@ class TimelineEngineNLETest {
     assertTrue(slided)
     assertEquals(2800L, engine.timeline.value.videoClips[1].timelineStartMs)
   }
+
+  @Test
+  fun testInsertClipAtAuthoritativeCTI() {
+    val timeline = Timeline(
+      videoClips = listOf(
+        VideoClip(id = "v1", name = "Clip 1", uri = "uri1", timelineStartMs = 0L, durationMs = 2000L, trackIndex = 0)
+      )
+    )
+    engine.loadTimeline(timeline)
+    engine.setPosition(1500L, snap = false)
+    assertEquals(1500L, engine.currentPositionMs.value)
+
+    // Add overlay clip at current CTI
+    val overlay = VideoClip(id = "ov1", name = "PIP", uri = "ov_uri", timelineStartMs = 1500L, durationMs = 1000L, trackIndex = 1)
+    engine.addOverlayClip(overlay)
+
+    val added = engine.timeline.value.overlayClips.find { it.id == "ov1" }
+    assertNotNull(added)
+    assertEquals(1500L, added?.timelineStartMs)
+    assertEquals(1000L, added?.durationMs)
+  }
+
+  @Test
+  fun testTrackLockingEnforcement() {
+    val timeline = Timeline(
+      videoClips = listOf(
+        VideoClip(id = "v1", name = "Clip 1", uri = "uri1", timelineStartMs = 0L, durationMs = 2000L, trackIndex = 0)
+      ),
+      trackSettings = mapOf(
+        TrackType.MAIN_VIDEO to com.example.domain.model.TrackSettings(TrackType.MAIN_VIDEO, isLocked = true)
+      )
+    )
+    engine.loadTimeline(timeline)
+
+    // Move, trim, split, slip should fail when track is locked
+    val splitFail = engine.splitClipAtTime("v1", 1000L)
+    assertTrue(splitFail == null)
+
+    val slipFail = engine.slipClip("v1", 500L)
+    assertTrue(!slipFail)
+
+    // Unlock and verify split succeeds
+    engine.setTrackLocked(TrackType.MAIN_VIDEO, false)
+    val splitSuccess = engine.splitClipAtTime("v1", 1000L)
+    assertNotNull(splitSuccess)
+  }
+
+  @Test
+  fun testRippleDeleteAndKeyframePruning() {
+    val v1 = VideoClip(id = "v1", name = "C1", uri = "u1", timelineStartMs = 0L, durationMs = 2000L, trackIndex = 0)
+    val v2 = VideoClip(id = "v2", name = "C2", uri = "u2", timelineStartMs = 2000L, durationMs = 2000L, trackIndex = 0)
+    val v3 = VideoClip(id = "v3", name = "C3", uri = "u3", timelineStartMs = 4000L, durationMs = 2000L, trackIndex = 0)
+    engine.loadTimeline(Timeline(videoClips = listOf(v1, v2, v3)))
+
+    // Ripple delete middle clip v2
+    engine.rippleDeleteClip("v2")
+    val current = engine.timeline.value.videoClips
+    assertEquals(2, current.size)
+    assertEquals("v1", current[0].id)
+    assertEquals("v3", current[1].id)
+    assertEquals(0L, current[0].timelineStartMs)
+    // v3 should be shifted left by v2's duration (2000ms)
+    assertEquals(2000L, current[1].timelineStartMs)
+  }
+
+  @Test
+  fun testMultiSelectionAndBatchDelete() {
+    val v1 = VideoClip(id = "v1", name = "C1", uri = "u1", timelineStartMs = 0L, durationMs = 1000L, trackIndex = 0)
+    val v2 = VideoClip(id = "v2", name = "C2", uri = "u2", timelineStartMs = 1000L, durationMs = 1000L, trackIndex = 0)
+    val v3 = VideoClip(id = "v3", name = "C3", uri = "u3", timelineStartMs = 2000L, durationMs = 1000L, trackIndex = 0)
+    engine.loadTimeline(Timeline(videoClips = listOf(v1, v2, v3)))
+
+    engine.selectClips(setOf("v1", "v3"))
+    assertTrue(engine.isClipSelected("v1"))
+    assertTrue(engine.isClipSelected("v3"))
+    assertTrue(!engine.isClipSelected("v2"))
+
+    engine.deleteClips(setOf("v1", "v3"))
+    assertEquals(1, engine.timeline.value.videoClips.size)
+    assertEquals("v2", engine.timeline.value.videoClips[0].id)
+  }
+
+  @Test
+  fun testUndoRedoRestoresExactState() {
+    val v1 = VideoClip(id = "v1", name = "C1", uri = "u1", timelineStartMs = 0L, durationMs = 2000L, trackIndex = 0)
+    engine.loadTimeline(Timeline(videoClips = listOf(v1)))
+    val originalState = engine.timeline.value
+
+    engine.splitClipAtTime("v1", 1000L)
+    assertEquals(2, engine.timeline.value.videoClips.size)
+
+    engine.undo()
+    assertEquals(1, engine.timeline.value.videoClips.size)
+    assertEquals("v1", engine.timeline.value.videoClips[0].id)
+    assertEquals(originalState.videoClips[0].durationMs, engine.timeline.value.videoClips[0].durationMs)
+
+    engine.redo()
+    assertEquals(2, engine.timeline.value.videoClips.size)
+  }
+
+  @Test
+  fun testTimelineEvaluatorFrameStateParity() {
+    val evaluator = com.example.engine.timeline.TimelineEvaluator()
+    val timeline = Timeline(
+      videoClips = listOf(
+        VideoClip(id = "v1", name = "Clip 1", uri = "uri1", timelineStartMs = 0L, durationMs = 3000L, trackIndex = 0)
+      ),
+      overlayClips = listOf(
+        VideoClip(id = "ov1", name = "Overlay 1", uri = "ov1", timelineStartMs = 1000L, durationMs = 1500L, trackIndex = 1)
+      ),
+      textClips = listOf(
+        TextClip(id = "t1", text = "Caption", timelineStartMs = 500L, durationMs = 2000L, trackIndex = 0)
+      )
+    )
+
+    val frameState = evaluator.evaluate(timeline, 1500L)
+    assertEquals(1500L, frameState.timestampMs)
+    assertEquals("v1", frameState.activeVideoClip?.id)
+    assertEquals(1, frameState.activeOverlays.size)
+    assertEquals("ov1", frameState.activeOverlays[0].clip.id)
+    assertEquals(1, frameState.activeTexts.size)
+    assertEquals("t1", frameState.activeTexts[0].clip.id)
+  }
 }
 

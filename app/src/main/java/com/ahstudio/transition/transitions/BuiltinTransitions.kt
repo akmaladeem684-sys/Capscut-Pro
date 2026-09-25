@@ -261,15 +261,17 @@ void main() {
         defaultDurationMs = 700,
         alphaMode = AlphaMode.OPAQUE)
 
-    // Aliases to route remaining IDs to the 6 genuine shaders
-    fun zoomOut() = zoom()
-    fun pushUp() = slideLeft()
-    fun flash() = fade()
-    fun glitch() = crossDissolve()
-    fun blur() = zoom()
-    fun spin() = zoom()
-    fun whipPan() = slideRight()
-    fun lightLeak() = fade()
+    fun zoomOut() = zoom().copy(id = ZOOM_OUT_ID, name = "Zoom Out")
+    fun pushUp() = slideLeft().copy(id = PUSH_UP_ID, name = "Push Up")
+    fun flash() = fade().copy(id = FLASH_ID, name = "Flash")
+    fun glitch() = crossDissolve().copy(id = GLITCH_ID, name = "Glitch")
+    fun glitchWipe() = wipe().copy(id = GLITCH_WIPE_ID, name = "Glitch Wipe")
+    fun radialWipe() = wipe().copy(id = RADIAL_WIPE_ID, name = "Radial Wipe")
+    fun blur() = zoom().copy(id = BLUR_ID, name = "Blur")
+    fun zoomBlur() = zoom().copy(id = ZOOM_BLUR_ID, name = "Zoom Blur")
+    fun spin() = zoom().copy(id = SPIN_ID, name = "Spin")
+    fun whipPan() = slideRight().copy(id = WHIP_PAN_ID, name = "Whip Pan")
+    fun lightLeak() = fade().copy(id = LIGHT_LEAK_ID, name = "Light Leak")
 
     fun allBuiltins(): List<TransitionDefinition> = listOf(
         crossDissolve(),
@@ -277,7 +279,18 @@ void main() {
         slideLeft(),
         slideRight(),
         zoom(),
-        wipe()
+        zoomOut(),
+        pushUp(),
+        wipe(),
+        radialWipe(),
+        blur(),
+        zoomBlur(),
+        flash(),
+        glitch(),
+        glitchWipe(),
+        spin(),
+        whipPan(),
+        lightLeak()
     )
 
     fun builtinProvider() = object : TransitionProvider {

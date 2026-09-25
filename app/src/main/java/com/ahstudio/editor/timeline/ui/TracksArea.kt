@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -47,19 +48,36 @@ import kotlin.math.roundToInt
 
 @Composable
 fun TracksArea(ctrl: TimelineUiController, m: TimelineMetrics) {
-    Box(Modifier.fillMaxSize().clipToBounds()) {
-        Column(Modifier.graphicsLayer { translationY = -ctrl.scrollY }) {
-            val tracks = ctrl.snapshot.tracks
-            val dragged = ctrl.dragPreview
-            val shift = dragged?.trackShift ?: 0
+    val tracks = ctrl.snapshot.tracks
+    val dragged = ctrl.dragPreview
+    val shift = dragged?.trackShift ?: 0
 
-            tracks.forEachIndexed { row, _ ->
-                if (row == 1) {
-                    Spacer(Modifier.height(TimelineTokens.MainToSubGap))
-                } else if (row > 1) {
-                    Spacer(Modifier.height(TimelineTokens.SubTrackGap))
+    Column(Modifier.fillMaxSize().clipToBounds()) {
+        // 1. STICKY MAIN TRACK (Row 0 - Fixed at top)
+        if (tracks.isNotEmpty()) {
+            TrackRow(ctrl, 0, tracks, dragged, shift, m)
+            if (tracks.size > 1) {
+                Spacer(Modifier.height(TimelineTokens.MainToSubGap))
+            }
+        }
+
+        // 2. SCROLLABLE SUB-TRACKS VIEWPORT (Row 1..N-1)
+        if (tracks.size > 1) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clipToBounds()
+                    .onSizeChanged { ctrl.subTracksViewportHeightPx = it.height.toFloat() }
+            ) {
+                Column(Modifier.graphicsLayer { translationY = -ctrl.scrollY }) {
+                    for (row in 1 until tracks.size) {
+                        if (row > 1) {
+                            Spacer(Modifier.height(TimelineTokens.SubTrackGap))
+                        }
+                        TrackRow(ctrl, row, tracks, dragged, shift, m)
+                    }
                 }
-                TrackRow(ctrl, row, tracks, dragged, shift, m)
             }
         }
     }

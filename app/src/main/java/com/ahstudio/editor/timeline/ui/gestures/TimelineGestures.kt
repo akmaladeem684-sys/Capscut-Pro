@@ -16,7 +16,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+import kotlin.math.abs
 import kotlin.math.roundToLong
+
+private enum class ScrollAxis { UNDECIDED, HORIZONTAL, VERTICAL }
 
 private sealed class Mode {
     data class Undecided(val hit: Hit) : Mode()
@@ -29,6 +32,7 @@ private sealed class Mode {
         val gestureStartScrollY: Float,
         val downX: Float,
         val downY: Float,
+        var lockedAxis: ScrollAxis = ScrollAxis.UNDECIDED,
     ) : Mode()
     data class Zoom(val anchorMicros: Long, val startZoom: Float) : Mode()
 }
@@ -107,6 +111,7 @@ suspend fun PointerInputScope.timelineGestures(
                                             gestureStartScrollY = ctrl.scrollY,
                                             downX = downPos.x,
                                             downY = downPos.y,
+                                            lockedAxis = if (abs(dx) >= abs(dy)) ScrollAxis.HORIZONTAL else ScrollAxis.VERTICAL,
                                         )
                                     } else {
                                         // Editable overlay clip or intentionally long-pressed base media
@@ -120,6 +125,7 @@ suspend fun PointerInputScope.timelineGestures(
                                     gestureStartScrollY = ctrl.scrollY,
                                     downX = downPos.x,
                                     downY = downPos.y,
+                                    lockedAxis = if (abs(dx) >= abs(dy)) ScrollAxis.HORIZONTAL else ScrollAxis.VERTICAL,
                                 )
                             }
                         }
@@ -142,19 +148,47 @@ suspend fun PointerInputScope.timelineGestures(
                         ctrl.updateClipDrag(deltaMicros, rawShift, snapEnabled = true, metrics.snapPx)
                     }
                     is Mode.Scroll -> {
-                        val totalDeltaPx = (pos.x - m.downX).toDouble()
-                        // Moving left (swiping left, deltaPx < 0) advances timeline forward (0s -> 6s).
-                        // Moving right (swiping right, deltaPx > 0) rewinds timeline backwards (6s -> 3s).
-                        val deltaMicros = (-totalDeltaPx / ctrl.viewport.pxPerMicro).roundToLong()
-                        val targetMicros = (m.gestureStartTimeMicros + deltaMicros).coerceAtLeast(0L)
-
+                        val dx = pos.x - m.downX
                         val dy = pos.y - m.downY
-                        ctrl.setScrollYRaw(m.gestureStartScrollY - dy)
 
-                        ctrl.scrollToTime(targetMicros)
-                        ctrl.clock.seekTo(targetMicros)
-                        ctrl.playback.requestScrubSeek(targetMicros)
-                        ctrl.playheadMicros = targetMicros
+                        // Small movement threshold before selecting the axis
+                        if (m.lockedAxis == ScrollAxis.UNDECIDED) {
+                            val distSq = dx * dx + dy * dy
+                            val threshold = slop * 0.4f
+                            if (distSq >= threshold * threshold) {
+                                m.lockedAxis = if (abs(dx) >= abs(dy)) ScrollAxis.HORIZONTAL else ScrollAxis.VERTICAL
+                            }
+                        }
+
+                        if (m.lockedAxis == ScrollAxis.HORIZONTAL) {
+                            // Horizontal timeline scrolling: X changes, Y remains fixed
+                            val totalDeltaPx = dx.toDouble()
+                            val deltaMicros = (-totalDeltaPx / ctrl.viewport.pxPerMicro).roundToLong()
+                            val targetMicros = (m.gestureStartTimeMicros + deltaMicros).coerceAtLeast(0L)
+
+                            // Force vertical movement to zero
+                            ctrl.setScrollYRaw(m.gestureStartScrollY)
+
+                            // Apply X movement
+                            ctrl.scrollToTime(targetMicros)
+                            ctrl.clock.seekTo(targetMicros)
+                            ctrl.playback.requestScrubSeek(targetMicros)
+                            ctrl.playheadMicros = targetMicros
+                        } else if (m.lockedAxis == ScrollAxis.VERTICAL) {
+                            // Vertical track scrolling: Y changes, X remains fixed
+                            // Force horizontal movement to zero
+                            ctrl.scrollToTime(m.gestureStartTimeMicros)
+                            ctrl.clock.seekTo(m.gestureStartTimeMicros)
+                            ctrl.playheadMicros = m.gestureStartTimeMicros
+
+                            // Apply Y movement
+                            ctrl.setScrollYRaw(m.gestureStartScrollY - dy)
+                        } else {
+                            ctrl.scrollToTime(m.gestureStartTimeMicros)
+                            ctrl.clock.seekTo(m.gestureStartTimeMicros)
+                            ctrl.playheadMicros = m.gestureStartTimeMicros
+                            ctrl.setScrollYRaw(m.gestureStartScrollY)
+                        }
                     }
                     is Mode.Zoom -> {
                         val z = ev.calculateZoom()
@@ -184,7 +218,17 @@ suspend fun PointerInputScope.timelineGestures(
             is Mode.Trim -> ctrl.commitTrim()
             is Mode.ClipDrag -> if (moved) ctrl.commitClipDrag() else onTap(ctrl, hit, downPos)
             is Mode.Scroll -> {
-                if (!moved) onTap(ctrl, hit, downPos) else ctrl.fling(v.x, -v.y)
+                if (!moved) {
+                    onTap(ctrl, hit, downPos)
+                } else {
+                    when (m.lockedAxis) {
+                        ScrollAxis.HORIZONTAL -> ctrl.fling(v.x, 0f)
+                        ScrollAxis.VERTICAL -> ctrl.fling(0f, -v.y)
+                        ScrollAxis.UNDECIDED -> {
+                            if (abs(v.x) >= abs(v.y)) ctrl.fling(v.x, 0f) else ctrl.fling(0f, -v.y)
+                        }
+                    }
+                }
             }
             is Mode.Zoom -> Unit
         }

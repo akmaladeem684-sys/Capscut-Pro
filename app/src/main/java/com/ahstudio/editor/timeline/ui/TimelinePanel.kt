@@ -46,78 +46,12 @@ fun AhTimelineEditor(ctrl: TimelineUiController, modifier: Modifier = Modifier) 
     LaunchedEffect(Unit) { ctrl.densityScale = density.density }
     LaunchedEffect(ctrl.isPlaying) { while (ctrl.isPlaying) { ctrl.followPlayhead(); withFrameNanos { } } }
 
-    // Dynamic track auto-sizing: expand naturally as tracks are added, but fit content height when few tracks exist
-    val activeTrackCount = ctrl.snapshot.tracks.size.coerceAtLeast(1)
-    val totalHeightPx = metrics.totalTracksHeightPx(activeTrackCount) + metrics.rulerHeightPx + with(density) { 34.dp.toPx() }
-    val dynamicPanelHeight = with(density) { totalHeightPx.toDp() }.coerceIn(120.dp, 280.dp)
-
     Column(
         modifier
             .fillMaxWidth()
-            .height(dynamicPanelHeight)
             .background(TimelineTokens.PanelBg)
     ) {
-        // 1. Top Bar: Master Timecode on Left + Undo/Redo on Right
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(26.dp)
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            val curTimeStr = TimeFormatter.clock(TimelineTime(ctrl.playheadMicros), ctrl.fps, withFrames = false)
-            val durTimeStr = TimeFormatter.clock(TimelineTime(ctrl.engine.durationMicros()), ctrl.fps, withFrames = false)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = curTimeStr,
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = " / $durTimeStr",
-                    color = TimelineTokens.TextDim,
-                    fontSize = 10.sp
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .clickable(enabled = ctrl.canUndo) { ctrl.undo() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
-                        tint = if (ctrl.canUndo) Color.White else Color.White.copy(alpha = 0.3f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .clickable(enabled = ctrl.canRedo) { ctrl.redo() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
-                        tint = if (ctrl.canRedo) Color.White else Color.White.copy(alpha = 0.3f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
-
-        // 2. Full-Width Content Viewport (Ruler + Tracks with dynamic scrolling headers)
+        // Full-Width Content Viewport (Ruler + Tracks with dynamic scrolling headers)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val viewportWidth = constraints.maxWidth.toFloat()
             LaunchedEffect(viewportWidth) { ctrl.onViewportWidthChanged(viewportWidth) }

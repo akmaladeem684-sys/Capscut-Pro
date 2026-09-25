@@ -255,7 +255,7 @@ class TimelineRedesignVerificationTest {
         val baseClip = Fx.clip(e, vTrack, ClipKind.VIDEO, 0.0, 10.0)
 
         val metrics = TimelineMetrics(
-            rowHeightPx = 52f,
+            mainRowHeightPx = 52f,
             rulerHeightPx = 28f,
             headerWidthPx = 100f,
             handlePx = 20f,

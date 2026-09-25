@@ -44,11 +44,42 @@ class PlaybackManager(
 
   private var currentLoadedUri: String? = null
 
-  val isPlaying: Boolean get() = player.isPlaying
-  val currentPosition: Long get() = player.currentPosition
-  val duration: Long get() = player.duration.coerceAtLeast(0L)
-  val bufferedPosition: Long get() = player.bufferedPosition
-  val playbackState: Int get() = player.playbackState
+  private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+  val isPlaying: Boolean
+    get() = try {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) player.isPlaying else false
+    } catch (_: Throwable) {
+      false
+    }
+
+  val currentPosition: Long
+    get() = try {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) player.currentPosition else 0L
+    } catch (_: Throwable) {
+      0L
+    }
+
+  val duration: Long
+    get() = try {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) player.duration.coerceAtLeast(0L) else 0L
+    } catch (_: Throwable) {
+      0L
+    }
+
+  val bufferedPosition: Long
+    get() = try {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) player.bufferedPosition else 0L
+    } catch (_: Throwable) {
+      0L
+    }
+
+  val playbackState: Int
+    get() = try {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) player.playbackState else Player.STATE_IDLE
+    } catch (_: Throwable) {
+      Player.STATE_IDLE
+    }
 
   private val playerListener = object : Player.Listener {
     override fun onPlaybackStateChanged(state: Int) {
@@ -74,60 +105,114 @@ class PlaybackManager(
   init { player.addListener(playerListener) }
 
   fun loadMedia(uri: Uri, startPosMs: Long = 0L, autoPlay: Boolean = false) {
-    val uriString = uri.toString()
-    if (uriString == currentLoadedUri && player.playbackState != Player.STATE_IDLE) {
-      seekTo(startPosMs)
-      if (autoPlay) play()
-      return
+    try {
+      val uriString = uri.toString()
+      if (uriString == currentLoadedUri && playbackState != Player.STATE_IDLE) {
+        seekTo(startPosMs)
+        if (autoPlay) play()
+        return
+      }
+      currentLoadedUri = uriString
+      val normalizedUri = normalizeUri(uri)
+      player.setMediaItem(MediaItem.fromUri(normalizedUri), startPosMs.coerceAtLeast(0L))
+      player.prepare()
+      player.playWhenReady = autoPlay
+      Log.d(TAG, "prepared media=$uriString start=${startPosMs}ms autoPlay=$autoPlay")
+    } catch (e: Exception) {
+      Log.e(TAG, "loadMedia failed", e)
     }
-    currentLoadedUri = uriString
-    val normalizedUri = normalizeUri(uri)
-    player.setMediaItem(MediaItem.fromUri(normalizedUri), startPosMs.coerceAtLeast(0L))
-    player.prepare()
-    player.playWhenReady = autoPlay
-    Log.d(TAG, "prepared media=$uriString start=${startPosMs}ms autoPlay=$autoPlay")
   }
 
   fun play() {
-    if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
-    player.play()
+    try {
+      if (playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
+      player.play()
+    } catch (e: Exception) {
+      Log.e(TAG, "play failed", e)
+    }
   }
 
-  fun pause() { player.pause() }
+  fun pause() {
+    try {
+      player.pause()
+    } catch (e: Exception) {
+      Log.e(TAG, "pause failed", e)
+    }
+  }
 
   /** Fast seek used while scrubbing. */
   fun seekTo(positionMs: Long) {
-    player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
-    player.seekTo(positionMs.coerceAtLeast(0L))
+    try {
+      player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+      player.seekTo(positionMs.coerceAtLeast(0L))
+    } catch (e: Exception) {
+      Log.e(TAG, "seekTo failed", e)
+    }
   }
 
   /** Exact final seek used after scrub/reposition requests. */
   fun seekToExact(positionMs: Long) {
-    player.setSeekParameters(SeekParameters.EXACT)
-    player.seekTo(positionMs.coerceAtLeast(0L))
-    player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+    try {
+      player.setSeekParameters(SeekParameters.EXACT)
+      player.seekTo(positionMs.coerceAtLeast(0L))
+      player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+    } catch (e: Exception) {
+      Log.e(TAG, "seekToExact failed", e)
+    }
   }
 
-  fun setVolume(volume: Float) { player.volume = volume.coerceIn(0f, 2f) }
-  fun setMuted(isMuted: Boolean) { player.volume = if (isMuted) 0f else 1f }
+  fun setVolume(volume: Float) {
+    try {
+      player.volume = volume.coerceIn(0f, 2f)
+    } catch (_: Exception) {}
+  }
+
+  fun setMuted(isMuted: Boolean) {
+    try {
+      player.volume = if (isMuted) 0f else 1f
+    } catch (_: Exception) {}
+  }
 
   fun setPlaybackSpeed(speed: Float) {
-    val safe = speed.coerceIn(0.1f, 10f)
-    if (player.playbackParameters.speed != safe) player.playbackParameters = PlaybackParameters(safe)
+    try {
+      val safe = speed.coerceIn(0.1f, 10f)
+      if (player.playbackParameters.speed != safe) player.playbackParameters = PlaybackParameters(safe)
+    } catch (_: Exception) {}
   }
 
   fun setSurface(surface: Surface?) {
-    if (surface?.isValid == true) player.setVideoSurface(surface) else player.clearVideoSurface()
+    try {
+      if (surface?.isValid == true) player.setVideoSurface(surface) else player.clearVideoSurface()
+    } catch (e: Exception) {
+      Log.w(TAG, "setSurface failed", e)
+    }
   }
-  fun clearSurface() { player.clearVideoSurface() }
-  fun addListener(listener: Player.Listener) { player.addListener(listener) }
-  fun removeListener(listener: Player.Listener) { player.removeListener(listener) }
+
+  fun clearSurface() {
+    try {
+      player.clearVideoSurface()
+    } catch (_: Exception) {}
+  }
+
+  fun addListener(listener: Player.Listener) {
+    try {
+      player.addListener(listener)
+    } catch (_: Exception) {}
+  }
+
+  fun removeListener(listener: Player.Listener) {
+    try {
+      player.removeListener(listener)
+    } catch (_: Exception) {}
+  }
 
   fun release() {
-    player.removeListener(playerListener)
-    try { player.stop() } catch (_: Exception) { }
-    player.clearVideoSurface()
-    player.release()
+    try {
+      player.removeListener(playerListener)
+      player.stop()
+      player.clearVideoSurface()
+      player.release()
+    } catch (_: Exception) { }
     currentLoadedUri = null
   }
 

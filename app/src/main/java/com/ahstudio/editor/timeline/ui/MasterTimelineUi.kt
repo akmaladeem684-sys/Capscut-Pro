@@ -109,6 +109,7 @@ fun MasterTimelineView(
 
         // Dynamic Tracks & Clips Synchronization (Multi-Track Dynamic Lane Allocation)
         LaunchedEffect(timelineState) {
+            val previousTrackCount = activeCtrl.snapshot.tracks.size
             activeCtrl.engine.reset()
             val lanes = com.example.ui.components.timeline.TrackLaneManager.computeLanes(timelineState)
 
@@ -150,6 +151,21 @@ fun MasterTimelineView(
             // Restore selection if any
             if (selectedClipIds.isNotEmpty()) {
                 activeCtrl.engine.setSelection(selectedClipIds)
+            }
+
+            // Auto-scroll to reveal newly added sub-track if outside visible sub-tracks viewport
+            val newTrackCount = activeCtrl.snapshot.tracks.size
+            if (newTrackCount > previousTrackCount && newTrackCount > 1) {
+                val subH = 36f * activeCtrl.densityScale
+                val subGap = 4f * activeCtrl.densityScale
+                val subCount = newTrackCount - 1
+                val lastSubTrackBottom = subCount * subH + (subCount - 1) * subGap
+                val targetScrollY = maxOf(0f, lastSubTrackBottom - activeCtrl.subTracksViewportHeightPx)
+                if (targetScrollY > activeCtrl.scrollY) {
+                    activeCtrl.setScrollYRaw(targetScrollY)
+                }
+            } else {
+                activeCtrl.setScrollYRaw(activeCtrl.scrollY)
             }
         }
     }

@@ -46,11 +46,7 @@ data class TimelineMetrics(
 
     fun trackTopPx(trackIndex: Int): Float {
         if (trackIndex <= 0) return 0f
-        var y = mainRowHeightPx + mainToSubGapPx
-        for (i in 1 until trackIndex) {
-            y += subRowHeightPx + subTrackGapPx
-        }
-        return y
+        return (trackIndex - 1) * (subRowHeightPx + subTrackGapPx)
     }
 
     fun totalTracksHeightPx(trackCount: Int): Float {
@@ -63,9 +59,16 @@ data class TimelineMetrics(
         if (trackCount <= 0 || contentY < 0f) return -1
         if (contentY <= mainRowHeightPx) return 0
         if (contentY < mainRowHeightPx + mainToSubGapPx) return -1 // inside vertical separation gap
-        var currentY = mainRowHeightPx + mainToSubGapPx
-        for (i in 1 until trackCount) {
-            if (contentY in currentY..(currentY + subRowHeightPx)) return i
+        val subContentY = contentY - (mainRowHeightPx + mainToSubGapPx)
+        val subIndex = subTrackIndexAtY(subContentY, trackCount - 1)
+        return if (subIndex >= 0) 1 + subIndex else -1
+    }
+
+    fun subTrackIndexAtY(subContentY: Float, subTrackCount: Int): Int {
+        if (subTrackCount <= 0 || subContentY < 0f) return -1
+        var currentY = 0f
+        for (i in 0 until subTrackCount) {
+            if (subContentY in currentY..(currentY + subRowHeightPx)) return i
             currentY += subRowHeightPx + subTrackGapPx
         }
         return -1

@@ -302,21 +302,19 @@ fun EditorScreen(
       // Reclaim that vertical space for the actual video preview instead of leaving a gap.
       // The cap keeps the timeline and playback controls usable on compact screens.
       val basePreviewHeight = remember(screenHeight, screenWidth, isLandscape) {
-        val reclaimedSpace = 80.dp
-        val originalHeight = if (isLandscape) {
+        if (isLandscape) {
           when {
-            screenHeight < 500.dp -> (screenHeight * 0.44f).coerceIn(150.dp, 210.dp)
-            screenHeight < 700.dp -> (screenHeight * 0.48f).coerceIn(190.dp, 260.dp)
-            else -> (screenHeight * 0.52f).coerceIn(240.dp, 350.dp)
+            screenHeight < 500.dp -> (screenHeight * 0.44f).coerceIn(160.dp, 220.dp)
+            screenHeight < 700.dp -> (screenHeight * 0.48f).coerceIn(200.dp, 280.dp)
+            else -> (screenHeight * 0.52f).coerceIn(250.dp, 360.dp)
           }
         } else {
           when {
-            screenHeight < 650.dp -> (screenHeight * 0.35f).coerceIn(170.dp, 240.dp)
-            screenHeight < 850.dp -> (screenHeight * 0.41f).coerceIn(240.dp, 330.dp)
-            else -> (screenHeight * 0.45f).coerceIn(290.dp, 400.dp)
+            screenHeight < 650.dp -> (screenHeight * 0.45f).coerceIn(220.dp, 300.dp)
+            screenHeight < 850.dp -> (screenHeight * 0.52f).coerceIn(300.dp, 420.dp)
+            else -> (screenHeight * 0.56f).coerceIn(360.dp, 500.dp)
           }
         }
-        (originalHeight + reclaimedSpace).coerceAtMost(screenHeight * 0.62f)
       }
 
       // When any bottom navigation tool/panel is opened, automatically reduce the video preview size by approx. 30%
@@ -333,13 +331,7 @@ fun EditorScreen(
         label = "animated_preview_height"
       )
 
-      val responsiveSpacerHeight = remember(screenHeight) {
-        when {
-          screenHeight < 650.dp -> 0.dp
-          screenHeight < 850.dp -> 2.dp
-          else -> 4.dp
-        }
-      }
+      val responsiveSpacerHeight = 0.dp
 
       Column(
         modifier = Modifier
@@ -1483,23 +1475,6 @@ fun VideoPreviewSurface(
               MediaRelinkManager.isRealPlayableMedia(context, activeClip.uri)
             }
             if (activeClip.isVideo && isRealPlayable && player != null) {
-              val realVideoFilterModifier = if (!isIdentityFilter && combinedColorFilter != null) {
-                Modifier
-                  .fillMaxSize()
-                  .drawWithContent {
-                    drawIntoCanvas { canvas ->
-                      val paint = androidx.compose.ui.graphics.Paint().apply {
-                        this.colorFilter = combinedColorFilter
-                      }
-                      canvas.saveLayer(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height), paint)
-                      drawContent()
-                      canvas.restore()
-                    }
-                  }
-              } else {
-                Modifier.fillMaxSize()
-              }
-
               AndroidView(
                 factory = { ctx ->
                   android.view.TextureView(ctx).apply {
@@ -1507,32 +1482,31 @@ fun VideoPreviewSurface(
                       ViewGroup.LayoutParams.MATCH_PARENT,
                       ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    player.setVideoTextureView(this)
+                    try {
+                      player.setVideoTextureView(this)
+                    } catch (e: Exception) {
+                      android.util.Log.w("VideoPreviewSurface", "Failed to attach TextureView to ExoPlayer", e)
+                    }
                     tag = player
-                    android.util.Log.d("VideoPreviewSurface", "TextureView created and attached to ExoPlayer")
                   }
                 },
                 update = { tv ->
                   if (tv.tag != player) {
-                    player.setVideoTextureView(tv)
-                    tv.tag = player
-                  }
-                  val paint = if (isIdentityFilter) {
-                    null
-                  } else {
-                    android.graphics.Paint().apply {
-                      colorFilter = android.graphics.ColorMatrixColorFilter(androidCombinedMatrix)
+                    try {
+                      player.setVideoTextureView(tv)
+                      tv.tag = player
+                    } catch (e: Exception) {
+                      android.util.Log.w("VideoPreviewSurface", "Failed to rebind TextureView", e)
                     }
                   }
-                  tv.setLayerType(
-                    if (paint != null) android.view.View.LAYER_TYPE_HARDWARE else android.view.View.LAYER_TYPE_NONE,
-                    paint
-                  )
-                  tv.invalidate()
                 },
                 onReset = { /* Preserve texture view across recompositions */ },
-                onRelease = { /* Keep player instance intact */ },
-                modifier = realVideoFilterModifier
+                onRelease = { tv ->
+                  try {
+                    player.clearVideoTextureView(tv)
+                  } catch (_: Exception) {}
+                },
+                modifier = Modifier.fillMaxSize()
               )
             } else if (!activeClip.isVideo && activeClip.uri.isNotBlank() && !activeClip.uri.startsWith("stock://") && !activeClip.uri.startsWith("sample://")) {
               AsyncImage(
@@ -1602,14 +1576,22 @@ fun VideoPreviewSurface(
           androidx.compose.foundation.Canvas(
             modifier = Modifier.fillMaxSize()
           ) {
-            drawIntoCanvas { composeCanvas ->
-              VideoEffectRenderer.renderEffectsOnCanvas(
-                canvas = composeCanvas.nativeCanvas,
-                activeEffects = activeEffects,
-                currentPosMs = currentPosMs,
-                width = size.width.toInt(),
-                height = size.height.toInt()
-              )
+            val w = size.width.toInt()
+            val h = size.height.toInt()
+            if (w > 0 && h > 0) {
+              drawIntoCanvas { composeCanvas ->
+                try {
+                  VideoEffectRenderer.renderEffectsOnCanvas(
+                    canvas = composeCanvas.nativeCanvas,
+                    activeEffects = activeEffects,
+                    currentPosMs = currentPosMs,
+                    width = w,
+                    height = h
+                  )
+                } catch (e: Throwable) {
+                  android.util.Log.w("VideoPreviewSurface", "Error rendering active effects on canvas", e)
+                }
+              }
             }
           }
         }

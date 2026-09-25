@@ -40,11 +40,15 @@ class TimelineSyncManager(
   val masterClock = MasterPlaybackClock(
     scope = scope,
     audioClockProvider = {
-      if (playbackController.isPlaying) {
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper() && playbackController.isPlaying) {
         val clip = activeClip
         if (clip != null && clip.isVideo && !clip.isMuted && clip.volume > 0f) {
-          val playerPos = playbackController.player.currentPosition
-          clip.sourceToTimelineMs(playerPos)
+          try {
+            val playerPos = playbackController.player.currentPosition
+            if (playerPos >= 0L) clip.sourceToTimelineMs(playerPos) else null
+          } catch (_: Throwable) {
+            null
+          }
         } else null
       } else null
     }

@@ -357,11 +357,29 @@ fun InteractiveTransformOverlay(
                   ViewGroup.LayoutParams.MATCH_PARENT,
                   ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                overlayPlayer.setVideoTextureView(this)
+                try {
+                  overlayPlayer.setVideoTextureView(this)
+                } catch (e: Exception) {
+                  android.util.Log.w("InteractiveTransformOverlay", "Failed to attach TextureView to overlayPlayer", e)
+                }
+                tag = overlayPlayer
               }
             },
             update = { tv ->
-              overlayPlayer.setVideoTextureView(tv)
+              if (tv.tag != overlayPlayer) {
+                try {
+                  overlayPlayer.setVideoTextureView(tv)
+                  tv.tag = overlayPlayer
+                } catch (e: Exception) {
+                  android.util.Log.w("InteractiveTransformOverlay", "Failed to rebind TextureView to overlayPlayer", e)
+                }
+              }
+            },
+            onReset = { /* Keep texture view intact */ },
+            onRelease = { tv ->
+              try {
+                overlayPlayer.clearVideoTextureView(tv)
+              } catch (_: Exception) {}
             },
             modifier = Modifier.fillMaxSize()
           )

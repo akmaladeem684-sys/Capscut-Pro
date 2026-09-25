@@ -192,16 +192,19 @@ class TimelineEngineUpgradeTest {
     engine.addOverlayClip(
       uri = "file:///pip.mp4",
       name = "PIP",
-      durationMs = 3000L
+      durationMs = 3000L,
+      startTimeMs = 0L
     )
     engine.addAudioClip(
       uri = "file:///music.mp3",
       title = "Music",
-      durationMs = 5000L
+      durationMs = 5000L,
+      startTimeMs = 0L
     )
     engine.addTextClip(
       text = "Title Text",
-      durationMs = 2000L
+      durationMs = 2000L,
+      timelineStartMs = 0L
     )
 
     // Query active elements at 1000ms

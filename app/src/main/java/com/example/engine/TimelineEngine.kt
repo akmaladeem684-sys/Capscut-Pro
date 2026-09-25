@@ -539,7 +539,12 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
   }
 
   fun isClipSelected(clipId: String): Boolean {
-    return _selectedClipIds.value.contains(clipId)
+    return _selectedClipIds.value.contains(clipId) || (selectedElement.value as? SelectedTrackElement.Video)?.clipId == clipId ||
+      (selectedElement.value as? SelectedTrackElement.Overlay)?.clipId == clipId ||
+      (selectedElement.value as? SelectedTrackElement.Audio)?.clipId == clipId ||
+      (selectedElement.value as? SelectedTrackElement.Text)?.clipId == clipId ||
+      (selectedElement.value as? SelectedTrackElement.Sticker)?.clipId == clipId ||
+      (selectedElement.value as? SelectedTrackElement.Effect)?.clipId == clipId
   }
 
   fun toggleMultiSelectMode() {
@@ -1311,10 +1316,60 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
     setTrackHeight(trackType, next)
   }
 
-  fun setAllTrackHeights(height: TrackHeight) {
+  fun setTrackLocked(trackType: TrackType, locked: Boolean) {
     recordHistory()
-    val settings = _timeline.value.trackSettings.mapValues { it.value.copy(height = height) }
+    val settings = _timeline.value.trackSettings.toMutableMap()
+    val cur = settings[trackType] ?: TrackSettings(trackType)
+    settings[trackType] = cur.copy(isLocked = locked)
     _timeline.value = _timeline.value.copy(trackSettings = settings)
+  }
+
+  fun setTrackVisible(trackType: TrackType, visible: Boolean) {
+    recordHistory()
+    val settings = _timeline.value.trackSettings.toMutableMap()
+    val cur = settings[trackType] ?: TrackSettings(trackType)
+    settings[trackType] = cur.copy(isHidden = !visible)
+    _timeline.value = _timeline.value.copy(trackSettings = settings)
+  }
+
+  fun setTrackMuted(trackType: TrackType, muted: Boolean) {
+    recordHistory()
+    val settings = _timeline.value.trackSettings.toMutableMap()
+    val cur = settings[trackType] ?: TrackSettings(trackType)
+    settings[trackType] = cur.copy(isMuted = muted)
+    _timeline.value = _timeline.value.copy(trackSettings = settings)
+  }
+
+  fun setTrackSolo(trackType: TrackType, solo: Boolean) {
+    recordHistory()
+    val settings = _timeline.value.trackSettings.toMutableMap()
+    val cur = settings[trackType] ?: TrackSettings(trackType)
+    settings[trackType] = cur.copy(isSolo = solo)
+    _timeline.value = _timeline.value.copy(trackSettings = settings)
+  }
+
+  fun selectClips(clipIds: Set<String>) {
+    _selectedClipIds.value = clipIds
+    val firstId = clipIds.firstOrNull()
+    if (firstId != null) {
+      _selectedElement.value = findTrackElementForClip(firstId)
+    } else {
+      _selectedElement.value = SelectedTrackElement.None
+    }
+  }
+
+  fun rippleDeleteClip(clipId: String): Boolean = withStateLock {
+    rippleDelete(setOf(clipId))
+  }
+
+  fun addOverlayClip(clip: VideoClip) = withStateLock {
+    recordHistory()
+    val currentOverlays = _timeline.value.overlayClips.toMutableList()
+    val nextTrack = if (clip.trackIndex > 0) clip.trackIndex else com.example.engine.timeline.TimelineTrackManager.allocateOverlayTrackIndex(_timeline.value)
+    val effectiveStart = if (clip.timelineStartMs >= 0) clip.timelineStartMs else com.example.engine.timeline.TimelineTrackManager.getAuthoritativeInsertionTime(_currentPositionMs.value)
+    val finalClip = clip.copy(trackIndex = nextTrack, timelineStartMs = effectiveStart)
+    currentOverlays.add(finalClip)
+    _timeline.value = _timeline.value.copy(overlayClips = currentOverlays)
   }
 
   // --- Advanced Clip Editing & Multi-Track Operations ---
@@ -5923,6 +5978,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
 
     when (element) {
       is SelectedTrackElement.Video -> {
+        if (isTrackLocked(TrackType.MAIN_VIDEO)) return null
         val index = _timeline.value.videoClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.videoClips[index]
@@ -5954,6 +6010,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         return Pair(clip1.id, clip2.id)
       }
       is SelectedTrackElement.Overlay -> {
+        if (isTrackLocked(TrackType.OVERLAY)) return null
         val index = _timeline.value.overlayClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.overlayClips[index]
@@ -5985,6 +6042,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         return Pair(clip1.id, clip2.id)
       }
       is SelectedTrackElement.Audio -> {
+        if (isTrackLocked(TrackType.AUDIO)) return null
         val index = _timeline.value.audioClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.audioClips[index]
@@ -6021,6 +6079,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         return Pair(clip1.id, clip2.id)
       }
       is SelectedTrackElement.Text -> {
+        if (isTrackLocked(TrackType.TEXT)) return null
         val index = _timeline.value.textClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.textClips[index]
@@ -6043,6 +6102,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         return Pair(clip1.id, clip2.id)
       }
       is SelectedTrackElement.Sticker -> {
+        if (isTrackLocked(TrackType.STICKER)) return null
         val index = _timeline.value.stickerClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.stickerClips[index]
@@ -6069,6 +6129,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
         return Pair(clip1.id, clip2.id)
       }
       is SelectedTrackElement.Effect -> {
+        if (isTrackLocked(TrackType.EFFECT)) return null
         val index = _timeline.value.effectClips.indexOfFirst { it.id == clipId }
         if (index == -1) return null
         val clip = _timeline.value.effectClips[index]
@@ -6102,6 +6163,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
    * Professional NLE Roll Edit: Adjusts the edit point between two adjacent clips on the same track.
    */
   fun rollEditClip(clipAId: String, clipBId: String, deltaMs: Long): Boolean = withStateLock {
+    if (isTrackLocked(TrackType.MAIN_VIDEO)) return@withStateLock false
     val cur = _timeline.value
     val clipA = cur.videoClips.firstOrNull { it.id == clipAId } ?: return@withStateLock false
     val clipB = cur.videoClips.firstOrNull { it.id == clipBId } ?: return@withStateLock false
@@ -6129,6 +6191,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
    * Professional NLE Slip Edit: Shifts the source media range inside a clip without changing timeline position.
    */
   fun slipEditClip(clipId: String, sourceDeltaMs: Long): Boolean = withStateLock {
+    if (isTrackLocked(TrackType.MAIN_VIDEO)) return@withStateLock false
     val cur = _timeline.value
     val clip = cur.videoClips.firstOrNull { it.id == clipId } ?: return@withStateLock false
     recordHistory(TimelineActionType.TRIM_LEFT, "Slip Edit", setOf(clipId))
@@ -6145,6 +6208,7 @@ class TimelineEngine : com.example.engine.integration.UnifiedAdvancedTimeline {
    * Professional NLE Slide Edit: Moves a clip along the timeline while maintaining adjacent timing.
    */
   fun slideEditClip(clipId: String, deltaMs: Long): Boolean = withStateLock {
+    if (isTrackLocked(TrackType.MAIN_VIDEO)) return@withStateLock false
     val cur = _timeline.value
     val clip = cur.videoClips.firstOrNull { it.id == clipId } ?: return@withStateLock false
     recordHistory(TimelineActionType.MOVE_CLIP, "Slide Edit", setOf(clipId))
