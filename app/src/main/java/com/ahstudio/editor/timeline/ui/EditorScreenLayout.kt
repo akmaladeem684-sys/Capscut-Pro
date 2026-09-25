@@ -101,7 +101,7 @@ fun EditorScreenLayout(
             ) {
                 items(
                     items = viewModel.subTracks,
-                    key = { it.trackId }
+                    key = { "${it.trackId}_${it.order}" }
                 ) { subTrack ->
                     val isSelected = viewModel.selectedTrackId == subTrack.trackId ||
                             viewModel.selectedClipTrackId == subTrack.trackId

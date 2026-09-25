@@ -68,19 +68,17 @@ object TimelineTrackManager {
      * Allocates a guaranteed unique TrackIndex for any TrackType.
      */
     fun allocateTrackIndex(timeline: Timeline, trackType: TrackType): Int {
-        val fromTracks = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() })
-            .filter { it.trackType == trackType }
-            .map { it.zOrder }
-        val maxZFromTracks = fromTracks.maxOrNull() ?: 0
+        val allZ = (timeline.tracks.ifEmpty { timeline.getEffectiveTracks() }).map { it.zOrder }
+        val maxZFromTracks = allZ.maxOrNull() ?: 0
         val maxClipIndex = when (trackType) {
             TrackType.MAIN_VIDEO -> 0
-            TrackType.OVERLAY, TrackType.ELEMENT, TrackType.ADJUSTMENT -> allocateOverlayTrackIndex(timeline) - 1
-            TrackType.TEXT, TrackType.CAPTION -> allocateTextTrackIndex(timeline) - 1
-            TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> allocateAudioTrackIndex(timeline) - 1
-            TrackType.EFFECT -> maxOf(timeline.effectClips.size, maxZFromTracks)
-            TrackType.STICKER -> maxOf(timeline.stickerClips.size, maxZFromTracks)
+            TrackType.OVERLAY, TrackType.ELEMENT, TrackType.ADJUSTMENT -> allocateOverlayTrackIndex(timeline)
+            TrackType.TEXT, TrackType.CAPTION -> allocateTextTrackIndex(timeline)
+            TrackType.AUDIO, TrackType.MUSIC, TrackType.SFX -> allocateAudioTrackIndex(timeline)
+            TrackType.EFFECT -> maxOf(timeline.effectClips.size + 1, maxZFromTracks + 1)
+            TrackType.STICKER -> maxOf(timeline.stickerClips.size + 1, maxZFromTracks + 1)
         }
-        return maxOf(maxClipIndex, maxZFromTracks) + 1
+        return maxOf(maxClipIndex, maxZFromTracks + 1)
     }
 
     /**

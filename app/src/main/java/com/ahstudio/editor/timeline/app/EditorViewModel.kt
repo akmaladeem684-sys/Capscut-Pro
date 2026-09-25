@@ -63,7 +63,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val subTracks: List<Track>
         get() {
             val mainId = mainVideoTrack.id
-            return engine.snapshot.tracks.filter { it.id != mainId }
+            return engine.snapshot.tracks.filter { it.id != mainId }.sortedBy { it.order }
         }
 
     init {
