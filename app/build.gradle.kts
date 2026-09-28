@@ -24,6 +24,20 @@ android {
     buildConfigField("String", "FIREBASE_API_KEY", "\"AIzaSyCg6RcmUXofXcDA3o3-YU7So3kbtSsD-nY\"")
     buildConfigField("String", "FIREBASE_PROJECT_ID", "\"gen-lang-client-0291066258\"")
 
+    externalNativeBuild {
+      cmake {
+        cppFlags += listOf("-std=c++17", "-Wall", "-Wextra")
+      }
+    }
+  }
+
+  // The native compositor is part of the production renderer. Keeping this
+  // explicit prevents the app from silently shipping the Kotlin fallback only.
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+      version = "3.22.1"
+    }
   }
 
   signingConfigs {

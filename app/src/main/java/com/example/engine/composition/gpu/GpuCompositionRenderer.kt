@@ -114,6 +114,23 @@ class GpuCompositionRenderer(private val context: Context) {
                 type.name.startsWith("VFX_DISTORT_") || type.name.startsWith("VFX_COLOR_")
       }
     }
+
+    /** Native effect IDs intentionally cover only effects with a matching native shader. */
+    fun nativeEffectMode(type: EffectType): Int? {
+      return when (type) {
+        EffectType.VIGNETTE -> 1
+        EffectType.SHARPEN -> 2
+        EffectType.BLUR, EffectType.SOFT_FOCUS,
+        EffectType.VFX_BLUR_1, EffectType.VFX_BLUR_2,
+        EffectType.VFX_BLUR_3, EffectType.VFX_BLUR_8,
+        EffectType.VFX_BLUR_9, EffectType.VFX_BLUR_10,
+        EffectType.VFX_BLUR_11, EffectType.VFX_BLUR_12,
+        EffectType.VFX_BLUR_13, EffectType.VFX_BLUR_14,
+        EffectType.VFX_BLUR_15 -> 3
+        EffectType.FLASH, EffectType.STROBE -> 4
+        else -> null
+      }
+    }
     private const val FLOAT_SIZE_BYTES = 4
     private const val TRIANGLE_VERTICES_DATA_STRIDE_BYTES = 4 * FLOAT_SIZE_BYTES
     private const val POSITION_DATA_OFFSET = 0
@@ -231,18 +248,27 @@ class GpuCompositionRenderer(private val context: Context) {
 
     // 1. Process Main Base Video Clip
     if (mainTextureId > 0) {
-      val main2dTexId = processMainVideoTo2D(
-        frame = frame,
-        textureId = mainTextureId,
-        isOes = isMainOes,
-        customTexMatrix = mainTexMatrix,
-        viewportWidth = viewportWidth,
-        viewportHeight = viewportHeight,
-        adjustments = timelineAdjustments,
-        filter = timelineFilter,
-        chromaKey = chromaKey,
-        effectColorMatrix = fxColorMatrix
-      )
+      val canUseNativeOes = isMainOes &&
+        timelineAdjustments == VideoAdjustments() &&
+        timelineFilter.type == FilterType.NONE &&
+        !chromaKey.enabled &&
+        fxColorMatrix == null
+      val main2dTexId = if (canUseNativeOes) {
+        mainTextureId
+      } else {
+        processMainVideoTo2D(
+          frame = frame,
+          textureId = mainTextureId,
+          isOes = isMainOes,
+          customTexMatrix = mainTexMatrix,
+          viewportWidth = viewportWidth,
+          viewportHeight = viewportHeight,
+          adjustments = timelineAdjustments,
+          filter = timelineFilter,
+          chromaKey = chromaKey,
+          effectColorMatrix = fxColorMatrix
+        )
+      }
 
       if (main2dTexId > 0) {
         val baseLayer = NativeLayer(
@@ -253,7 +279,9 @@ class GpuCompositionRenderer(private val context: Context) {
           zOrder = 0,
           opacity = 1.0f,
           blendMode = NativeBlendMode.NORMAL,
-          useCustomMatrix = false
+          useCustomMatrix = false,
+          isExternalOes = canUseNativeOes,
+          textureMatrix = if (canUseNativeOes) mainTexMatrix else null
         )
         nativeLayers.add(baseLayer)
       }
@@ -265,16 +293,30 @@ class GpuCompositionRenderer(private val context: Context) {
       val overlayTexId = overlayTextures[overlay.clip.id]
       if (overlayTexId != null && overlayTexId > 0) {
         val isOvOes = overlay.clip.isVideo
-        val ov2dTexId = processOverlayVideoTo2D(
-          overlay = overlay,
-          textureId = overlayTexId,
-          isOes = isOvOes,
-          customTexMatrix = overlayTexMatrices[overlay.clip.id],
-          viewportWidth = viewportWidth,
-          viewportHeight = viewportHeight,
-          chromaKey = chromaKey,
-          effectColorMatrix = fxColorMatrix
-        )
+        val overlayFilter = overlay.clip.filter
+        val canUseNativeOverlayOes = isOvOes &&
+          overlay.brightness == 0f &&
+          overlay.contrast == 1f &&
+          overlay.saturation == 1f &&
+          (overlayFilter == null || overlayFilter.type == FilterType.NONE) &&
+          !chromaKey.enabled &&
+          fxColorMatrix == null &&
+          overlay.blur == 0f &&
+          overlay.effectParam == 0f
+        val ov2dTexId = if (canUseNativeOverlayOes) {
+          overlayTexId
+        } else {
+          processOverlayVideoTo2D(
+            overlay = overlay,
+            textureId = overlayTexId,
+            isOes = isOvOes,
+            customTexMatrix = overlayTexMatrices[overlay.clip.id],
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
+            chromaKey = chromaKey,
+            effectColorMatrix = fxColorMatrix
+          )
+        }
 
         if (ov2dTexId > 0) {
           val ovDisplayW = if (overlay.clip.width > 0) overlay.clip.width else viewportWidth
@@ -320,7 +362,9 @@ class GpuCompositionRenderer(private val context: Context) {
             opacity = overlay.opacity.coerceIn(0f, 1f),
             blendMode = mapBlendMode(overlay.blendMode),
             useCustomMatrix = true,
-            transformMatrix = ovMatrix
+            transformMatrix = ovMatrix,
+            isExternalOes = canUseNativeOverlayOes,
+            textureMatrix = if (canUseNativeOverlayOes) overlayTexMatrices[overlay.clip.id] else null
           )
           nativeLayers.add(overlayLayer)
         }
@@ -426,6 +470,27 @@ class GpuCompositionRenderer(private val context: Context) {
     val postProcessEffects = frame.activeEffects.filter { isPostProcessShaderEffect(it.effectType) }
     val hasPostProcess = postProcessEffects.isNotEmpty()
     val isNativeLoaded = NativeRenderBridge.isLoaded
+    if (isNativeLoaded) {
+      NativeRenderBridge.setTransparentClear(
+        chromaKey.enabled && chromaKey.backgroundType == "Transparent"
+      )
+    }
+    val nativeEffectPayload = if (isNativeLoaded && postProcessEffects.size <= 16) {
+      val modes = postProcessEffects.map { nativeEffectMode(it.effectType) }
+      if (modes.all { it != null }) {
+        FloatArray(postProcessEffects.size * 3).also { payload ->
+          postProcessEffects.forEachIndexed { index, effect ->
+            payload[index * 3] = modes[index]!!.toFloat()
+            payload[index * 3 + 1] = effect.intensity.coerceIn(0f, 1f)
+            payload[index * 3 + 2] = effect.timeInEffectMs / 1000f
+          }
+        }
+      } else {
+        null
+      }
+    } else {
+      null
+    }
 
     if (isNativeLoaded) {
       if (hasPostProcess) {
@@ -465,43 +530,52 @@ class GpuCompositionRenderer(private val context: Context) {
       GLES20.glDisable(GLES20.GL_BLEND)
       val offscreenTex = if (isNativeLoaded) NativeRenderBridge.endOffscreen() else fboA.getTextureId()
       if (offscreenTex > 0) {
-        fboB.setup(viewportWidth, viewportHeight)
+        val nativeApplied = nativeEffectPayload != null &&
+          NativeRenderBridge.applyEffectChain(
+            inputTextureId = offscreenTex,
+            effects = nativeEffectPayload,
+            effectCount = postProcessEffects.size
+          )
 
-        var currentInputTex = offscreenTex
-        var currentOutputFbo = fboB
+        if (!nativeApplied) {
+          fboB.setup(viewportWidth, viewportHeight)
 
-        for (i in postProcessEffects.indices) {
-          val effect = postProcessEffects[i]
-          val isLast = (i == postProcessEffects.size - 1)
+          var currentInputTex = offscreenTex
+          var currentOutputFbo = fboB
 
-          if (isLast) {
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-            GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-            GLES20.glDisable(GLES20.GL_BLEND)
-            applyEffect(
-              effectType = effect.effectType,
-              intensity = effect.intensity,
-              timeSec = effect.timeInEffectMs / 1000f,
-              inputTexId = currentInputTex,
-              viewportWidth = viewportWidth,
-              viewportHeight = viewportHeight
-            )
-          } else {
-            currentOutputFbo.bind()
-            GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            GLES20.glDisable(GLES20.GL_BLEND)
-            applyEffect(
-              effectType = effect.effectType,
-              intensity = effect.intensity,
-              timeSec = effect.timeInEffectMs / 1000f,
-              inputTexId = currentInputTex,
-              viewportWidth = viewportWidth,
-              viewportHeight = viewportHeight
-            )
-            currentOutputFbo.unbind()
-            currentInputTex = currentOutputFbo.getTextureId()
-            currentOutputFbo = if (currentOutputFbo == fboB) fboA else fboB
+          for (i in postProcessEffects.indices) {
+            val effect = postProcessEffects[i]
+            val isLast = (i == postProcessEffects.size - 1)
+
+            if (isLast) {
+              GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+              GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+              GLES20.glDisable(GLES20.GL_BLEND)
+              applyEffect(
+                effectType = effect.effectType,
+                intensity = effect.intensity,
+                timeSec = effect.timeInEffectMs / 1000f,
+                inputTexId = currentInputTex,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight
+              )
+            } else {
+              currentOutputFbo.bind()
+              GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+              GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+              GLES20.glDisable(GLES20.GL_BLEND)
+              applyEffect(
+                effectType = effect.effectType,
+                intensity = effect.intensity,
+                timeSec = effect.timeInEffectMs / 1000f,
+                inputTexId = currentInputTex,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight
+              )
+              currentOutputFbo.unbind()
+              currentInputTex = currentOutputFbo.getTextureId()
+              currentOutputFbo = if (currentOutputFbo == fboB) fboA else fboB
+            }
           }
         }
       }

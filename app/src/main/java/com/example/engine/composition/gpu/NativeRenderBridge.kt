@@ -12,12 +12,14 @@ data class NativeLayer(
   val width: Float = 1f, val height: Float = 1f, val opacity: Float = 1f,
   val uOffset: Float = 0f, val vOffset: Float = 0f, val uScale: Float = 1f, val vScale: Float = 1f,
   val blendMode: NativeBlendMode = NativeBlendMode.NORMAL, val useCustomMatrix: Boolean = false,
-  val transformMatrix: FloatArray? = null
+  val transformMatrix: FloatArray? = null,
+  val isExternalOes: Boolean = false,
+  val textureMatrix: FloatArray? = null
 )
 
 object NativeRenderBridge {
   private const val TAG = "NativeRenderBridge"
-  private const val LAYER_STRIDE = 35
+  private const val LAYER_STRIDE = 52
   private var isLibraryLoaded = false
   private var isInitialized = false
   val isLoaded: Boolean get() = isLibraryLoaded && isInitialized
@@ -39,6 +41,10 @@ object NativeRenderBridge {
   }
 
   @Synchronized fun resize(width: Int, height: Int) { if(isInitialized) runCatching { nativeResize(width,height) }.onFailure { Log.e(TAG,"nativeResize failed",it) } }
+  @Synchronized fun setTransparentClear(transparent: Boolean) {
+    if (isInitialized) runCatching { nativeSetTransparentClear(transparent) }
+      .onFailure { Log.e(TAG, "nativeSetTransparentClear failed", it) }
+  }
 
   /** Direct decoder SurfaceTexture/OES path. No Bitmap or CPU pixel readback is performed. */
   @Synchronized fun renderExternalTexture(textureId: Int, texMatrix: FloatArray? = null) {
@@ -55,6 +61,15 @@ object NativeRenderBridge {
       renderBuffer[o+5]=layer.posX; renderBuffer[o+6]=layer.posY; renderBuffer[o+7]=layer.scaleX; renderBuffer[o+8]=layer.scaleY; renderBuffer[o+9]=layer.rotation; renderBuffer[o+10]=layer.width; renderBuffer[o+11]=layer.height; renderBuffer[o+12]=layer.opacity
       renderBuffer[o+13]=layer.uOffset; renderBuffer[o+14]=layer.vOffset; renderBuffer[o+15]=layer.uScale; renderBuffer[o+16]=layer.vScale; renderBuffer[o+17]=layer.blendMode.id.toFloat(); renderBuffer[o+18]=if(layer.useCustomMatrix&&layer.transformMatrix!=null)1f else 0f
       if(layer.useCustomMatrix&&layer.transformMatrix!=null&&layer.transformMatrix.size>=16)System.arraycopy(layer.transformMatrix,0,renderBuffer,o+19,16)
+      renderBuffer[o+35] = if (layer.isExternalOes) 1f else 0f
+      if (layer.isExternalOes && layer.textureMatrix != null && layer.textureMatrix.size >= 16) {
+        System.arraycopy(layer.textureMatrix, 0, renderBuffer, o + 36, 16)
+      } else {
+        renderBuffer[o + 36] = 1f
+        renderBuffer[o + 41] = 1f
+        renderBuffer[o + 46] = 1f
+        renderBuffer[o + 51] = 1f
+      }
       o+=LAYER_STRIDE
     }
     try { nativeRenderFrame(renderBuffer,layers.size) } catch(e:Throwable){ Log.e(TAG,"nativeRenderFrame failed",e) }
@@ -62,16 +77,22 @@ object NativeRenderBridge {
 
   @Synchronized fun beginOffscreen(){ if(isInitialized)runCatching{nativeBeginOffscreen()} }
   @Synchronized fun endOffscreen():Int=if(isInitialized)runCatching{nativeEndOffscreen()}.getOrDefault(0) else 0
+  @Synchronized fun applyEffectChain(inputTextureId: Int, effects: FloatArray, effectCount: Int): Boolean {
+    if (!isInitialized || inputTextureId <= 0 || effectCount <= 0) return false
+    return runCatching { nativeApplyEffectChain(inputTextureId, effects, effectCount) }.getOrDefault(false)
+  }
   @Synchronized fun onContextLost(){runCatching{nativeOnContextLost()};isInitialized=false}
-  @Synchronized fun release(){if(isInitialized){runCatching{nativeRelease()};isInitialized=false}}
+  @Synchronized fun release(){if(isLibraryLoaded){runCatching{nativeRelease()}};isInitialized=false}
   private fun ensureBufferCapacity(required:Int){if(required>bufferCapacityLayers){bufferCapacityLayers=required+32;renderBuffer=FloatArray(bufferCapacityLayers*LAYER_STRIDE)}}
 
   private external fun nativeInit(width:Int,height:Int):Boolean
   private external fun nativeResize(width:Int,height:Int)
+  private external fun nativeSetTransparentClear(transparent:Boolean)
   private external fun nativeRenderFrame(layerData:FloatArray,layerCount:Int)
   private external fun nativeRenderExternalTexture(textureId:Int,texMatrix:FloatArray?)
   private external fun nativeBeginOffscreen()
   private external fun nativeEndOffscreen():Int
+  private external fun nativeApplyEffectChain(inputTextureId:Int,effectData:FloatArray,effectCount:Int):Boolean
   private external fun nativeOnContextLost()
   private external fun nativeRelease()
 }

@@ -8,7 +8,8 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, NATIVE_RENDER_LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, NATIVE_RENDER_LOG_TAG, __VA_ARGS__)
 
-static constexpr int LAYER_STRIDE = 35;
+static constexpr int LAYER_STRIDE = 52;
+static constexpr int EFFECT_STRIDE = 3;
 static std::mutex gEngineMutex;
 static ah_engine::NextGenGpuCompositionEngine* gRenderEngine = nullptr;
 
@@ -41,9 +42,39 @@ Java_com_example_engine_composition_gpu_NativeRenderBridge_nativeRenderFrame(JNI
         l.posX=p[b+5]; l.posY=p[b+6]; l.scaleX=p[b+7]; l.scaleY=p[b+8]; l.rotation=p[b+9]; l.width=p[b+10]; l.height=p[b+11]; l.opacity=p[b+12];
         l.uOffset=p[b+13]; l.vOffset=p[b+14]; l.uScale=p[b+15]; l.vScale=p[b+16]; l.blendMode=static_cast<ah_engine::BlendMode>(static_cast<int>(p[b+17]));
         l.useCustomMatrix=p[b+18]>0.5f; if(l.useCustomMatrix) for(int m=0;m<16;m++) l.transformMatrix[m]=p[b+19+m];
+        l.isExternalOes = p[b+35] > 0.5f;
+        l.useTextureMatrix = l.isExternalOes;
+        if (l.useTextureMatrix) for (int m=0; m<16; ++m) l.textureMatrix[m] = p[b+36+m];
+        if (l.useTextureMatrix && !p[b+36] && !p[b+41] && !p[b+46] && !p[b+51]) {
+            l.textureMatrix[0] = l.textureMatrix[5] = l.textureMatrix[10] = l.textureMatrix[15] = 1.0f;
+        }
         layers.push_back(l);
     }
     env->ReleaseFloatArrayElements(data,p,JNI_ABORT); gRenderEngine->renderFrame(layers);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_engine_composition_gpu_NativeRenderBridge_nativeSetTransparentClear(
+    JNIEnv*, jobject, jboolean transparent) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    if (gRenderEngine && gRenderEngine->isInitialized()) {
+        gRenderEngine->setTransparentClear(transparent == JNI_TRUE);
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_engine_composition_gpu_NativeRenderBridge_nativeApplyEffectChain(
+    JNIEnv* env, jobject, jint inputTexture, jfloatArray effectData, jint effectCount) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    if (!gRenderEngine || !gRenderEngine->isInitialized() || inputTexture <= 0 ||
+        !effectData || effectCount <= 0 || effectCount > 16 ||
+        env->GetArrayLength(effectData) < effectCount * EFFECT_STRIDE) return JNI_FALSE;
+    jfloat* p = env->GetFloatArrayElements(effectData, nullptr);
+    if (!p) return JNI_FALSE;
+    std::vector<float> effects(p, p + effectCount * EFFECT_STRIDE);
+    env->ReleaseFloatArrayElements(effectData, p, JNI_ABORT);
+    return gRenderEngine->applyEffectChain(static_cast<GLuint>(inputTexture), effects)
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -63,6 +63,12 @@ struct RenderLayer {
     // Custom transform matrix (4x4 column-major). Used if useCustomMatrix == true
     float transformMatrix[16];
     bool useCustomMatrix{false};
+
+    // SurfaceTexture transform and external OES target. These fields let the
+    // native compositor consume decoder textures without a 2D conversion pass.
+    float textureMatrix[16];
+    bool useTextureMatrix{false};
+    bool isExternalOes{false};
 };
 
 struct FrameBufferObject {
